@@ -265,6 +265,29 @@ def workspace_version(workspace: Path) -> str:
     return m.group(1)
 
 
+def rustc_identity() -> tuple[str, str]:
+    """The rustc that resolved this SBOM: version string and host triple.
+
+    This is the toolchain that ran `cargo metadata`, which is not necessarily
+    the toolchain that compiled any particular release binary. It is recorded
+    with that scope stated, because a consumer asking "was this built with a
+    compiler carrying a known bug" deserves an answer that does not overclaim.
+    """
+    try:
+        out = subprocess.run(["rustc", "-vV"], capture_output=True, text=True)
+        if out.returncode != 0:
+            return ("unknown", "unknown")
+        blob = out.stdout
+        version = blob.splitlines()[0].replace("rustc ", "").strip()
+        host = next(
+            (l.split(":", 1)[1].strip() for l in blob.splitlines() if l.startswith("host:")),
+            "unknown",
+        )
+        return (version or "unknown", host)
+    except OSError:
+        return ("unknown", "unknown")
+
+
 def cyclonedx_version(cargo: str) -> str:
     out = subprocess.run(
         [cargo, "cyclonedx", "--version"], capture_output=True, text=True
@@ -362,7 +385,13 @@ def component_key(c: dict) -> str:
 # --------------------------------------------------------------------------
 
 
-def merge(boms: dict[str, dict], version: str, epoch: int, tool_version: str) -> dict:
+def merge(
+    boms: dict[str, dict],
+    version: str,
+    epoch: int,
+    tool_version: str,
+    rustc: tuple[str, str] = ("unknown", "unknown"),
+) -> dict:
     components: dict[str, dict] = {}
     comp_targets: dict[str, set[str]] = {}
     deps: dict[str, set[str]] = {}
@@ -469,6 +498,18 @@ def merge(boms: dict[str, dict], version: str, epoch: int, tool_version: str) ->
                                 "url": "https://github.com/CycloneDX/cyclonedx-rust-cargo",
                             }
                         ],
+                    },
+                    {
+                        "type": "application",
+                        "author": "The Rust Project",
+                        "name": "rustc",
+                        "version": rustc[0],
+                        "description": (
+                            "The toolchain that resolved this bill of materials. "
+                            "Not necessarily the toolchain that compiled any given "
+                            "release binary — see docs/compliance/SBOM.md."
+                        ),
+                        "properties": [{"name": "superbackup:rustc:host", "value": rustc[1]}],
                     },
                     {
                         "type": "application",
@@ -829,13 +870,14 @@ def main() -> int:
     epoch = source_date_epoch(workspace)
     version = workspace_version(workspace)
     tool_version = cyclonedx_version(args.cargo)
+    rustc = rustc_identity()
 
     boms = {}
     for target in TARGETS:
         print(f"resolving {target} ...", file=sys.stderr)
         boms[target] = generate_for_target(args.cargo, workspace, target, epoch)
 
-    bom = merge(boms, version, epoch, tool_version)
+    bom = merge(boms, version, epoch, tool_version, rustc)
 
     json_path = args.out / f"superbackup-{version}.cdx.json"
     xml_path = args.out / f"superbackup-{version}.cdx.xml"
