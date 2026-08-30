@@ -276,7 +276,9 @@ pub fn disable() -> Result<()> {
     {
         let path = entry_file()?;
         #[cfg(target_os = "macos")]
-        deactivate_launch_agent(&path);
+        {
+            deactivate_launch_agent(&path);
+        }
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -353,8 +355,9 @@ fn entry_file() -> Result<PathBuf> {
 #[cfg(target_os = "macos")]
 fn activate_launch_agent(path: &Path) {
     if let Some(uid) = super::effective_uid() {
+        let domain = format!("gui/{uid}");
         let _ = std::process::Command::new("launchctl")
-            .args(["bootstrap", &format!("gui/{uid}")])
+            .args(["bootstrap", domain.as_str()])
             .arg(path)
             .output();
     }
@@ -363,8 +366,9 @@ fn activate_launch_agent(path: &Path) {
 #[cfg(target_os = "macos")]
 fn deactivate_launch_agent(path: &Path) {
     if let Some(uid) = super::effective_uid() {
+        let target = format!("gui/{uid}/{LAUNCH_AGENT_LABEL}");
         let _ = std::process::Command::new("launchctl")
-            .args(["bootout", &format!("gui/{uid}/{LAUNCH_AGENT_LABEL}")])
+            .args(["bootout", target.as_str()])
             .output();
     }
     let _ = path;

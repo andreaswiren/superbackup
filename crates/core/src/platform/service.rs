@@ -330,7 +330,7 @@ fn not_elevated(action: &str) -> Error {
                again. From a terminal, start an Administrator PowerShell first.";
     #[cfg(target_os = "macos")]
     let how = "Run the same command again with `sudo`.";
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     let how = "Run the same command again with `sudo`, or install a user service instead with \
                `--user`, which needs no privileges.";
 
@@ -999,7 +999,8 @@ mod platform_impl {
             return Err(e);
         }
         if options.start_mode != StartMode::Disabled {
-            if let Err(e) = systemctl(options.scope, &["enable", &unit_name(&options.name)]) {
+            let unit = unit_name(&options.name);
+            if let Err(e) = systemctl(options.scope, &["enable", unit.as_str()]) {
                 rollback();
                 return Err(e);
             }
@@ -1011,8 +1012,8 @@ mod platform_impl {
         let unit = unit_name(name);
         // Best effort: a unit that is already stopped or disabled makes
         // systemctl exit non-zero, and that is not a failure of ours.
-        let _ = systemctl(scope, &["stop", &unit]);
-        let _ = systemctl(scope, &["disable", &unit]);
+        let _ = systemctl(scope, &["stop", unit.as_str()]);
+        let _ = systemctl(scope, &["disable", unit.as_str()]);
         let path = unit_path(name, scope)?;
         match std::fs::remove_file(&path) {
             Ok(()) => {}
@@ -1020,16 +1021,18 @@ mod platform_impl {
             Err(e) => return Err(Error::io(format!("removing {}", path.display()), e)),
         }
         let _ = systemctl(scope, &["daemon-reload"]);
-        let _ = systemctl(scope, &["reset-failed", &unit]);
+        let _ = systemctl(scope, &["reset-failed", unit.as_str()]);
         Ok(())
     }
 
     pub fn start(name: &str, scope: ServiceScope) -> Result<()> {
-        systemctl(scope, &["start", &unit_name(name)])
+        let unit = unit_name(name);
+        systemctl(scope, &["start", unit.as_str()])
     }
 
     pub fn stop(name: &str, scope: ServiceScope) -> Result<()> {
-        systemctl(scope, &["stop", &unit_name(name)])
+        let unit = unit_name(name);
+        systemctl(scope, &["stop", unit.as_str()])
     }
 
     pub fn status(name: &str, scope: ServiceScope) -> Result<ServiceStatus> {
@@ -1038,7 +1041,7 @@ mod platform_impl {
             .args(scope_args(scope))
             .args([
                 "show",
-                &unit,
+                unit.as_str(),
                 "--property=LoadState,ActiveState,SubState,MainPID,ExecStart,UnitFileState,User",
             ])
             .output();
@@ -1119,7 +1122,8 @@ mod platform_impl {
         }
         crate::paths::write_atomic(&path, body.as_bytes())?;
 
-        if let Err(e) = launchctl(&["bootstrap", domain(options.scope).as_str()], Some(&path)) {
+        let target = domain(options.scope);
+        if let Err(e) = launchctl(&["bootstrap", target.as_str()], Some(path.as_path())) {
             let _ = std::fs::remove_file(&path);
             return Err(e);
         }
@@ -1128,7 +1132,8 @@ mod platform_impl {
 
     pub fn uninstall(_name: &str, scope: ServiceScope) -> Result<()> {
         let path = plist_path(scope)?;
-        let _ = launchctl(&["bootout", &format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope))], None);
+        let target = format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope));
+        let _ = launchctl(&["bootout", target.as_str()], None);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1137,11 +1142,13 @@ mod platform_impl {
     }
 
     pub fn start(_name: &str, scope: ServiceScope) -> Result<()> {
-        launchctl(&["kickstart", "-k", &format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope))], None)
+        let target = format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope));
+        launchctl(&["kickstart", "-k", target.as_str()], None)
     }
 
     pub fn stop(_name: &str, scope: ServiceScope) -> Result<()> {
-        launchctl(&["kill", "SIGTERM", &format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope))], None)
+        let target = format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope));
+        launchctl(&["kill", "SIGTERM", target.as_str()], None)
     }
 
     pub fn status(_name: &str, scope: ServiceScope) -> Result<ServiceStatus> {
@@ -1149,8 +1156,9 @@ mod platform_impl {
         if !path.exists() {
             return Ok(ServiceStatus::not_installed());
         }
+        let target = format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope));
         let output = std::process::Command::new("launchctl")
-            .args(["print", &format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope))])
+            .args(["print", target.as_str()])
             .output();
         let mut status = match output {
             Ok(o) => super::parse_launchctl_print(&String::from_utf8_lossy(&o.stdout)),

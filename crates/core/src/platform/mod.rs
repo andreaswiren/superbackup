@@ -25,8 +25,11 @@
 //! * **Degrade, never fail.** Nothing in here may stop a backup. A registry
 //!   read that is denied by policy, a notification daemon that is not running,
 //!   a battery that cannot be read — all produce a default and a log line.
-//! * **`unsafe` lives in [`win32`] and in the named mutex, nowhere else,** and
-//!   every block carries a `// SAFETY:` note.
+//! * **`unsafe` exists only where a Win32 signature requires it**: the
+//!   registry, file-attribute, disk and token wrappers in [`win32`], the
+//!   `INetworkCostManager` COM call in [`power`], and the named mutex in
+//!   [`single_instance`]. Nowhere else, and every block carries a `// SAFETY:`
+//!   note naming the invariant it relies on.
 //! * **Every platform limitation is discoverable at runtime**, through
 //!   [`capabilities`] and [`limitations`], so the GUI can explain itself rather
 //!   than presenting a control that quietly does nothing.
@@ -77,10 +80,7 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
             if probe.is_dir() {
                 return win32::disk_space(probe);
             }
-            match probe.parent() {
-                Some(parent) => probe = parent,
-                None => return None,
-            }
+            probe = probe.parent()?;
         }
     }
     #[cfg(not(windows))]

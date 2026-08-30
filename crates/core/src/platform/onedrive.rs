@@ -418,22 +418,21 @@ fn detect_macos() -> Vec<OneDriveAccount> {
         }
     }
 
-    // Legacy pre-CloudStorage locations, still present on older macOS.
-    for legacy in ["OneDrive"] {
-        let path = home.home_dir().join(legacy);
-        if path.is_dir() {
-            out.push(OneDriveAccount {
-                display_name: OneDriveKind::Personal.title(),
-                path,
-                kind: OneDriveKind::Personal,
-                account_key: None,
-                email: None,
-                available_bytes: 0,
-                total_bytes: 0,
-                sync_state: SyncState::Unknown,
-                warnings: Vec::new(),
-            });
-        }
+    // The legacy pre-CloudStorage location, still present on older macOS and
+    // on machines upgraded from one.
+    let legacy = home.home_dir().join("OneDrive");
+    if legacy.is_dir() {
+        out.push(OneDriveAccount {
+            display_name: OneDriveKind::Personal.title(),
+            path: legacy,
+            kind: OneDriveKind::Personal,
+            account_key: None,
+            email: None,
+            available_bytes: 0,
+            total_bytes: 0,
+            sync_state: SyncState::Unknown,
+            warnings: Vec::new(),
+        });
     }
     out
 }

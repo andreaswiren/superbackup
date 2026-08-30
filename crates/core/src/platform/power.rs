@@ -33,7 +33,9 @@ use serde::{Deserialize, Serialize};
 pub const SLEEP_DETECTION_TOLERANCE_SECONDS: i64 = 60;
 
 /// Give up on a platform query after this long rather than stalling the
-/// scheduler behind a wedged network service.
+/// scheduler behind a wedged network service. Only the Windows COM path needs
+/// it; the Unix implementations block on a short-lived child process instead.
+#[cfg_attr(not(windows), allow(dead_code))]
 const QUERY_TIMEOUT: StdDuration = StdDuration::from_secs(3);
 
 // ---------------------------------------------------------------------------
@@ -599,7 +601,7 @@ mod platform_impl {
 ///
 /// ```text
 /// Now drawing from 'Battery Power'
-///  -InternalBattery-0 (id=1234)	87%; discharging; 4:21 remaining present: true
+///  -InternalBattery-0 (id=1234)    87%; discharging; 4:21 remaining present: true
 /// ```
 ///
 /// Compiled on every platform so the parser is covered by the test suite.

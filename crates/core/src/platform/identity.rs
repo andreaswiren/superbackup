@@ -508,7 +508,7 @@ pub fn list_machines(root: &Path) -> Result<Vec<MachineRecord>> {
             out.push(record);
         }
     }
-    out.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+    out.sort_by_key(|m| std::cmp::Reverse(m.last_seen));
     Ok(out)
 }
 
@@ -548,19 +548,16 @@ pub fn write_readme(root: &Path) -> Result<()> {
 /// Windows, and Notepad on Windows 10 and earlier renders lone LFs as one long
 /// line.
 pub fn render_readme(machines: &[MachineRecord], generated: DateTime<Utc>) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    lines.push("What is this folder?".into());
-    lines.push("=====================".into());
-    lines.push(String::new());
-    lines.push(
+    let mut lines: Vec<String> = vec![
+        "What is this folder?".into(),
+        "=====================".into(),
+        String::new(),
         "This drive, share or bucket is used by superbackup, a backup program.".into(),
-    );
-    lines.push(
         "Each computer that backs up here owns one folder next to this one. The".into(),
-    );
-    lines.push("folder name is the computer's name plus a short random code, so that".into());
-    lines.push("two computers with the same name never collide.".into());
-    lines.push(String::new());
+        "folder name is the computer's name plus a short random code, so that".into(),
+        "two computers with the same name never collide.".into(),
+        String::new(),
+    ];
 
     if machines.is_empty() {
         lines.push("No computer has finished writing a backup here yet.".into());

@@ -128,7 +128,10 @@ fn a_medium_length_path_only_warns() {
             assert_eq!(issue.severity, Severity::Warning);
         }
         Some(other) => panic!("unexpected issue on a non-Windows host: {other:?}"),
-        None => assert!(!cfg!(windows)),
+        None => {
+            let on_windows = cfg!(windows);
+            assert!(!on_windows, "Windows must warn about a path this long");
+        }
     }
 }
 

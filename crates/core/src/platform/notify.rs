@@ -218,8 +218,13 @@ impl Notification {
     /// Build a notification from an activity-log [`Event`], so the daemon can
     /// have one code path that both logs and notifies.
     pub fn from_event(event: &Event) -> Option<Notification> {
+        // Severity gates first: `service.started` is an Info event and must
+        // not be promoted to a "service problem" toast just because of its
+        // prefix.
         let kind = match (event.severity, event.kind.as_str()) {
-            (_, k) if k.starts_with("service.") => NotificationKind::ServiceError,
+            (Severity::Error, k) | (Severity::Warning, k) if k.starts_with("service.") => {
+                NotificationKind::ServiceError
+            }
             (Severity::Error, _) => NotificationKind::Failure,
             (Severity::Warning, k) if k.contains("stale") => NotificationKind::Stale,
             (Severity::Warning, _) => NotificationKind::Info,
@@ -589,8 +594,12 @@ impl Notifier {
                 if let Some(id) = &app_id {
                     builder.app_id(id);
                 }
+                // No other platform has an AppUserModelID; XDG and macOS
+                // identify the sender by `appname` and by the bundle id.
                 #[cfg(not(windows))]
-                let _ = &app_id;
+                {
+                    let _ = &app_id;
+                }
                 for (id, label) in &actions {
                     builder.action(id, label);
                 }
@@ -598,6 +607,14 @@ impl Notifier {
                 match builder.show() {
                     Ok(handle) => {
                         let _ = tx.send(Ok(()));
+                        // macOS is deliberately excluded: on the
+                        // NSUserNotificationCenter path `wait_for_action`
+                        // re-sends the notification and needs the *main* run
+                        // loop to be pumping, so calling it from a worker
+                        // thread would show a duplicate toast and then block
+                        // that thread for ever. Click handling on macOS
+                        // belongs to the app's own notification delegate.
+                        #[cfg(not(target_os = "macos"))]
                         if let Some(sink) = sink {
                             handle.wait_for_action(move |id| {
                                 let target = targets
@@ -608,6 +625,10 @@ impl Notifier {
                                     sink(target);
                                 }
                             });
+                        }
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = (&sink, &targets, &default_target, handle);
                         }
                     }
                     Err(e) => {
