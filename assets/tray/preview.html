@@ -1,0 +1,281 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>superbackup tray icons</title>
+<style>
+  body { background:#fff; color:#1A1D23; font:14px/1.5 system-ui, sans-serif; padding:32px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p  { margin:0 0 24px; color:#5A6270; max-width:62ch; }
+  table { border-collapse:collapse; }
+  th { font-weight:500; font-size:13px; color:#3A3F4A; }
+  tr > th:first-child { text-align:right; padding-right:16px; white-space:nowrap; }
+  th.col { padding-bottom:10px; text-align:center; }
+</style>
+<h1>superbackup tray icons</h1>
+<p>Five health states. Check that every row stays mutually distinguishable &mdash;
+especially the two greyscale rows, which are the test for whether shape (and not
+just colour) is carrying the meaning.</p>
+<table><tr><th></th><th class="col">idle</th><th class="col">running</th><th class="col">attention</th><th class="col">paused</th><th class="col">failed</th></tr><tr><th>Light taskbar 16px</th><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
+  <title>superbackup â€” idle</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
+  <!-- Check: completed, nothing outstanding. -->
+  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
+  <title>superbackup â€” running</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
+  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
+       when static, and is unmistakably not a check. -->
+  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
+  <title>superbackup â€” attention</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
+  <!-- Exclamation: needs a decision, not an error. -->
+  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
+  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
+  <title>superbackup â€” paused</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
+  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
+  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
+  <title>superbackup â€” failed</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
+  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
+  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+</svg>
+</span></td></tr><tr><th>Dark taskbar 16px</th><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
+  <title>superbackup â€” idle</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
+  <!-- Check: completed, nothing outstanding. -->
+  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
+  <title>superbackup â€” running</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
+  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
+       when static, and is unmistakably not a check. -->
+  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
+  <title>superbackup â€” attention</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
+  <!-- Exclamation: needs a decision, not an error. -->
+  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
+  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
+  <title>superbackup â€” paused</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
+  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
+  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
+  <title>superbackup â€” failed</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
+  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
+  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+</svg>
+</span></td></tr><tr><th>Dark taskbar 20px</th><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
+  <title>superbackup â€” idle</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
+  <!-- Check: completed, nothing outstanding. -->
+  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
+  <title>superbackup â€” running</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
+  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
+       when static, and is unmistakably not a check. -->
+  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
+  <title>superbackup â€” attention</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
+  <!-- Exclamation: needs a decision, not an error. -->
+  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
+  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
+  <title>superbackup â€” paused</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
+  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
+  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
+  <title>superbackup â€” failed</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
+  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
+  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+</svg>
+</span></td></tr><tr><th>32px</th><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
+  <title>superbackup â€” idle</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
+  <!-- Check: completed, nothing outstanding. -->
+  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
+  <title>superbackup â€” running</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
+  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
+       when static, and is unmistakably not a check. -->
+  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
+  <title>superbackup â€” attention</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
+  <!-- Exclamation: needs a decision, not an error. -->
+  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
+  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
+  <title>superbackup â€” paused</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
+  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
+  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
+  <title>superbackup â€” failed</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
+  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
+  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+</svg>
+</span></td></tr><tr><th>Greyscale on light</th><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
+  <title>superbackup â€” idle</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
+  <!-- Check: completed, nothing outstanding. -->
+  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
+  <title>superbackup â€” running</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
+  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
+       when static, and is unmistakably not a check. -->
+  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
+  <title>superbackup â€” attention</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
+  <!-- Exclamation: needs a decision, not an error. -->
+  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
+  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
+  <title>superbackup â€” paused</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
+  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
+  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
+  <title>superbackup â€” failed</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
+  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
+  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+</svg>
+</span></td></tr><tr><th>Greyscale on dark</th><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
+  <title>superbackup â€” idle</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
+  <!-- Check: completed, nothing outstanding. -->
+  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
+  <title>superbackup â€” running</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
+  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
+       when static, and is unmistakably not a check. -->
+  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
+  <title>superbackup â€” attention</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
+  <!-- Exclamation: needs a decision, not an error. -->
+  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
+  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
+  <title>superbackup â€” paused</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
+  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
+  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+</svg>
+</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
+  <title>superbackup â€” failed</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
+  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
+  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+</svg>
+</span></td></tr></table>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
+  <title>superbackup — paused</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
+  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
+  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
+</svg>

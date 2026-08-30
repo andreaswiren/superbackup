@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
+  <title>superbackup — running</title>
+  <!-- Shared shield silhouette. Identical across all five states so the app is
+       recognisable at 16px; only the interior glyph and accent change. -->
+  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
+  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
+       when static, and is unmistakably not a check. -->
+  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
+</svg>

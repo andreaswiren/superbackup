@@ -1,0 +1,6 @@
+# Stable-only options: unstable keys emit warnings under `cargo fmt --check`
+# in CI, which turns a formatting gate into noise.
+edition = "2021"
+max_width = 100
+use_small_heuristics = "Max"
+newline_style = "Unix"
