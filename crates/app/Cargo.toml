@@ -26,7 +26,7 @@ eframe = "0.31.1"
 egui = "0.31.1"
 egui_extras = { version = "0.31.1", features = ["image"] }
 tray-icon = "0.24.2"
-clap = { version = "4.5.61", features = ["derive"] }
+clap = { version = "4.5.61", features = ["derive", "env"] }
 rfd = "0.17.2"
 image = { version = "0.25.6", default-features = false, features = ["png"] }
 resvg = "0.45.1"
