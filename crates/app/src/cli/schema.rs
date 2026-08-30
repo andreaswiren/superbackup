@@ -62,8 +62,28 @@ pub struct CommandDoc {
     pub positionals: Vec<Opt>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub subcommands: Vec<CommandDoc>,
+    /// Sets of arguments of which at most one may be given.
+    ///
+    /// These come from clap argument groups, which is where most of this
+    /// program's mutual exclusion actually lives — `destination add` accepts
+    /// `--local`, `--onedrive`, `--s3` or `--mirror`, and exactly one of them.
+    /// Per-argument `conflicts_with` does not surface group membership, so
+    /// without this a caller would learn the flags exist but not that they
+    /// are alternatives.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exclusive_groups: Vec<ArgGroupDoc>,
     /// True when this command has subcommands and does nothing on its own.
     pub is_group: bool,
+}
+
+/// A set of mutually exclusive arguments.
+#[derive(Debug, Serialize)]
+pub struct ArgGroupDoc {
+    pub name: String,
+    /// Argument names in the group. At most one may be supplied.
+    pub members: Vec<String>,
+    /// True when one of them must be supplied.
+    pub required: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -91,11 +111,14 @@ pub struct Opt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
     /// Arguments that cannot be combined with this one.
+    ///
+    /// Mutual exclusion is published because clap exposes it. The inverse
+    /// relation ("this argument requires that one") is *not* published: clap
+    /// 4.6 offers no accessor for it, and a hand-maintained list would be
+    /// exactly the drift this generated schema exists to prevent. Arguments
+    /// with such a requirement state it in their own description instead.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub conflicts_with: Vec<String>,
-    /// Arguments that must also be supplied alongside this one.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub requires: Vec<String>,
 }
 
 const NOTES: &[&str] = &[
@@ -110,6 +133,7 @@ const NOTES: &[&str] = &[
      finishes and to get a non-zero exit code when it fails.",
     "No command accepts a passphrase as an argument. Use --passphrase-file, or \
      `-` to read from stdin.",
+    "Mutually exclusive arguments are listed in each argument's conflicts_with.      Arguments that require another argument say so in their own description.",
     "This CLI is a thin client over the running instance. If nothing is listening, \
      commands exit 3 rather than starting a second copy, because two processes \
      driving one repository risks corrupting it.",
@@ -119,12 +143,18 @@ impl Schema {
     /// Build the schema by walking the live parser definition.
     pub fn generate() -> Schema {
         use clap::CommandFactory;
-        let cmd = super::args::Cli::command();
+        // `build()` is what materialises the argument groups that the derive
+        // macro declares via `group = "..."`. Without it `get_groups()` is
+        // empty and the schema would silently omit every mutual exclusion in
+        // the program.
+        let mut cmd = super::args::Cli::command();
+        cmd.build();
+        let cmd = cmd;
 
         let global_options = cmd
             .get_arguments()
             .filter(|a| a.is_global_set())
-            .map(describe_arg)
+            .map(|a| describe_arg(&cmd, a))
             .collect();
 
         let commands = cmd
@@ -215,9 +245,9 @@ fn describe_command(cmd: &clap::Command, parent: String) -> CommandDoc {
             continue;
         }
         if arg.is_positional() {
-            positionals.push(describe_arg(arg));
+            positionals.push(describe_arg(cmd, arg));
         } else {
-            options.push(describe_arg(arg));
+            options.push(describe_arg(cmd, arg));
         }
     }
 
@@ -225,6 +255,22 @@ fn describe_command(cmd: &clap::Command, parent: String) -> CommandDoc {
         .get_subcommands()
         .filter(|c| !c.is_hide_set())
         .map(|c| describe_command(c, path.clone()))
+        .collect();
+
+    let exclusive_groups = cmd
+        .get_groups()
+        .filter(|g| {
+            // `is_multiple` takes &mut self, so work from a clone; a group
+            // that permits several members is not an exclusion set.
+            let mut g = (*g).clone();
+            !g.is_multiple()
+        })
+        .map(|g| ArgGroupDoc {
+            name: g.get_id().to_string(),
+            members: g.get_args().map(|id| id.to_string()).collect(),
+            required: g.is_required_set(),
+        })
+        .filter(|g| g.members.len() > 1)
         .collect();
 
     CommandDoc {
@@ -239,11 +285,12 @@ fn describe_command(cmd: &clap::Command, parent: String) -> CommandDoc {
         options,
         positionals,
         subcommands,
+        exclusive_groups,
         path,
     }
 }
 
-fn describe_arg(arg: &clap::Arg) -> Opt {
+fn describe_arg(cmd: &clap::Command, arg: &clap::Arg) -> Opt {
     let num_args = arg.get_num_args();
     let is_flag = num_args.map(|r| !r.takes_values()).unwrap_or(false);
 
@@ -251,28 +298,18 @@ fn describe_arg(arg: &clap::Arg) -> Opt {
         name: arg.get_id().to_string(),
         long: arg.get_long().map(|s| s.to_string()),
         short: arg.get_short().map(|c| c.to_string()),
-        about: arg
-            .get_help()
-            .or_else(|| arg.get_long_help())
-            .map(|s| s.to_string()),
+        about: arg.get_help().or_else(|| arg.get_long_help()).map(|s| s.to_string()),
         value_name: arg.get_value_names().and_then(|n| n.first().map(|s| s.to_string())),
         required: arg.is_required_set(),
         repeatable: matches!(arg.get_action(), clap::ArgAction::Append | clap::ArgAction::Count),
         is_flag,
-        default: arg
-            .get_default_values()
-            .first()
-            .map(|v| v.to_string_lossy().into_owned()),
-        choices: arg
-            .get_possible_values()
-            .iter()
-            .map(|v| v.get_name().to_string())
-            .collect(),
+        default: arg.get_default_values().first().map(|v| v.to_string_lossy().into_owned()),
+        choices: arg.get_possible_values().iter().map(|v| v.get_name().to_string()).collect(),
         env: arg.get_env().map(|e| e.to_string_lossy().into_owned()),
-        conflicts_with: arg.get_all_conflicts().iter().map(|id| id.to_string()).collect(),
-        requires: arg
-            .get_requires()
-            .map(|(_, id)| id.to_string())
+        conflicts_with: cmd
+            .get_arg_conflicts_with(arg)
+            .iter()
+            .map(|a| a.get_id().to_string())
             .collect(),
     }
 }
@@ -280,7 +317,7 @@ fn describe_arg(arg: &clap::Arg) -> Opt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn schema_is_valid_json_and_round_trips() {
@@ -381,6 +418,27 @@ mod tests {
                     "schema path `{path}` is not a real command"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn mutually_exclusive_arguments_are_advertised() {
+        // The parser rejects `--local X --mirror Y`. If the schema does not
+        // say so, an agent discovers that only by having a command fail.
+        let s = Schema::generate();
+        let dest = s.commands.iter().find(|c| c.name == "destination").expect("destination");
+        let add = dest.subcommands.iter().find(|c| c.name == "add").expect("destination add");
+        let group = add
+            .exclusive_groups
+            .iter()
+            .find(|g| g.members.iter().any(|m| m == "s3"))
+            .expect("the destination-kind group must be published");
+        for expected in ["local", "onedrive", "s3", "mirror"] {
+            assert!(
+                group.members.iter().any(|m| m == expected),
+                "`{expected}` missing from the exclusion group: {:?}",
+                group.members
+            );
         }
     }
 

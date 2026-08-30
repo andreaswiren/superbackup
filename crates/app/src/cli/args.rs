@@ -321,7 +321,10 @@ pub enum JobCommand {
     List(JobListArgs),
 
     /// Show one job in full.
-    Show { #[arg(value_name = "JOB")] job: String },
+    Show {
+        #[arg(value_name = "JOB")]
+        job: String,
+    },
 
     /// Create a job.
     Add(JobAddArgs),
@@ -333,10 +336,16 @@ pub enum JobCommand {
     Remove(JobRemoveArgs),
 
     /// Allow a job to run on its schedule.
-    Enable { #[arg(value_name = "JOB")] job: String },
+    Enable {
+        #[arg(value_name = "JOB")]
+        job: String,
+    },
 
     /// Stop a job running on its schedule. Does not delete anything.
-    Disable { #[arg(value_name = "JOB")] job: String },
+    Disable {
+        #[arg(value_name = "JOB")]
+        job: String,
+    },
 
     /// Show what a job would include and exclude, without backing up.
     Preview(JobPreviewArgs),
@@ -491,7 +500,10 @@ pub enum DestinationCommand {
     List,
 
     /// Show one destination in full, including its encryption settings.
-    Show { #[arg(value_name = "DEST")] destination: String },
+    Show {
+        #[arg(value_name = "DEST")]
+        destination: String,
+    },
 
     /// Add a destination and, for repositories, create or connect to it.
     Add(DestinationAddArgs),
@@ -507,19 +519,31 @@ pub enum DestinationCommand {
     Remove(DestinationRemoveArgs),
 
     /// Check that the destination is reachable and the credentials work.
-    Test { #[arg(value_name = "DEST")] destination: String },
+    Test {
+        #[arg(value_name = "DEST")]
+        destination: String,
+    },
 
     /// Connect to a repository that already exists.
-    Connect { #[arg(value_name = "DEST")] destination: String },
+    Connect {
+        #[arg(value_name = "DEST")]
+        destination: String,
+    },
 
     /// Report how much space the repository occupies.
-    Stats { #[arg(value_name = "DEST")] destination: String },
+    Stats {
+        #[arg(value_name = "DEST")]
+        destination: String,
+    },
 
     /// Run Kopia maintenance to reclaim space from expired snapshots.
     Maintain(DestinationMaintainArgs),
 
     /// List the machines that have written to this destination.
-    Machines { #[arg(value_name = "DEST")] destination: String },
+    Machines {
+        #[arg(value_name = "DEST")]
+        destination: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -540,6 +564,7 @@ pub struct DestinationAddArgs {
     pub onedrive: Option<String>,
 
     /// A Kopia repository in a bucket on a configured storage provider.
+    /// Requires --bucket.
     #[arg(long, value_name = "PROVIDER", group = "kind", requires = "bucket")]
     pub s3: Option<String>,
 
@@ -645,7 +670,10 @@ pub enum ProviderCommand {
     List,
 
     /// Show one provider. Credentials are never printed.
-    Show { #[arg(value_name = "PROVIDER")] provider: String },
+    Show {
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+    },
 
     /// Add a storage account that destinations can reuse.
     Add(ProviderAddArgs),
@@ -657,14 +685,23 @@ pub enum ProviderCommand {
     Remove(ProviderRemoveArgs),
 
     /// Check the endpoint and credentials.
-    Test { #[arg(value_name = "PROVIDER")] provider: String },
+    Test {
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+    },
 
     /// Replace the access key pair. Affects every destination that inherits
     /// these credentials.
-    Rotate { #[arg(value_name = "PROVIDER")] provider: String },
+    Rotate {
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+    },
 
     /// List destinations and jobs that depend on this provider.
-    UsedBy { #[arg(value_name = "PROVIDER")] provider: String },
+    UsedBy {
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -949,7 +986,10 @@ pub enum ConfigCommand {
     /// Print the whole configuration. Secrets are never included.
     Show,
     /// Read one setting.
-    Get { #[arg(value_name = "KEY")] key: String },
+    Get {
+        #[arg(value_name = "KEY")]
+        key: String,
+    },
     /// Write one setting.
     Set {
         #[arg(value_name = "KEY")]
@@ -960,7 +1000,10 @@ pub enum ConfigCommand {
     /// Check the configuration for problems without changing anything.
     Validate,
     /// Write the configuration to a file. Secrets are never included.
-    Export { #[arg(long, value_name = "FILE")] to: PathBuf },
+    Export {
+        #[arg(long, value_name = "FILE")]
+        to: PathBuf,
+    },
     /// Reload the configuration from disk.
     Reload,
 }
@@ -1067,8 +1110,8 @@ mod tests {
             vec!["superbackup", "doctor", "--json"],
             vec!["superbackup", "schema", "--json"],
         ] {
-            let cli = Cli::try_parse_from(&argv)
-                .unwrap_or_else(|e| panic!("{argv:?} should parse: {e}"));
+            let cli =
+                Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?} should parse: {e}"));
             assert!(cli.global.json, "--json did not take effect for {argv:?}");
         }
     }
