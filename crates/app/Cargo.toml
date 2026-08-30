@@ -22,3 +22,14 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+eframe = "0.31.1"
+egui = "0.31.1"
+egui_extras = { version = "0.31.1", features = ["image"] }
+tray-icon = "0.24.2"
+clap = { version = "4.5.61", features = ["derive"] }
+rfd = "0.17.2"
+image = { version = "0.25.6", default-features = false, features = ["png"] }
+resvg = "0.45.1"
+tiny-skia = "0.12.0"
+usvg = "0.45.1"
+open = "5.4.2"
