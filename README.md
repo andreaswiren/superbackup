@@ -105,13 +105,26 @@ sudo apt-get install libgtk-3-dev libxdo-dev libayatana-appindicator3-dev pkg-co
 
 ### Kopia
 
-superbackup drives the `kopia` binary. Install it from
-[kopia.io/docs/installation](https://kopia.io/docs/installation/), or let
-superbackup fetch a pinned build:
+superbackup drives the `kopia` binary and **installs it for you on first run**,
+fetching the current release from the Kopia project's own GitHub releases and
+verifying its SHA-256 against the checksum file published with it before
+anything is written to disk.
 
-```bash
-superbackup doctor --fix
-```
+If you would rather manage it yourself, install Kopia from
+[kopia.io/docs/installation](https://kopia.io/docs/installation/) — a Kopia
+already on your `PATH` is preferred over the managed one, and a binary you pin
+explicitly is never replaced. Auto-install can be switched off entirely.
+
+Updates default to *notifying* rather than installing. Swapping the binary that
+reads and writes your repositories is not a decision this application should
+make on your behalf, and never while a job is running.
+
+One honest limitation: Kopia publishes a signature alongside its checksums, but
+not a key this project can pin. The checksum therefore proves **integrity**,
+not **authenticity** — that rests on TLS and on GitHub itself. If you want a
+verified signature chain, install Kopia through your platform's package manager
+and point superbackup at it. See
+[A8 in the threat model](docs/compliance/THREAT_MODEL.md).
 
 ## Getting started
 
@@ -171,7 +184,7 @@ the full surface without reading this file.
 superbackup holds every key that makes your backups recoverable. The design is
 documented in full, including its limits:
 
-- **[Threat model](docs/compliance/THREAT_MODEL.md)** — seven in-scope
+- **[Threat model](docs/compliance/THREAT_MODEL.md)** — eight in-scope
   adversaries with defences and residual risk, and an explicit list of what is
   out of scope.
 - **[Privacy](docs/compliance/PRIVACY.md)** — every network connection the

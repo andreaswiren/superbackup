@@ -539,8 +539,17 @@ pub enum ProviderKind {
         credentials: S3Credentials,
         #[serde(default = "default_true")]
         tls: bool,
-        /// Force path-style addressing (`host/bucket/key`). Required by MinIO
-        /// and some gateways; StorJ and AWS accept virtual-hosted style.
+        /// Request path-style addressing (`host/bucket/key`) rather than
+        /// virtual-hosted style.
+        ///
+        /// **Advisory only — it changes nothing today.** Kopia's S3 backend is
+        /// minio-go, which selects path-style automatically for endpoints that
+        /// need it, and `cli/storage_s3.go` exposes no flag to override that
+        /// choice. The field is kept because it is a real property of an
+        /// endpoint and a future backend may honour it, but nothing in the
+        /// interface may present it as a control the user can act on:
+        /// `KopiaDriver::unsupported_options()` reports it as inert so the
+        /// GUI can say so rather than implying an effect it does not have.
         #[serde(default)]
         path_style: bool,
         #[serde(default)]

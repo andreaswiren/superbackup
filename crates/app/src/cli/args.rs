@@ -726,9 +726,11 @@ pub struct ProviderAddArgs {
     #[arg(long, value_name = "KEY")]
     pub access_key: Option<String>,
 
-    /// Force path-style addressing (`host/bucket/key`). Needed by MinIO.
-    #[arg(long)]
-    pub path_style: bool,
+    // Deliberately no `--path-style`. Kopia's S3 backend selects path-style
+    // addressing automatically and exposes no flag to override it, so offering
+    // the switch would mean shipping a control that does nothing. The property
+    // still exists on `ProviderKind::S3` for future backends; it is simply not
+    // presented as something the user can act on.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

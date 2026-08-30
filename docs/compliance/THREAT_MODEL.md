@@ -1,6 +1,6 @@
 # superbackup — Threat Model
 
-Version 1, for superbackup 0.1.x.
+Version 2, for superbackup 0.1.x.
 
 This document states what superbackup defends against, what it does not, and
 why. It is written to be falsifiable: every claim below should be checkable
@@ -149,6 +149,62 @@ user's files directly; the endpoint does not meaningfully widen that. It does
 grant the ability to *trigger* operations, which is why destructive requests
 (delete a snapshot, change a passphrase) require the vault to be unlocked.
 
+On Windows, peer identity is pid-only — `interprocess` exposes no caller token
+or SID, and pid-based lookup races with pid reuse. **The DACL is therefore the
+only access control on Windows**, which is why `bind` fails outright rather
+than falling back to a default-permissioned pipe if the descriptor cannot be
+constructed.
+
+One residual copy of a passphrase exists by construction: `Request` is an
+internally-tagged enum, so `serde` buffers the frame before dispatching on the
+command name, and `vault.unlock`'s passphrase transiently exists in that
+buffer. It never lands in a `String` field, never appears in `Debug`, never
+reaches a log, and is never returned; the socket read buffer is zeroed after
+every frame. Removing the copy entirely would require adjacent tagging
+(`{"cmd":…,"params":{…}}`), at the cost of a wire format a human can type by
+hand — which for a protocol whose debuggability is a stated design goal was
+judged the worse trade.
+
+### A8 — A malicious `kopia` binary
+
+**This was out of scope until superbackup started installing Kopia itself.**
+Earlier versions of this document said the mitigation was operational — "pin
+and verify the binary you install". Once the application downloads and executes
+that binary on first run, the verification is our responsibility, not the
+user's, and the honest position has to change with it.
+
+**Defence.** The download is fetched over TLS from a pinned upstream repository
+(`kopia/kopia` by default), restricted to GitHub hosts with redirects off
+GitHub refused before a connection is made. The archive is held **in memory**
+and its SHA-256 compared against the `checksums.txt` published with the same
+release *before anything touches disk*, so a mismatch has nothing to clean up.
+Every archive member is checked for path traversal even after the wanted
+executable has been found. Installation is temp-file → `--version` probe →
+atomic rename, so a partially written executable is never left where the
+resolver would find it. A version floor is enforced and downgrades are refused.
+A binary the user installed themselves — via `Settings::kopia_path` or on
+`PATH` — is never replaced.
+
+**Residual risk, stated plainly.** Kopia publishes `checksums.txt.sig`, but not
+a signing key in a form this project can pin, so **the signature is not
+verified**. The checksum proves the download matches what that release
+published; it does not prove who published it. Authenticity therefore rests on
+TLS to `github.com` and on GitHub itself. Anyone able to publish a release to
+`kopia/kopia` — or to compromise GitHub — defeats this. That is the same
+exposure as `curl | tar x`, and no worse, but it is not the same as a verified
+signature and must not be described as one.
+
+This is surfaced in the API rather than buried here:
+`InstallOutcome::signature_verified` is `false`, so the interface states the
+guarantee accurately. Users wanting a stronger chain should install Kopia
+through their platform's package manager, which does verify signatures, and
+point `Settings::kopia_path` at it. Auto-install can be turned off entirely.
+
+**Also note:** superbackup hands repository passphrases to whatever binary it
+resolves. A substituted Kopia has those keys by construction. `doctor` reports
+the resolved path, version, and whether the binary is the managed one, so a
+substitution is at least visible.
+
 ---
 
 ## 3. Adversaries out of scope
@@ -159,10 +215,10 @@ Stated so the boundary is honest rather than implied:
   memory, keystrokes, and the files directly. No userspace design survives this.
 - **A compromised operating system, firmware, or hypervisor.**
 - **Physical attacks** — cold boot, DMA, a debugger on a live process.
-- **A malicious `kopia` binary.** We drive kopia; if the binary is replaced, it
-  has our repository passphrases by construction. Mitigation is operational:
-  pin and verify the binary you install. `doctor` reports the resolved path and
-  version so a substitution is at least visible.
+- **A compromise of the Kopia project or of GitHub itself.** See
+  [A8](#a8--a-malicious-kopia-binary): we verify the download's checksum but
+  cannot verify its signature, so a release published by an attacker with
+  upstream access is not detected.
 - **Traffic analysis of the destination.** Sizes and timing leak.
 - **The user losing their passphrase.** By design there is no recovery. This is
   a property, not a gap — but it is the single most likely way a real user loses
@@ -242,10 +298,12 @@ confidentiality of backed-up content is Kopia's property, under the algorithms
 selected at repository creation (AES-256-GCM-HMAC-SHA256 by default).
 
 This means Kopia's security posture is ours. We manage that dependency by
-pinning a known-good version, checking the version at startup and refusing
-versions below a documented floor, and reporting the resolved binary path in
-`doctor` so a substituted binary is visible. Kopia is Apache-2.0; see
-[`THIRD_PARTY.md`](THIRD_PARTY.md).
+enforcing a documented minimum version at startup, refusing downgrades,
+verifying the checksum of any build we install ourselves, and reporting the
+resolved binary path and version in `doctor` so a substituted binary is
+visible. The limits of that verification are set out in
+[A8](#a8--a-malicious-kopia-binary) — in particular, we check integrity but
+not authenticity. Kopia is Apache-2.0; see [`THIRD_PARTY.md`](THIRD_PARTY.md).
 
 ---
 
@@ -263,3 +321,4 @@ request that returns sensitive data, and at each minor release.
 | Version | Date | Change |
 |---|---|---|
 | 1 | 2026-08-30 | Initial model for 0.1.0. |
+| 2 | 2026-08-31 | Added A8 (Kopia binary integrity) after auto-install moved that verification from the user to this application. Recorded the Windows pid-only peer identity and the transient passphrase copy in serde's buffer under A7. |
