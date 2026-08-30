@@ -406,7 +406,11 @@ impl Event {
         self.destination_id = Some(destination_id);
         self
     }
-    pub fn with_field(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Event {
+    pub fn with_field(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Event {
         self.fields.insert(key.into(), value.into());
         self
     }
@@ -443,8 +447,7 @@ impl PersistedState {
             }
             RunStatus::Failed => {
                 summary.consecutive_failures += 1;
-                summary.last_error =
-                    run.destinations.iter().find_map(|d| d.error.clone());
+                summary.last_error = run.destinations.iter().find_map(|d| d.error.clone());
             }
             _ => {}
         }
@@ -513,23 +516,14 @@ mod tests {
 
     #[test]
     fn health_precedence_puts_failure_first() {
-        assert_eq!(
-            StatusSnapshot::derive_health(true, true, true, true, true),
-            Health::Failed
-        );
-        assert_eq!(
-            StatusSnapshot::derive_health(true, true, false, false, false),
-            Health::Paused
-        );
+        assert_eq!(StatusSnapshot::derive_health(true, true, true, true, true), Health::Failed);
+        assert_eq!(StatusSnapshot::derive_health(true, true, false, false, false), Health::Paused);
         assert_eq!(
             StatusSnapshot::derive_health(false, false, false, false, false),
             Health::Attention,
             "a locked vault blocks schedules and must be visible"
         );
-        assert_eq!(
-            StatusSnapshot::derive_health(true, false, false, false, false),
-            Health::Idle
-        );
+        assert_eq!(StatusSnapshot::derive_health(true, false, false, false, false), Health::Idle);
     }
 
     #[test]

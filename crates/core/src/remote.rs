@@ -47,6 +47,33 @@
 //! a passphrase the user just typed. A vault that does not open is not a
 //! vault; writing it over the working one would be handing an attacker a
 //! one-request denial of service against every backup on the machine.
+//!
+//! # Freshness and identity are separate checks from authenticity
+//!
+//! A blob can be perfectly authentic and still be the wrong one. Two cases
+//! matter, and neither is caught by decryption or by a signature:
+//!
+//! * **Rollback.** A *previously published* version of the same vault carries
+//!   a valid signature and opens with the right passphrase, for ever. Serving
+//!   it back reinstates an S3 key the user rotated away, restores a
+//!   destination they deleted, or undoes a `trusted_signers` change. So
+//!   [`verify_pull`] refuses an incoming `updated_at` older than the local
+//!   vault's for the same `vault_id`, unless the caller sets
+//!   [`PullOptions::allow_rollback`].
+//! * **Substitution.** A vault with a different `vault_id` is not a newer
+//!   version of yours; it is somebody else's key material. [`apply_pull`]
+//!   refuses it unless the caller sets
+//!   [`PullOptions::allow_different_vault`].
+//!
+//! # The remote block never travels
+//!
+//! [`crate::model::RemoteConfigSource`] is machine-local configuration and is
+//! preserved across a pull. It has to be: `trusted_signers` is the pinned
+//! signer list, and if the pulled artifact could supply it, then one accepted
+//! publish would clear the pin — and repoint `url` — for every pull
+//! afterwards. A security control that the thing it protects against can
+//! switch off is not a control. The same argument covers `url`, `auth` (a
+//! handle to *this* machine's token) and the local pull bookkeeping.
 
 use crate::config::{ConfigStore, Store};
 use crate::crypto::{signing, BackupReason, Envelope, Vault};
@@ -145,9 +172,7 @@ pub fn resolve_endpoint(source: &RemoteConfigSource, authenticated: bool) -> Res
             }
         } else {
             Endpoint::GitHubRaw {
-                url: format!(
-                    "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
-                ),
+                url: format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"),
                 owner,
                 repo,
             }
@@ -188,7 +213,11 @@ fn normalise_repo_path(path: &str) -> String {
 pub struct FetchedVault {
     /// The sealed vault, exactly as served.
     pub bytes: Vec<u8>,
-    /// Where it came from, for the audit log. Never contains credentials.
+    /// Where it came from, for the audit log.
+    ///
+    /// Passed through [`crate::redact::scrub`] before it is stored, because a
+    /// generic HTTPS remote is used verbatim and users do paste
+    /// `https://token@host/...` into that field.
     pub source_url: String,
     /// The blob SHA reported by the Contents API, needed to overwrite the file
     /// on a later push, and useful as a change marker.
@@ -250,7 +279,10 @@ impl RemoteClient {
         let response = request.send().await.map_err(|e| {
             // reqwest's Display can include the URL, which for a generic
             // HTTPS remote may carry a token the user embedded by hand.
-            Error::Remote(format!("could not reach the remote: {}", crate::redact::scrub(&e.to_string())))
+            Error::Remote(format!(
+                "could not reach the remote: {}",
+                crate::redact::scrub(&e.to_string())
+            ))
         })?;
 
         let status = response.status();
@@ -277,7 +309,11 @@ impl RemoteClient {
         }
 
         let (bytes, sha) = decode_body(&body)?;
-        Ok(FetchedVault { bytes, source_url: endpoint.url().to_string(), sha })
+        Ok(FetchedVault {
+            bytes,
+            source_url: crate::redact::scrub(endpoint.url()).into_owned(),
+            sha,
+        })
     }
 
     /// Publish a sealed vault to a GitHub repository.
@@ -374,11 +410,11 @@ impl RemoteClient {
 /// Turn an HTTP status into an error a user can act on.
 fn remote_status_error(status: reqwest::StatusCode, url: &str) -> Error {
     let hint = match status.as_u16() {
-        401 | 403 => {
-            "the token is missing, expired, or lacks `contents` access to this repository"
+        401 | 403 => "the token is missing, expired, or lacks `contents` access to this repository",
+        404 => {
+            "the repository, branch, or file path does not exist (a private repository \
+                without a token also looks like a 404)"
         }
-        404 => "the repository, branch, or file path does not exist (a private repository \
-                without a token also looks like a 404)",
         409 => "the file changed on the remote since it was last fetched; pull again first",
         422 => "GitHub rejected the request; the branch may not exist",
         _ => "the remote rejected the request",
@@ -548,6 +584,34 @@ fn diff_set<'a, T: serde::Serialize + 'a>(
 // Pull
 // ---------------------------------------------------------------------------
 
+/// Confirmations the user has explicitly given for this pull.
+///
+/// Every field defaults to the safe answer, so `PullOptions::default()` is the
+/// strict policy. Each one corresponds to a question a human has to be asked
+/// in words — "this is older than what you have, really go back?" — which is
+/// why they are not inferred.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PullOptions {
+    /// Accept a vault older than the local one. See [`verify_pull`].
+    pub allow_rollback: bool,
+    /// Accept a vault that is not the local one at all. See [`apply_pull`].
+    pub allow_different_vault: bool,
+}
+
+/// How the incoming vault compares in age with the local one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Freshness {
+    /// Strictly newer than the local vault.
+    Newer,
+    /// Sealed at the same instant — almost always the identical file.
+    Same,
+    /// Older than the local vault. Accepting it is a rollback.
+    Older,
+    /// A different vault, so the two timestamps are not comparable.
+    Unrelated,
+}
+
 /// A verified pull, ready to be shown to the user and then applied.
 ///
 /// Holding one of these is proof that the bytes parsed, that any pinned
@@ -572,8 +636,21 @@ pub struct PullPlan {
     /// Identity of the incoming vault.
     pub vault_id: Uuid,
     /// True when the incoming vault is a different vault, not a newer version
-    /// of the local one.
+    /// of the local one. [`apply_pull`] refuses these by default.
     pub different_vault: bool,
+    /// How the incoming vault compares in age with the local one.
+    pub freshness: Freshness,
+    /// Signed age difference between the two vaults: positive when the
+    /// incoming one is newer. Lets the GUI say "this is 3 days older than what
+    /// you have" rather than just refusing.
+    pub age_delta: chrono::Duration,
+    /// True when this plan was built with an explicit rollback confirmation.
+    pub rollback_confirmed: bool,
+    /// True when the incoming configuration carried its own
+    /// [`crate::model::RemoteConfigSource`], which [`apply_pull`] will discard
+    /// in favour of the local one. Worth showing: it is either a publisher
+    /// that has not been updated, or an attempt to repoint this machine.
+    pub incoming_remote_ignored: bool,
     /// Handles present remotely but not locally, and vice versa.
     pub secrets_added: Vec<String>,
     pub secrets_removed: Vec<String>,
@@ -607,6 +684,29 @@ pub fn verify_pull(
     source: &RemoteConfigSource,
     passphrase: &Secret,
 ) -> Result<PullPlan> {
+    verify_pull_with(
+        fetched,
+        local_config,
+        local_vault,
+        source,
+        passphrase,
+        &PullOptions::default(),
+    )
+}
+
+/// [`verify_pull`] with explicit confirmations from the user.
+///
+/// The only way to accept a rollback, and the reason it is a separate function
+/// rather than a flag on the common one: the strict behaviour has the short
+/// name, so a caller gets it by not thinking about it.
+pub fn verify_pull_with(
+    fetched: &FetchedVault,
+    local_config: &Config,
+    local_vault: &Vault,
+    source: &RemoteConfigSource,
+    passphrase: &Secret,
+    options: &PullOptions,
+) -> Result<PullPlan> {
     let envelope = Envelope::parse(&fetched.bytes)?;
 
     if !source.trusted_signers.is_empty() {
@@ -616,6 +716,35 @@ pub fn verify_pull(
     // Decrypting is what proves the bytes came from someone with the master
     // passphrase. Until this succeeds we know nothing about them.
     let incoming = Vault::unlock(&fetched.bytes, passphrase)?;
+
+    // Freshness. Both timestamps are inside the AEAD's associated data, so
+    // neither can be edited without destroying the ciphertext — but an
+    // attacker does not need to edit anything to replay a blob the user
+    // published last month, and that blob is authentic in every sense.
+    let different_vault = incoming.id() != local_vault.id();
+    let local_time = local_vault.header().updated_at;
+    let incoming_time = incoming.header().updated_at;
+    let age_delta = incoming_time - local_time;
+    let freshness = if different_vault {
+        Freshness::Unrelated
+    } else if age_delta > chrono::Duration::zero() {
+        Freshness::Newer
+    } else if age_delta.is_zero() {
+        Freshness::Same
+    } else {
+        Freshness::Older
+    };
+    if freshness == Freshness::Older && !options.allow_rollback {
+        return Err(Error::Remote(format!(
+            "the remote is serving an older version of this vault: it was sealed {} \
+             before the copy already on this machine ({incoming_time} against \
+             {local_time}). Accepting it would undo everything changed since, which \
+             may include a credential that was rotated away or a destination that was \
+             deleted. Confirm a rollback explicitly if that is really what you want.",
+            humantime::format_duration((-age_delta).to_std().unwrap_or(std::time::Duration::ZERO))
+        )));
+    }
+
     let mut incoming_config = incoming.embedded_config()?.cloned();
 
     // Validate before anything is written, not after. `apply_pull` replaces
@@ -624,19 +753,21 @@ pub fn verify_pull(
     // new vault and an old, now-mismatched config. Validating here means
     // `apply_pull` cannot fail halfway.
     let mut incoming_warnings = Vec::new();
+    let mut incoming_remote_ignored = false;
     if let Some(config) = &mut incoming_config {
+        // The remote block is machine-local and never travels. Strip it here,
+        // before validation and before the diff, so that neither the plan the
+        // user reviews nor the config `apply_pull` writes can carry a
+        // publisher-supplied `trusted_signers` or `url`.
+        incoming_remote_ignored = config.remote.is_some();
+        config.remote = local_config.remote.clone();
         crate::config::normalise(config);
         let report = crate::config::validate(config);
         if !report.is_ok() {
             return Err(Error::Remote(format!(
                 "the configuration published at this remote is not valid, so it has not been \
                  applied: {}",
-                report
-                    .errors
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                report.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ")
             )));
         }
         incoming_warnings = report.warnings;
@@ -672,7 +803,11 @@ pub fn verify_pull(
         incoming_config,
         incoming_warnings,
         vault_id: incoming.id(),
-        different_vault: incoming.id() != local_vault.id(),
+        different_vault,
+        freshness,
+        age_delta,
+        rollback_confirmed: options.allow_rollback && freshness == Freshness::Older,
+        incoming_remote_ignored,
         secrets_added,
         secrets_removed,
     })
@@ -682,19 +817,20 @@ pub fn verify_pull(
 ///
 /// # Errors
 ///
-/// * [`Error::Remote`] when the vault carries no signature but signers are
-///   pinned, or when the signer is not on the list.
-/// * [`Error::Crypto`] when this build cannot verify signatures at all — see
-///   [`crate::crypto::signing`]. Treated as a rejection by every caller.
+/// [`Error::Remote`] when the vault carries no signature but signers are
+/// pinned, when the signer is not on the pinned list, when the embedded public
+/// key does not hash to the fingerprint it claims, or when the signature does
+/// not verify over [`Envelope::signing_payload`]. Every one of those is a
+/// rejection; there is no path through this function that reports a problem
+/// and continues.
 pub fn verify_signature(envelope: &Envelope, trusted_signers: &[String]) -> Result<()> {
     let Some(signature) = &envelope.signature else {
         return Err(Error::Remote(
             "this remote pins trusted signers, but the vault it served is not signed".into(),
         ));
     };
-    let trusted = trusted_signers
-        .iter()
-        .any(|s| s.trim().eq_ignore_ascii_case(signature.signer.trim()));
+    let trusted =
+        trusted_signers.iter().any(|s| s.trim().eq_ignore_ascii_case(signature.signer.trim()));
     if !trusted {
         return Err(Error::Remote(format!(
             "the vault was signed by {}, which is not in this remote's trusted signer list",
@@ -717,10 +853,50 @@ pub fn verify_signature(envelope: &Envelope, trusted_signers: &[String]) -> Resu
 /// one — a vault with no embedded configuration updates the secrets and leaves
 /// local job definitions alone, which is the right behaviour for a machine
 /// that shares credentials but not schedules.
+///
+/// # Errors
+///
+/// [`Error::Remote`] when the plan describes a *different* vault. `vault_id`
+/// exists precisely so that "a newer version of mine" and "a stranger's key
+/// material" can be told apart, and the refusal has to live here rather than
+/// in a confirmation dialog somewhere else in the tree — a check that only
+/// exists in one caller's UI is not a check. Use [`apply_pull_with`] and
+/// [`PullOptions::allow_different_vault`] when adopting another vault really
+/// is the intent, which it is exactly once: joining an existing installation.
 pub fn apply_pull(store: &mut Store, plan: &PullPlan) -> Result<()> {
+    apply_pull_with(store, plan, &PullOptions::default())
+}
+
+/// [`apply_pull`] with explicit confirmations from the user.
+pub fn apply_pull_with(store: &mut Store, plan: &PullPlan, options: &PullOptions) -> Result<()> {
+    if plan.different_vault && !options.allow_different_vault {
+        return Err(Error::Remote(format!(
+            "the remote is serving a different vault ({}) from the one on this machine \
+             ({}). This is not a newer version of your configuration; it is another \
+             installation's key material, and applying it would replace every \
+             credential you hold. Confirm explicitly if you are deliberately joining \
+             that installation.",
+            plan.vault_id,
+            store.vault().id()
+        )));
+    }
+    if plan.freshness == Freshness::Older && !plan.rollback_confirmed {
+        // Belt and braces: a plan built by `verify_pull` can never be in this
+        // state, but a plan is a plain struct and could be constructed or
+        // mutated by a caller between verification and application.
+        return Err(Error::Remote(
+            "this plan describes a rollback that was never confirmed".into(),
+        ));
+    }
+
     store.vault_file_mut().replace_with(plan.bytes(), BackupReason::RemotePull)?;
     if let Some(config) = &plan.incoming_config {
-        store.set_config(config.clone())?;
+        // `verify_pull` already replaced the incoming remote block with the
+        // local one; re-assert it here so that a hand-built plan cannot smuggle
+        // a `trusted_signers: []` past the check either.
+        let mut config = config.clone();
+        config.remote = store.config().remote.clone();
+        store.set_config(config)?;
     }
     Ok(())
 }
@@ -755,12 +931,7 @@ impl PushRequest {
     /// [`PushRequest::confirmed`] is called, which exists so that "publish"
     /// cannot happen as a side effect of constructing a value.
     pub fn new(bytes: Vec<u8>, message: impl Into<String>) -> PushRequest {
-        PushRequest {
-            bytes,
-            message: message.into(),
-            replaces_sha: None,
-            confirmed: false,
-        }
+        PushRequest { bytes, message: message.into(), replaces_sha: None, confirmed: false }
     }
 
     pub fn replacing(mut self, sha: Option<String>) -> PushRequest {
@@ -817,8 +988,8 @@ mod tests {
 
     #[test]
     fn github_urls_use_the_contents_api_when_authenticated() {
-        let endpoint = resolve_endpoint(&source("https://github.com/andreas/cfg"), true)
-            .expect("resolve");
+        let endpoint =
+            resolve_endpoint(&source("https://github.com/andreas/cfg"), true).expect("resolve");
         assert_eq!(
             endpoint.url(),
             "https://api.github.com/repos/andreas/cfg/contents/config.sbvault?ref=main"
@@ -978,9 +1149,7 @@ mod tests {
         local.seal().expect("seal");
 
         let mut remote = Vault::create_unchecked(&Secret::from_str("pass"), kdf()).expect("remote");
-        remote
-            .put(SecretRef("s3.access:2".into()), Secret::from_str("REMOTEKEY"))
-            .expect("put");
+        remote.put(SecretRef("s3.access:2".into()), Secret::from_str("REMOTEKEY")).expect("put");
         let bytes = remote.seal().expect("seal");
 
         let fetched = FetchedVault {

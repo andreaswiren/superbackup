@@ -244,13 +244,21 @@ impl RequestContext {
 /// plaintext. Nothing in the daemon ever serialises a [`Request`]; only
 /// clients do, immediately before writing to the socket. Do not use this type
 /// for anything the daemon sends.
-#[derive(Clone, PartialEq, Eq)]
+/// Deliberately **not** `PartialEq`/`Eq`, matching [`crate::secret::Secret`]:
+/// deriving them would make variable-time comparison the path of least
+/// resistance on a value carrying a master passphrase. Use [`SecretString::ct_eq`].
+#[derive(Clone)]
 pub struct SecretString(crate::secret::Secret);
 
 impl SecretString {
     /// Wrap an existing secret for transmission.
     pub fn new(secret: crate::secret::Secret) -> Self {
         SecretString(secret)
+    }
+
+    /// Constant-time comparison. There is no `==` for this type on purpose.
+    pub fn ct_eq(&self, other: &SecretString) -> bool {
+        self.0.ct_eq(&other.0)
     }
 
     /// Build one from a string the caller already holds. The caller's copy is
@@ -1136,6 +1144,20 @@ pub mod flag {
     /// response. Handled by the transport, not by a [`Handler`](super::Handler)
     /// method.
     pub const streaming: &str = "streaming";
+
+    /// Runs a password-based key derivation, which by design costs hundreds of
+    /// megabytes and hundreds of milliseconds.
+    ///
+    /// The transport treats these specially: at most
+    /// [`MAX_CONCURRENT_KDF`](crate::ipc::MAX_CONCURRENT_KDF) run in the whole
+    /// process, at most one per connection, and a failure holds the connection
+    /// for [`KDF_FAILURE_DELAY`](crate::ipc::KDF_FAILURE_DELAY) before it is
+    /// answered. Without that, `max_inflight` x `max_connections` derivations
+    /// at 256 MiB each is an out-of-memory kill of a process that may be
+    /// running as SYSTEM, reachable by any local user who can open the socket.
+    ///
+    /// Put this on every handler that verifies or changes a passphrase.
+    pub const kdf: &str = "kdf";
 }
 
 // ===========================================================================
@@ -1213,6 +1235,26 @@ macro_rules! protocol {
                     $( Request::$variant { .. } => $wire, )*
                     $( Request::$mvariant { .. } => $mwire, )*
                 }
+            }
+
+            /// The behavioural flags this command carries, from the same
+            /// table that fills the schema.
+            ///
+            /// Constant-time and allocation-free, unlike [`Request::spec`],
+            /// because the transport consults it on every request to decide
+            /// whether the command needs the key-derivation gate.
+            pub fn flags(&self) -> &'static [&'static str] {
+                match self {
+                    $( Request::$variant { .. } => &[ $( flag::$flag ),* ], )*
+                    $( Request::$mvariant { .. } => &[ $( flag::$mflag ),* ], )*
+                }
+            }
+
+            /// True when this command runs a password-based key derivation and
+            /// must therefore go through the transport's KDF gate. See
+            /// [`flag::kdf`].
+            pub fn is_kdf(&self) -> bool {
+                self.flags().contains(&flag::kdf)
             }
 
             /// The specification for this request's command.
@@ -1616,7 +1658,7 @@ protocol! {
 
         // --------------------------------------------------------------- vault
         "vault.unlock" VaultUnlock => unlock_vault -> Unlocked(UnlockedReply)
-            flags [mutating]
+            flags [mutating, kdf]
             doc "Unlock the vault with the master passphrase, so scheduled runs and remote destinations can work."
             params {
                 passphrase: SecretString = "The master passphrase. Never logged, never echoed, never returned.",
@@ -1633,7 +1675,7 @@ protocol! {
             params {}
 
         "vault.change_passphrase" VaultChangePassphrase => change_passphrase -> Ack(AckReply)
-            flags [mutating, needs_unlock]
+            flags [mutating, needs_unlock, kdf]
             doc "Re-seal the vault under a new master passphrase. Every stored secret is preserved."
             params {
                 current: SecretString = "The current master passphrase, verified before anything is written.",
@@ -1829,6 +1871,11 @@ pub fn schema_with_limits(limits: &Limits) -> Schema {
             max_requests_per_second: limits.max_requests_per_second,
             request_burst: limits.request_burst,
             max_connections: limits.max_connections,
+            max_subscriptions: limits.max_subscriptions,
+            handshake_timeout_ms: limits.handshake_timeout.as_millis().min(u128::from(u64::MAX))
+                as u64,
+            idle_timeout_ms: limits.idle_timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+            max_concurrent_kdf: super::MAX_CONCURRENT_KDF,
             stream_buffer: limits.stream_buffer,
         },
     }

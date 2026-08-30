@@ -26,7 +26,9 @@
 //! worst, never a silent empty answer that looks like "there is no such
 //! secret".
 
-use super::envelope::{AeadAlgorithm, Envelope, VaultHeader, VaultSignature, FORMAT_VERSION, MAGIC};
+use super::envelope::{
+    AeadAlgorithm, Envelope, VaultHeader, VaultSignature, FORMAT_VERSION, MAGIC,
+};
 use super::kdf::KdfParams;
 use super::keys::MasterKeys;
 use super::rekey::{Rekey, RekeyAcknowledgement};
@@ -103,12 +105,47 @@ struct WireBody {
 
 #[derive(Serialize, Deserialize)]
 struct WireEntry {
-    /// Base64 of the raw secret bytes. Zeroed the moment it is converted.
-    value: String,
+    /// Base64 of the raw secret bytes.
+    value: B64Secret,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+}
+
+/// A base64 rendering of secret material that wipes itself on drop.
+///
+/// This exists because straight-line `zeroize()` calls do not survive early
+/// returns, and both sides of the vault body have one. Sealing serialises a
+/// map of these and then wipes them — but if `serde_json::to_vec` fails, that
+/// wipe is never reached and *every* entry leaks. Unsealing decodes them one
+/// at a time and wipes as it goes — but if one entry is not valid base64, the
+/// failing entry and every entry after it leak. A guard whose `Drop` does the
+/// wiping covers the success path, both error paths, and any future one.
+///
+/// The wipe is best effort against a memory dump, not a guarantee: serde's
+/// deserializer builds the `String` before this type ever sees it, and the
+/// allocator may have moved it. It closes the window it can close.
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+struct B64Secret(String);
+
+impl B64Secret {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for B64Secret {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl std::fmt::Debug for B64Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "B64Secret([redacted; {} chars])", self.0.len())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,12 +213,7 @@ impl Vault {
         let header = VaultHeader::new(kdf);
         let master = header.kdf.derive(passphrase)?;
         let keys = MasterKeys::derive(master.as_ref(), &header.kdf.salt)?;
-        let open = OpenState {
-            keys,
-            entries: BTreeMap::new(),
-            config: None,
-            dirty: true,
-        };
+        let open = OpenState { keys, entries: BTreeMap::new(), config: None, dirty: true };
         let (sealed, sealed_bytes) = seal_body(&header, &open)?;
         Ok(Vault { sealed, sealed_bytes, open: Some(OpenState { dirty: false, ..open }) })
     }
@@ -317,10 +349,7 @@ impl Vault {
         let previous = state.entries.remove(&key);
         let created_at = previous.as_ref().map(|p| p.created_at).unwrap_or(now);
         let label = label.or_else(|| previous.as_ref().and_then(|p| p.label.clone()));
-        state.entries.insert(
-            key,
-            VaultEntry { secret: value, created_at, updated_at: now, label },
-        );
+        state.entries.insert(key, VaultEntry { secret: value, created_at, updated_at: now, label });
         state.dirty = true;
         Ok(previous.map(|p| p.secret))
     }
@@ -371,53 +400,97 @@ impl Vault {
 
     // -- sealing ------------------------------------------------------------
 
-    /// Encrypt the current contents and return the bytes to write.
+    /// Encrypt the current contents **without** committing them.
+    ///
+    /// The returned [`SealedVault`] is a candidate: the vault still believes
+    /// its old bytes are the ones on disk, and stays dirty. Callers that write
+    /// to a filesystem must use this, write, and only then
+    /// [`Vault::commit_seal`] — see the ordering rule on that method.
     ///
     /// A fresh 192-bit nonce is drawn for every seal that has something to
     /// seal. When nothing changed since the last seal the cached bytes are
     /// returned verbatim, which keeps a synced Git repository quiet.
-    pub fn seal(&mut self) -> Result<Vec<u8>> {
+    pub fn prepare_seal(&self) -> Result<SealedVault> {
         let state = self.open.as_ref().ok_or(Error::Locked)?;
         if !state.dirty {
-            return Ok(self.sealed_bytes.clone());
+            return Ok(SealedVault {
+                envelope: self.sealed.clone(),
+                bytes: self.sealed_bytes.clone(),
+            });
         }
         let header = VaultHeader { updated_at: Utc::now(), ..self.sealed.header.clone() };
-        let (sealed, bytes) = seal_body(&header, state)?;
-        self.sealed = sealed;
-        self.sealed_bytes = bytes.clone();
+        let (envelope, bytes) = seal_body(&header, state)?;
+        Ok(SealedVault { envelope, bytes })
+    }
+
+    /// Adopt a prepared seal as the vault's current on-disk state.
+    ///
+    /// # The ordering rule
+    ///
+    /// Infallible on purpose. Every operation that can fail — deriving keys,
+    /// encrypting, serialising, and above all *writing the file* — must
+    /// happen before this is called. If a vault mutated itself first and the
+    /// write then failed, memory and disk would disagree about which bytes,
+    /// and which passphrase, are real; the next ordinary save would quietly
+    /// resolve that disagreement in favour of the version the user was told
+    /// had failed. That is how a reported failure becomes a silent, permanent
+    /// lockout, so the split is enforced by the type: there is no way to
+    /// commit without first holding a [`SealedVault`] that was successfully
+    /// written.
+    pub fn commit_seal(&mut self, sealed: SealedVault) {
+        self.sealed = sealed.envelope;
+        self.sealed_bytes = sealed.bytes;
         if let Some(state) = self.open.as_mut() {
             state.dirty = false;
         }
+    }
+
+    /// Encrypt the current contents and commit them in one step.
+    ///
+    /// For in-memory callers only. Anything that writes a file must use
+    /// [`Vault::prepare_seal`] and [`Vault::commit_seal`] around the write.
+    pub fn seal(&mut self) -> Result<Vec<u8>> {
+        let sealed = self.prepare_seal()?;
+        let bytes = sealed.bytes.clone();
+        self.commit_seal(sealed);
         Ok(bytes)
     }
 
-    /// Attach a detached signature to the sealed bytes, for publication.
+    /// Seal and attach a detached Ed25519 signature, without committing.
     ///
-    /// # Errors
-    ///
-    /// [`Error::Crypto`] in this build; see [`super::signing`]. The vault is
-    /// left completely unmodified when signing fails, so a caller that ignores
-    /// the error still publishes a valid unsigned vault rather than a
-    /// half-signed one.
-    pub fn seal_signed(&mut self) -> Result<Vec<u8>> {
-        self.seal()?;
-        let payload = self.sealed.signing_payload()?;
+    /// The signature covers [`Envelope::signing_payload`] — the header, the
+    /// nonce and the ciphertext, but not the signature field, which cannot
+    /// sign itself. The signing key is the `superbackup/v1/signing` HKDF
+    /// subkey; see [`super::signing`].
+    pub fn prepare_signed_seal(&self) -> Result<SealedVault> {
+        let sealed = self.prepare_seal()?;
+        let payload = sealed.envelope.signing_payload()?;
         let (public_key, signature) = {
             let open = self.opened()?;
             let seed = open.state.keys.signing_seed();
             (signing::public_key(seed)?, signing::sign(seed, &payload)?)
         };
-        let mut candidate = self.sealed.clone();
-        candidate.signature = Some(VaultSignature {
+        let mut envelope = sealed.envelope;
+        envelope.signature = Some(VaultSignature {
             algorithm: super::envelope::SignatureAlgorithm::Ed25519,
             signer: signing::fingerprint(&public_key),
             public_key: public_key.to_vec(),
             signature,
         });
-        let signed_bytes = candidate.to_bytes()?;
-        self.sealed = candidate;
-        self.sealed_bytes.clone_from(&signed_bytes);
-        Ok(signed_bytes)
+        let bytes = envelope.to_bytes()?;
+        Ok(SealedVault { envelope, bytes })
+    }
+
+    /// Attach a detached signature to the sealed bytes, for publication.
+    ///
+    /// The vault is left completely unmodified if any step fails, so a caller
+    /// that ignores the error still holds a valid unsigned vault rather than a
+    /// half-signed one.
+    pub fn seal_signed(&mut self) -> Result<Vec<u8>> {
+        let sealed = self.prepare_signed_seal()?;
+        let bytes = sealed.bytes.clone();
+        self.commit_seal(sealed);
+        Ok(bytes)
     }
 
     // -- rotation -----------------------------------------------------------
@@ -485,6 +558,59 @@ impl Vault {
         new_kdf: Option<KdfParams>,
         ack: &RekeyAcknowledgement,
     ) -> Result<Rekey> {
+        let plan = self.prepare_rekey_inner(old, new, new_kdf, ack)?;
+        Ok(self.commit_rekey(plan))
+    }
+
+    /// Compute a rotation **without** committing it.
+    ///
+    /// Everything fallible happens here: verifying the old passphrase,
+    /// auditing the acknowledgement, deriving both key hierarchies, and
+    /// producing the complete new ciphertext. The vault is not touched. A
+    /// caller that writes to a filesystem must call this, take its backup,
+    /// write [`RekeyPlan::sealed_bytes`], and only then
+    /// [`Vault::commit_rekey`].
+    pub fn prepare_rekey(
+        &self,
+        old: &Secret,
+        new: &Secret,
+        ack: &RekeyAcknowledgement,
+    ) -> Result<RekeyPlan> {
+        self.prepare_rekey_inner(old, new, None, ack)
+    }
+
+    /// [`Vault::prepare_rekey`] with new KDF parameters as well.
+    pub fn prepare_rekey_with_params(
+        &self,
+        old: &Secret,
+        new: &Secret,
+        kdf: KdfParams,
+        ack: &RekeyAcknowledgement,
+    ) -> Result<RekeyPlan> {
+        kdf.validate_for_new_vault()?;
+        self.prepare_rekey_inner(old, new, Some(kdf), ack)
+    }
+
+    /// Adopt a prepared rotation.
+    ///
+    /// Infallible, for the reason spelled out on [`Vault::commit_seal`]: by
+    /// the time a caller holds a [`RekeyPlan`] whose bytes are on disk, there
+    /// must be nothing left that can fail and leave memory disagreeing with
+    /// the file about which passphrase is real.
+    pub fn commit_rekey(&mut self, plan: RekeyPlan) -> Rekey {
+        self.sealed = plan.envelope;
+        self.sealed_bytes = plan.bytes;
+        self.open = if plan.was_locked { None } else { Some(plan.next) };
+        plan.rekey
+    }
+
+    fn prepare_rekey_inner(
+        &self,
+        old: &Secret,
+        new: &Secret,
+        new_kdf: Option<KdfParams>,
+        ack: &RekeyAcknowledgement,
+    ) -> Result<RekeyPlan> {
         if new.is_empty() {
             return Err(Error::Validation("the new master passphrase cannot be empty".into()));
         }
@@ -522,25 +648,23 @@ impl Vault {
         let next = OpenState { keys, entries, config, dirty: true };
         let (sealed, bytes) = seal_body(&header, &next)?;
 
-        // Build the migration plan before touching `self`, so that a failure
-        // to derive either key hierarchy still leaves the old vault intact.
+        // Build the migration handle here too, so that a failure to derive
+        // either key hierarchy or a signer fingerprint happens while the old
+        // vault is still completely intact.
         let new_keys = MasterKeys::derive(master.as_ref(), &header.kdf.salt)?;
-        let plan = Rekey::new(
-            header.vault_id,
-            old_keys,
-            new_keys,
-            bytes.clone(),
-            ack.repositories(),
-        )?;
+        let rekey =
+            Rekey::new(header.vault_id, old_keys, new_keys, bytes.clone(), ack.repositories())?;
 
-        // Everything succeeded; commit. Note that the signature is dropped:
-        // it was computed over the old ciphertext and is now meaningless — and
-        // in any case the rotation changed the signing identity.
-        let was_locked = self.is_locked();
-        self.sealed = sealed;
-        self.sealed_bytes = bytes;
-        self.open = if was_locked { None } else { Some(OpenState { dirty: false, ..next }) };
-        Ok(plan)
+        // Note that the signature is dropped: it was computed over the old
+        // ciphertext and is now meaningless — and in any case the rotation
+        // changed the signing identity.
+        Ok(RekeyPlan {
+            envelope: sealed,
+            bytes,
+            next: OpenState { dirty: false, ..next },
+            was_locked: self.is_locked(),
+            rekey,
+        })
     }
 
     /// Consume an unlocked vault and take its key hierarchy.
@@ -549,6 +673,75 @@ impl Vault {
     /// rotation from the two vault files on disk.
     pub(crate) fn into_keys(self) -> Result<MasterKeys> {
         self.open.map(|state| state.keys).ok_or(Error::Locked)
+    }
+}
+
+/// Ciphertext that has been computed but not yet adopted by the vault.
+///
+/// The whole point is that this can be written to disk *before* the vault
+/// changes its mind about which bytes are current. Holding one proves the
+/// encryption succeeded; committing one is then infallible. See
+/// [`Vault::commit_seal`].
+pub struct SealedVault {
+    envelope: Envelope,
+    bytes: Vec<u8>,
+}
+
+impl SealedVault {
+    /// The bytes to write.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The parsed envelope, for reading the header without a second parse.
+    pub fn envelope(&self) -> &Envelope {
+        &self.envelope
+    }
+}
+
+impl std::fmt::Debug for SealedVault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SealedVault")
+            .field("vault_id", &self.envelope.header.vault_id)
+            .field("bytes", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A computed but uncommitted passphrase rotation.
+///
+/// Same contract as [`SealedVault`], with more at stake: this carries the new
+/// key hierarchy, so committing it before the new ciphertext is safely on disk
+/// is what turns a reported failure into a silent lockout. See
+/// [`Vault::prepare_rekey`].
+pub struct RekeyPlan {
+    envelope: Envelope,
+    bytes: Vec<u8>,
+    next: OpenState,
+    was_locked: bool,
+    rekey: Rekey,
+}
+
+impl RekeyPlan {
+    /// The rotated ciphertext, to be written before committing.
+    pub fn sealed_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The repositories this rotation will invalidate, readable before the
+    /// rotation is committed.
+    pub fn repositories(&self) -> &[super::rekey::RepositoryMigration] {
+        self.rekey.repositories()
+    }
+}
+
+impl std::fmt::Debug for RekeyPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RekeyPlan")
+            .field("vault_id", &self.envelope.header.vault_id)
+            .field("bytes", &self.bytes.len())
+            .field("repositories", &self.rekey.repositories().len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -624,16 +817,13 @@ impl OpenVault<'_> {
 // ---------------------------------------------------------------------------
 
 fn seal_body(header: &VaultHeader, state: &OpenState) -> Result<(Envelope, Vec<u8>)> {
-    let mut wire = WireBody {
-        version: BODY_VERSION,
-        entries: BTreeMap::new(),
-        config: state.config.clone(),
-    };
+    let mut wire =
+        WireBody { version: BODY_VERSION, entries: BTreeMap::new(), config: state.config.clone() };
     for (key, entry) in &state.entries {
         wire.entries.insert(
             key.as_str().to_string(),
             WireEntry {
-                value: super::b64_encode(entry.secret.expose()),
+                value: B64Secret(super::b64_encode(entry.secret.expose())),
                 created_at: entry.created_at,
                 updated_at: entry.updated_at,
                 label: entry.label.clone(),
@@ -641,15 +831,13 @@ fn seal_body(header: &VaultHeader, state: &OpenState) -> Result<(Envelope, Vec<u
         );
     }
 
+    // `wire` holds a base64 copy of every secret. It is wiped when it drops,
+    // which happens on the way out of this function whether the serialisation
+    // below succeeds or fails — see `B64Secret`.
     let plaintext = Zeroizing::new(
         serde_json::to_vec(&wire)
             .map_err(|e| Error::Crypto(format!("vault body could not be serialised: {e}")))?,
     );
-    // The base64 copies inside `wire` are plaintext key material; wipe them
-    // before the struct is dropped by the allocator's own timetable.
-    for entry in wire.entries.values_mut() {
-        entry.value.zeroize();
-    }
 
     let nonce_bytes = super::random_bytes(super::envelope::NONCE_LEN)?;
     let mut envelope = Envelope {
@@ -701,17 +889,19 @@ fn decrypt(envelope: &Envelope, passphrase: &Secret) -> Result<DecryptedBody> {
     // Past this point the bytes are authenticated: they were produced by
     // something holding the vault key. A failure here is genuine corruption or
     // a version mismatch, and saying so is safe.
-    let mut wire: WireBody = serde_json::from_slice(plaintext.as_ref())
+    let wire: WireBody = serde_json::from_slice(plaintext.as_ref())
         .map_err(|e| Error::VaultCorrupt(format!("vault body is not readable: {e}")))?;
     if wire.version > BODY_VERSION {
         return Err(Error::VaultVersion { found: wire.version, supported: BODY_VERSION });
     }
 
+    // Same guarantee on the way in: an entry that fails to decode returns
+    // early, and every entry — the failing one and the ones not yet reached —
+    // is wiped by `wire` dropping.
     let mut entries = BTreeMap::new();
-    for (key, entry) in wire.entries.iter_mut() {
-        let raw = super::b64_decode(&entry.value)
+    for (key, entry) in wire.entries.iter() {
+        let raw = super::b64_decode(entry.value.as_str())
             .map_err(|_| Error::VaultCorrupt(format!("secret {key} is not valid base64")))?;
-        entry.value.zeroize();
         entries.insert(
             SecretRef(key.clone()),
             VaultEntry {
@@ -795,7 +985,10 @@ mod tests {
         v.lock();
         assert!(v.is_locked());
         assert!(matches!(v.get(&SecretRef("a:1".into())), Err(Error::Locked)));
-        assert!(matches!(v.put(SecretRef("b:1".into()), Secret::from_str("y")), Err(Error::Locked)));
+        assert!(matches!(
+            v.put(SecretRef("b:1".into()), Secret::from_str("y")),
+            Err(Error::Locked)
+        ));
         assert!(matches!(v.remove(&SecretRef("a:1".into())), Err(Error::Locked)));
         assert!(matches!(v.list_refs(), Err(Error::Locked)));
         assert!(matches!(v.seal(), Err(Error::Locked)));

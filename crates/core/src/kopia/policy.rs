@@ -50,9 +50,8 @@ impl StoredPolicy {
                 .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
                 .unwrap_or_default()
         };
-        let flag = |section: &str, key: &str| -> Option<bool> {
-            v.get(section)?.get(key)?.as_bool()
-        };
+        let flag =
+            |section: &str, key: &str| -> Option<bool> { v.get(section)?.get(key)?.as_bool() };
         Some(StoredPolicy {
             keep_latest: num("retention", "keepLatest"),
             keep_hourly: num("retention", "keepHourly"),

@@ -127,18 +127,12 @@ impl Config {
 
     /// Every destination that sits on a given provider.
     pub fn destinations_using(&self, provider_id: &Uuid) -> Vec<&Destination> {
-        self.destinations
-            .iter()
-            .filter(|d| d.kind.provider_id() == Some(provider_id))
-            .collect()
+        self.destinations.iter().filter(|d| d.kind.provider_id() == Some(provider_id)).collect()
     }
 
     /// Every job that writes to a given destination.
     pub fn jobs_using(&self, destination_id: &Uuid) -> Vec<&Job> {
-        self.jobs
-            .iter()
-            .filter(|j| j.destination_ids.contains(destination_id))
-            .collect()
+        self.jobs.iter().filter(|j| j.destination_ids.contains(destination_id)).collect()
     }
 
     /// Resolve a job by UUID, by exact name, or by unambiguous name prefix.
@@ -778,10 +772,8 @@ pub fn normalise_prefix(input: &str) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
-    let cleaned: Vec<&str> = trimmed
-        .split('/')
-        .filter(|seg| !seg.is_empty() && *seg != "." && *seg != "..")
-        .collect();
+    let cleaned: Vec<&str> =
+        trimmed.split('/').filter(|seg| !seg.is_empty() && *seg != "." && *seg != "..").collect();
     if cleaned.is_empty() {
         return String::new();
     }
@@ -842,10 +834,7 @@ impl EncryptionAlgorithm {
         }
     }
     pub fn all() -> &'static [EncryptionAlgorithm] {
-        &[
-            EncryptionAlgorithm::Aes256GcmHmacSha256,
-            EncryptionAlgorithm::Chacha20Poly1305HmacSha256,
-        ]
+        &[EncryptionAlgorithm::Aes256GcmHmacSha256, EncryptionAlgorithm::Chacha20Poly1305HmacSha256]
     }
     pub fn describe(&self) -> &'static str {
         match self {
@@ -1478,8 +1467,11 @@ mod tests {
     #[test]
     fn pause_state_expires() {
         let now = Utc::now();
-        let p =
-            PauseState { paused: true, until: Some(now - chrono::Duration::hours(1)), reason: None };
+        let p = PauseState {
+            paused: true,
+            until: Some(now - chrono::Duration::hours(1)),
+            reason: None,
+        };
         assert!(!p.is_active(now));
         let p = PauseState { paused: true, until: None, reason: None };
         assert!(p.is_active(now));

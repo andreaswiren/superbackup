@@ -80,6 +80,20 @@ const SUBSCRIPTION_DEPTH: usize = 256;
 /// destroyed by whatever is on the other end of a socket either.
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
+/// How often the client proves it is still there.
+///
+/// The daemon closes a connection that has been silent for
+/// [`Limits::idle_timeout`](crate::ipc::Limits::idle_timeout), because a
+/// connection permit held forever by something that has gone away without
+/// closing its socket locks a real client out. A blank line is a keep-alive,
+/// costs one small write, and resets that clock.
+///
+/// A third of the window, so two lost ticks are survivable. The first tick
+/// fires immediately on connect, which is also what satisfies the daemon's
+/// much shorter handshake deadline — a client that has nothing to ask for yet
+/// (a CLI waiting for the user to type a passphrase) is still visibly alive.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(100);
+
 /// What the daemon said about itself when the connection opened.
 #[derive(Debug, Clone)]
 pub struct Hello {
@@ -88,6 +102,18 @@ pub struct Hello {
     pub version: String,
     /// True when this is the machine-wide service instance.
     pub service_scope: bool,
+}
+
+/// Something to put on the wire.
+///
+/// The writer task is the sole owner of the socket's send half, so everything
+/// that wants to write goes through one channel — including the keep-alive,
+/// which is not a frame at all.
+#[derive(Debug)]
+enum Outgoing {
+    Frame(ClientFrame),
+    /// A bare newline. The daemon treats it as "still here" and nothing else.
+    KeepAlive,
 }
 
 /// A request awaiting its response.
@@ -111,7 +137,7 @@ enum Pending {
 type PendingMap = Arc<Mutex<HashMap<RequestId, Pending>>>;
 
 struct Inner {
-    outbound: mpsc::Sender<ClientFrame>,
+    outbound: mpsc::Sender<Outgoing>,
     pending: PendingMap,
     next_id: AtomicU64,
     hello: Hello,
@@ -175,12 +201,12 @@ impl Client {
         let mut line = Vec::with_capacity(1024);
 
         // The daemon greets first. Anything else is not a daemon we know.
-        codec::read_line(&mut reader, &mut line, MAX_RESPONSE_BYTES)
-            .await
-            .map_err(|e| match e {
+        codec::read_line(&mut reader, &mut line, MAX_RESPONSE_BYTES).await.map_err(
+            |e| match e {
                 LineError::Eof => Error::DaemonUnreachable,
                 other => Error::Ipc(format!("reading the daemon's greeting: {other}")),
-            })?;
+            },
+        )?;
 
         let hello = match codec::parse::<ServerFrame>(&line) {
             Ok(ServerFrame::Hello { protocol, min_protocol, version, service_scope }) => {
@@ -212,15 +238,42 @@ impl Client {
             )));
         }
 
-        let (outbound, mut outbox) = mpsc::channel::<ClientFrame>(64);
+        let (outbound, mut outbox) = mpsc::channel::<Outgoing>(64);
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let (closed, closed_rx) = watch::channel(false);
 
         // Writer: sole owner of the send half.
         tokio::spawn(async move {
-            while let Some(frame) = outbox.recv().await {
-                if codec::write_line(&mut send_half, &frame).await.is_err() {
+            use tokio::io::AsyncWriteExt;
+            while let Some(outgoing) = outbox.recv().await {
+                let wrote = match outgoing {
+                    Outgoing::Frame(frame) => codec::write_line(&mut send_half, &frame).await,
+                    Outgoing::KeepAlive => {
+                        // One write, so it can never be interleaved with half
+                        // of a frame.
+                        send_half.write_all(b"\n").await
+                    }
+                };
+                if wrote.is_err() {
                     break;
+                }
+            }
+        });
+
+        // Keep-alive: holds a *weak* sender, so it does not by itself keep the
+        // connection open. When the last `Client` and `Subscription` are gone
+        // the upgrade fails and this task ends with them.
+        let keepalive = outbound.downgrade();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(KEEPALIVE_INTERVAL);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                // The first tick completes immediately, which is what proves
+                // liveness inside the daemon's handshake window.
+                tick.tick().await;
+                let Some(sender) = keepalive.upgrade() else { return };
+                if sender.send(Outgoing::KeepAlive).await.is_err() {
+                    return;
                 }
             }
         });
@@ -301,7 +354,7 @@ impl Client {
         self.inner.register(id, Pending::Once(tx));
 
         let frame =
-            ClientFrame::Request { id, protocol: PROTOCOL_VERSION, body: request };
+            Outgoing::Frame(ClientFrame::Request { id, protocol: PROTOCOL_VERSION, body: request });
         if self.inner.outbound.send(frame).await.is_err() {
             self.inner.forget(id);
             return Err(Error::DaemonUnreachable);
@@ -334,11 +387,11 @@ impl Client {
         self.inner
             .register(id, Pending::Stream { reply: Some(reply_tx), items: items_tx, dropped: 0 });
 
-        let frame = ClientFrame::Request {
+        let frame = Outgoing::Frame(ClientFrame::Request {
             id,
             protocol: PROTOCOL_VERSION,
             body: Request::Subscribe { topics: topics.clone() },
-        };
+        });
         if self.inner.outbound.send(frame).await.is_err() {
             self.inner.forget(id);
             return Err(Error::DaemonUnreachable);
@@ -587,7 +640,7 @@ pub struct Subscription {
     id: RequestId,
     topics: Vec<Topic>,
     items: mpsc::Receiver<StreamItem>,
-    outbound: mpsc::Sender<ClientFrame>,
+    outbound: mpsc::Sender<Outgoing>,
     /// Held, never read: its only job is to keep the connection alive for as
     /// long as anyone is listening, so a caller can drop the [`Client`] and
     /// keep the stream — which is exactly what `superbackup watch` does.
@@ -622,7 +675,7 @@ impl Drop for Subscription {
         // Best effort and non-blocking: if the queue to the writer is full or
         // the connection is already gone, the daemon finds out when the socket
         // closes.
-        let _ = self.outbound.try_send(ClientFrame::Cancel { id: self.id });
+        let _ = self.outbound.try_send(Outgoing::Frame(ClientFrame::Cancel { id: self.id }));
     }
 }
 
@@ -689,8 +742,8 @@ impl AutoStart {
 /// A synchronous client, for the CLI.
 ///
 /// `superbackup status` should not have to know what a runtime is. This owns a
-/// minimal current-thread runtime internally and hides it: construct one, call
-/// methods, print, exit.
+/// minimal runtime internally and hides it: construct one, call methods,
+/// print, exit.
 ///
 /// Do not use it from inside an async context — driving a runtime from a
 /// runtime worker thread panics. Async callers already have [`Client`].
@@ -762,7 +815,16 @@ impl BlockingClient {
 }
 
 fn build_runtime() -> Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_current_thread()
+    // One worker thread, not a current-thread runtime.
+    //
+    // A current-thread runtime only advances while the caller is inside
+    // `block_on`, so the reader, the writer and the keep-alive would all
+    // freeze between calls — and a CLI that connects, prompts the user for a
+    // passphrase, and then unlocks would be disconnected for going silent
+    // while the human typed. One worker keeps those tasks running in the
+    // background for the cost of a single thread.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
         .enable_all()
         .build()
         .map_err(|e| Error::io("creating a runtime for the IPC client", e))

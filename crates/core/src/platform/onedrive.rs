@@ -265,7 +265,8 @@ fn canonical_key(path: &Path) -> String {
 fn detect_windows_registry() -> Vec<OneDriveAccount> {
     use super::win32::{Hive, RegKey};
 
-    let Some(root) = RegKey::open(Hive::CurrentUser, r"Software\Microsoft\OneDrive\Accounts") else {
+    let Some(root) = RegKey::open(Hive::CurrentUser, r"Software\Microsoft\OneDrive\Accounts")
+    else {
         return Vec::new();
     };
 
@@ -293,11 +294,8 @@ fn detect_windows_registry() -> Vec<OneDriveAccount> {
             .filter(|_| is_business)
             .or_else(|| tenant_from_folder_name(&folder));
 
-        let kind = if is_business {
-            OneDriveKind::Business { tenant }
-        } else {
-            OneDriveKind::Personal
-        };
+        let kind =
+            if is_business { OneDriveKind::Business { tenant } } else { OneDriveKind::Personal };
 
         out.push(OneDriveAccount {
             display_name: compose_display_name(&kind, display.as_deref(), email.as_deref()),
@@ -782,11 +780,7 @@ impl Validation {
         if self.is_usable() {
             Ok(self.issues)
         } else {
-            let joined = self
-                .errors()
-                .map(|i| i.message.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
+            let joined = self.errors().map(|i| i.message.as_str()).collect::<Vec<_>>().join(" ");
             Err(Error::Validation(joined))
         }
     }
@@ -914,8 +908,10 @@ pub fn path_length_issue(path: &Path) -> Option<ValidationIssue> {
     } else if len >= PATH_WARN_LEN {
         Some(ValidationIssue::warn(
             "path_long",
-            format!("This path is {len} characters, which leaves little room for Windows' \
-                     260-character limit."),
+            format!(
+                "This path is {len} characters, which leaves little room for Windows' \
+                     260-character limit."
+            ),
             Some("A shorter path closer to the drive root is safer."),
         ))
     } else {
@@ -978,13 +974,10 @@ mod tests {
 
     #[test]
     fn validation_is_usable_only_without_errors() {
-        let v = Validation {
-            issues: vec![ValidationIssue::warn("low_space", "nearly full", None)],
-        };
+        let v =
+            Validation { issues: vec![ValidationIssue::warn("low_space", "nearly full", None)] };
         assert!(v.is_usable());
-        let v = Validation {
-            issues: vec![ValidationIssue::error("not_writable", "denied", None)],
-        };
+        let v = Validation { issues: vec![ValidationIssue::error("not_writable", "denied", None)] };
         assert!(!v.is_usable());
         assert!(v.into_result().is_err());
     }
@@ -1011,10 +1004,7 @@ mod tests {
     #[test]
     fn onedrive_config_sync_dir_is_parsed() {
         let text = "# comment\nsync_dir = \"~/Cloud/OneDrive\"\nskip_file = \"~*\"\n";
-        assert_eq!(
-            parse_onedrive_config_sync_dir(text).as_deref(),
-            Some("~/Cloud/OneDrive")
-        );
+        assert_eq!(parse_onedrive_config_sync_dir(text).as_deref(), Some("~/Cloud/OneDrive"));
         assert_eq!(parse_onedrive_config_sync_dir("# sync_dir = \"x\"\n"), None);
     }
 
@@ -1063,7 +1053,11 @@ dropbox: /home/me/Dropbox fuse.rclone rw 0 0
     #[test]
     fn detect_never_panics_and_never_returns_a_missing_path() {
         for account in detect() {
-            assert!(account.path.is_dir(), "{} was returned but does not exist", account.path.display());
+            assert!(
+                account.path.is_dir(),
+                "{} was returned but does not exist",
+                account.path.display()
+            );
         }
     }
 }

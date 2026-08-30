@@ -96,9 +96,8 @@ impl RegKey {
         let mut handle = HKEY::default();
         // SAFETY: `wpath` is a NUL-terminated UTF-16 buffer that outlives the
         // call; `handle` is a valid, writable out-parameter.
-        let status = unsafe {
-            RegOpenKeyExW(hive.raw(), PCWSTR(wpath.as_ptr()), None, access, &mut handle)
-        };
+        let status =
+            unsafe { RegOpenKeyExW(hive.raw(), PCWSTR(wpath.as_ptr()), None, access, &mut handle) };
         if status == ERROR_SUCCESS {
             Some(RegKey(handle))
         } else {
@@ -309,12 +308,7 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     // SAFETY: both out-parameters are valid, writable `u64`s; `wpath` outlives
     // the call.
     let ok = unsafe {
-        GetDiskFreeSpaceExW(
-            PCWSTR(wpath.as_ptr()),
-            Some(&mut available),
-            Some(&mut total),
-            None,
-        )
+        GetDiskFreeSpaceExW(PCWSTR(wpath.as_ptr()), Some(&mut available), Some(&mut total), None)
     };
     ok.ok().map(|()| (available, total))
 }
@@ -372,7 +366,8 @@ pub fn is_elevated() -> bool {
 /// Note that `ProductName` still reads "Windows 10 …" on Windows 11, so the
 /// build number is what decides the major name.
 pub fn os_version() -> String {
-    let Some(key) = RegKey::open(Hive::LocalMachine, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+    let Some(key) =
+        RegKey::open(Hive::LocalMachine, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
     else {
         return "Windows (version unavailable)".to_string();
     };
@@ -428,6 +423,8 @@ mod tests {
 
     #[test]
     fn reading_a_missing_key_is_not_an_error() {
-        assert!(RegKey::open(Hive::CurrentUser, r"Software\superbackup\definitely-not-here").is_none());
+        assert!(
+            RegKey::open(Hive::CurrentUser, r"Software\superbackup\definitely-not-here").is_none()
+        );
     }
 }

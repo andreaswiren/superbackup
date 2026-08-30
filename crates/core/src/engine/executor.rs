@@ -260,9 +260,7 @@ impl ProgressSink {
             Ok(mut gate) => {
                 let due = match gate.last_emit {
                     None => true,
-                    Some(prev) => {
-                        (now - prev).num_milliseconds() >= Self::MIN_INTERVAL_MS
-                    }
+                    Some(prev) => (now - prev).num_milliseconds() >= Self::MIN_INTERVAL_MS,
                 };
                 if due {
                     gate.last_emit = Some(now);
@@ -394,7 +392,10 @@ pub trait BackupExecutor: std::fmt::Debug + Send + Sync + 'static {
     ///
     /// Called once per destination per run, before any snapshot. Idempotent:
     /// re-preparing an already-connected repository must succeed cheaply.
-    fn prepare<'a>(&'a self, request: PrepareRequest) -> BoxFuture<'a, ExecutorResult<PrepareOutcome>>;
+    fn prepare<'a>(
+        &'a self,
+        request: PrepareRequest,
+    ) -> BoxFuture<'a, ExecutorResult<PrepareOutcome>>;
 
     /// Snapshot `request.sources` into `request.destination`.
     ///
@@ -407,7 +408,8 @@ pub trait BackupExecutor: std::fmt::Debug + Send + Sync + 'static {
     ) -> BoxFuture<'a, ExecutorResult<SnapshotOutcome>>;
 
     /// Check the integrity of a destination.
-    fn verify<'a>(&'a self, request: VerifyRequest) -> BoxFuture<'a, ExecutorResult<VerifyOutcome>>;
+    fn verify<'a>(&'a self, request: VerifyRequest)
+        -> BoxFuture<'a, ExecutorResult<VerifyOutcome>>;
 }
 
 #[cfg(test)]
@@ -415,7 +417,9 @@ mod tests {
     use super::*;
     use crate::engine::clock::TestClock;
 
-    fn sink(clock: Arc<dyn crate::engine::clock::Clock>) -> (ProgressSink, tokio::sync::mpsc::UnboundedReceiver<ProgressUpdate>) {
+    fn sink(
+        clock: Arc<dyn crate::engine::clock::Clock>,
+    ) -> (ProgressSink, tokio::sync::mpsc::UnboundedReceiver<ProgressUpdate>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         (ProgressSink::new(tx, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), clock), rx)
     }

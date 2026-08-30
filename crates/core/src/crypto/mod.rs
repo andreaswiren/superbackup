@@ -75,7 +75,7 @@ pub use rekey::{
     derived_repositories, DerivedRepository, MigrationReport, MigrationState, Rekey,
     RekeyAcknowledgement, RepositoryCredentials, RepositoryMigration,
 };
-pub use vault::{OpenVault, Vault, VaultEntry};
+pub use vault::{OpenVault, RekeyPlan, SealedVault, Vault, VaultEntry};
 
 use crate::error::{Error, Result};
 

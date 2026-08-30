@@ -108,9 +108,8 @@ impl ChangeDebouncer {
     pub fn poll(&mut self, now: DateTime<Utc>) -> Option<WatchTrigger> {
         let last_event = self.last_event?;
         let quiet_at = last_event + self.debounce;
-        let deadline = self
-            .burst_started
-            .map(|start| start + self.debounce * Self::MAX_DEBOUNCE_MULTIPLIER);
+        let deadline =
+            self.burst_started.map(|start| start + self.debounce * Self::MAX_DEBOUNCE_MULTIPLIER);
         let quiet = now >= quiet_at || deadline.is_some_and(|d| now >= d);
         if !quiet {
             return None;

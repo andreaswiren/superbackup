@@ -358,8 +358,11 @@ impl Scheduler {
         let (commands, command_rx) = tokio::sync::mpsc::unbounded_channel();
         let (completions, completion_rx) = tokio::sync::mpsc::unbounded_channel();
         let cancel = CancelToken::new();
-        let handle =
-            SchedulerHandle { commands: commands.clone(), events: events.clone(), cancel: cancel.clone() };
+        let handle = SchedulerHandle {
+            commands: commands.clone(),
+            events: events.clone(),
+            cancel: cancel.clone(),
+        };
 
         let scheduler = Scheduler {
             config,
@@ -515,8 +518,7 @@ impl Scheduler {
                     self.watchers.remove(&job.id);
                     let changed = self.known_schedules.get(&job.id) != Some(schedule);
                     if changed || !self.next_fire.contains_key(&job.id) {
-                        if self.config.settings.run_missed_on_start
-                            && self.caught_up.insert(job.id)
+                        if self.config.settings.run_missed_on_start && self.caught_up.insert(job.id)
                         {
                             let last_run = last_runs.get(&job.id).copied().flatten();
                             if self.zone.catch_up(schedule, last_run, now).is_some() {
@@ -535,10 +537,9 @@ impl Scheduler {
                                 self.next_fire.remove(&job.id);
                             }
                         }
-                        let _ = self.events.send(EngineEvent::NextRunChanged {
-                            job_id: job.id,
-                            next_run: next,
-                        });
+                        let _ = self
+                            .events
+                            .send(EngineEvent::NextRunChanged { job_id: job.id, next_run: next });
                     }
                 }
                 _ => {

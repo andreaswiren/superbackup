@@ -72,25 +72,19 @@ impl KopiaFailure {
     /// stderr fragments.
     pub fn message(&self) -> &'static str {
         match self {
-            KopiaFailure::WrongPassword => {
-                "The repository passphrase was rejected by kopia."
-            }
+            KopiaFailure::WrongPassword => "The repository passphrase was rejected by kopia.",
             KopiaFailure::RepositoryNotFound => {
                 "There is no backup repository at this destination yet."
             }
             KopiaFailure::RepositoryExists => {
                 "That location already contains data, so a new repository cannot be created there."
             }
-            KopiaFailure::NotConnected => {
-                "This destination is not connected to its repository."
-            }
+            KopiaFailure::NotConnected => "This destination is not connected to its repository.",
             KopiaFailure::StorageAuth => {
                 "The storage provider rejected the access key for this destination."
             }
             KopiaFailure::BucketNotFound => "The bucket does not exist on this provider.",
-            KopiaFailure::StorageUnreachable => {
-                "The storage provider could not be reached."
-            }
+            KopiaFailure::StorageUnreachable => "The storage provider could not be reached.",
             KopiaFailure::Locked => {
                 "The repository is in use by another process and cannot be modified right now."
             }
@@ -99,7 +93,9 @@ impl KopiaFailure {
                 "Access was denied while reading a source file or writing to the destination."
             }
             KopiaFailure::Cancelled => "The backup was cancelled.",
-            KopiaFailure::Timeout => "kopia did not finish within the allowed time and was stopped.",
+            KopiaFailure::Timeout => {
+                "kopia did not finish within the allowed time and was stopped."
+            }
             KopiaFailure::Unusable => "The kopia executable could not be used.",
             KopiaFailure::Unknown => "kopia reported an error.",
         }

@@ -65,7 +65,9 @@ pub enum Error {
     #[error("vault file is corrupt or has been tampered with: {0}")]
     VaultCorrupt(String),
 
-    #[error("vault format version {found} is not supported (this build understands up to {supported})")]
+    #[error(
+        "vault format version {found} is not supported (this build understands up to {supported})"
+    )]
     VaultVersion { found: u32, supported: u32 },
 
     #[error("cryptographic operation failed: {0}")]

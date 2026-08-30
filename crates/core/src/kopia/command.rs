@@ -399,9 +399,8 @@ impl KopiaCommand {
 
     /// The full argument vector, in the order it will be passed.
     pub fn argv(&self) -> Vec<OsString> {
-        let mut v = Vec::with_capacity(
-            self.global_args.len() + self.command.len() + self.args.len(),
-        );
+        let mut v =
+            Vec::with_capacity(self.global_args.len() + self.command.len() + self.args.len());
         v.extend(self.global_args.iter().cloned());
         v.extend(self.command.iter().map(OsString::from));
         v.extend(self.args.iter().cloned());
@@ -499,10 +498,7 @@ impl KopiaCommand {
     ///
     /// Returns `Ok` for a zero exit status and a classified [`KopiaError`] for
     /// anything else, including cancellation and timeout.
-    pub async fn run(
-        self,
-        ctx: &RunContext,
-    ) -> std::result::Result<CommandOutput, KopiaError> {
+    pub async fn run(self, ctx: &RunContext) -> std::result::Result<CommandOutput, KopiaError> {
         let label = self.label();
         let mut process = self.to_process()?;
 
@@ -569,8 +565,7 @@ impl KopiaCommand {
         // guarantees. The timeout is a last resort against a grandchild that
         // inherited a pipe; leaking a reader task is better than wedging the
         // daemon.
-        let (stdout_bytes, stdout_truncated) =
-            join_or_default(out_task, (Vec::new(), false)).await;
+        let (stdout_bytes, stdout_truncated) = join_or_default(out_task, (Vec::new(), false)).await;
         let capture = join_or_default(err_task, StderrCapture::new(ctx)).await;
 
         let output = CommandOutput {
@@ -672,10 +667,7 @@ async fn terminate(
     }
 }
 
-async fn join_or_default<T: Send + 'static>(
-    handle: tokio::task::JoinHandle<T>,
-    fallback: T,
-) -> T {
+async fn join_or_default<T: Send + 'static>(handle: tokio::task::JoinHandle<T>, fallback: T) -> T {
     match tokio::time::timeout(PUMP_JOIN_TIMEOUT, handle).await {
         Ok(Ok(v)) => v,
         _ => fallback,
@@ -683,10 +675,7 @@ async fn join_or_default<T: Send + 'static>(
 }
 
 /// Read a pipe to EOF, stopping at `limit` bytes.
-async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
-    mut r: R,
-    limit: usize,
-) -> (Vec<u8>, bool) {
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut r: R, limit: usize) -> (Vec<u8>, bool) {
     let mut out = Vec::new();
     let mut buf = [0u8; 16 * 1024];
     let mut truncated = false;
@@ -817,7 +806,9 @@ impl StderrCapture {
         self.tail.push_back(scrubbed);
         while self.tail.len() > MAX_STDERR_TAIL_LINES || self.tail_bytes > MAX_STDERR_TAIL_BYTES {
             match self.tail.pop_front() {
-                Some(dropped) => self.tail_bytes = self.tail_bytes.saturating_sub(dropped.len() + 1),
+                Some(dropped) => {
+                    self.tail_bytes = self.tail_bytes.saturating_sub(dropped.len() + 1)
+                }
                 None => break,
             }
         }
@@ -946,12 +937,8 @@ mod tests {
     #[test]
     fn secrets_never_reach_argv() {
         let c = cmd_with_secret();
-        let joined = c
-            .argv()
-            .iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let joined =
+            c.argv().iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         assert!(!joined.contains("correct horse"), "passphrase leaked: {joined}");
         assert!(!joined.contains("--password"), "kopia's --password must never be used");
         assert_eq!(c.secret_env_names(), vec!["KOPIA_PASSWORD"]);
@@ -986,16 +973,14 @@ mod tests {
     fn flags_use_the_equals_form_so_dashes_survive() {
         let mut c = KopiaCommand::new("kopia");
         c.command("policy").command("set").flag("add-ignore", "-weird-name");
-        let argv: Vec<String> =
-            c.argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let argv: Vec<String> = c.argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(argv, vec!["policy", "set", "--add-ignore=-weird-name"]);
     }
 
     #[test]
     fn global_flags_precede_the_subcommand() {
         let c = cmd_with_secret();
-        let argv: Vec<String> =
-            c.argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let argv: Vec<String> = c.argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(argv[0], "--config-file=/tmp/x.config");
         assert_eq!(&argv[1..4], &["repository", "create", "s3"]);
         assert_eq!(c.label(), "repository create s3");
@@ -1003,9 +988,7 @@ mod tests {
 
     #[test]
     fn warning_detection_matches_kopias_real_wording() {
-        assert!(is_warning(
-            " ! Ignored error when processing \"C:\\\\x\\\\y\": access is denied"
-        ));
+        assert!(is_warning(" ! Ignored error when processing \"C:\\\\x\\\\y\": access is denied"));
         assert!(is_warning("- Error in \"/a/b\": permission denied"));
         assert!(!is_warning("Created snapshot with root k1 and ID k2 in 3s"));
     }
@@ -1112,10 +1095,8 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(50), token.cancelled()).await.is_err(),
             "dropping the handle must not look like a cancellation"
         );
-        assert!(
-            tokio::time::timeout(Duration::from_millis(50), CancelToken::never().cancelled())
-                .await
-                .is_err()
-        );
+        assert!(tokio::time::timeout(Duration::from_millis(50), CancelToken::never().cancelled())
+            .await
+            .is_err());
     }
 }

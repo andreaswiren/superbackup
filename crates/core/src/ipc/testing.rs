@@ -173,11 +173,8 @@ impl MockHandler {
     }
 
     fn snapshot(&self) -> StatusSnapshot {
-        let (unlocked, paused) = self
-            .state
-            .lock()
-            .map(|s| (s.unlocked, s.paused.paused))
-            .unwrap_or((false, false));
+        let (unlocked, paused) =
+            self.state.lock().map(|s| (s.unlocked, s.paused.paused)).unwrap_or((false, false));
         StatusSnapshot {
             health: if paused { Health::Paused } else { Health::Idle },
             version: crate::VERSION.to_string(),
@@ -281,11 +278,7 @@ impl Handler for MockHandler {
 
     async fn health(&self, _ctx: &RequestContext) -> Result<HealthReply> {
         self.enter("health").await?;
-        Ok(HealthReply {
-            health: Health::Idle,
-            summary: "Up to date".into(),
-            reasons: vec![],
-        })
+        Ok(HealthReply { health: Health::Idle, summary: "Up to date".into(), reasons: vec![] })
     }
 
     async fn doctor(&self, _ctx: &RequestContext, fix: bool) -> Result<DoctorReply> {
@@ -517,11 +510,7 @@ impl Handler for MockHandler {
         Ok(ProvidersReply { providers })
     }
 
-    async fn get_provider(
-        &self,
-        _ctx: &RequestContext,
-        provider: String,
-    ) -> Result<ProviderReply> {
+    async fn get_provider(&self, _ctx: &RequestContext, provider: String) -> Result<ProviderReply> {
         self.enter("provider.get").await?;
         self.state
             .lock()

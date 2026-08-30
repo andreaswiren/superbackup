@@ -13,7 +13,13 @@
 use zeroize::{Zeroize, Zeroizing};
 
 /// An owned secret byte string that zeroes itself on drop.
-#[derive(Clone, PartialEq, Eq)]
+///
+/// Deliberately **not** `PartialEq`/`Eq`. Deriving them makes `a == b` the
+/// path of least resistance, and that is `Vec<u8>`'s early-exit comparison —
+/// variable-time, and therefore a timing oracle on the very values this type
+/// exists to protect. [`Secret::ct_eq`] is the only way to compare two
+/// secrets, so a caller cannot reach for the unsafe one by habit.
+#[derive(Clone)]
 pub struct Secret {
     inner: Vec<u8>,
 }
@@ -106,7 +112,9 @@ impl From<Vec<u8>> for Secret {
 /// The estimate is intentionally conservative and offline-only: it counts the
 /// character classes actually used and penalises short length. It is guidance,
 /// not a guarantee, and it never blocks a user who insists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Strength {
     Unusable,
@@ -153,6 +161,45 @@ const COMMON_PASSPHRASES: &[&str] = &[
     "changeme",
     "superbackup",
     "backup123",
+    "qwerty",
+    "qwertyuiop",
+    "monkey123",
+    "dragon123",
+    "football",
+    "baseball",
+    "sunshine",
+    "princess",
+    "trustno1",
+    "starwars",
+    "whatever",
+    "computer",
+    "internet",
+];
+
+/// Stems that, with a year or a digit appended, make up an enormous share of
+/// real-world passwords. Matched as a prefix of the de-mangled stem.
+const SEASONAL_STEMS: &[&str] = &[
+    "summer",
+    "winter",
+    "spring",
+    "autumn",
+    "january",
+    "february",
+    "march",
+    "april",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "welcome",
+    "password",
+    "letmein",
+    "changeme",
+    "company",
+    "admin",
 ];
 
 /// Estimate passphrase strength from length, character-class diversity, and
@@ -169,6 +216,35 @@ pub fn estimate_strength(passphrase: &str) -> Strength {
     let normalised = passphrase.trim().to_ascii_lowercase();
     if COMMON_PASSPHRASES.contains(&normalised.as_str()) {
         return Strength::Weak;
+    }
+
+    // `Password12` is `password` with the decoration every guessing tool tries
+    // first. Checking only the literal string rated it `Fair` and therefore
+    // acceptable — for a vault whose entire security reduces to this value.
+    // Strip the common mangling and re-check the stem.
+    let stem: String = normalised
+        .trim_end_matches(|c: char| c.is_ascii_digit() || c.is_ascii_punctuation())
+        .chars()
+        .map(|c| match c {
+            '0' => 'o',
+            '1' => 'l',
+            '3' => 'e',
+            '4' => 'a',
+            '5' => 's',
+            '@' => 'a',
+            '$' => 's',
+            '!' => 'i',
+            other => other,
+        })
+        .collect();
+    if COMMON_PASSPHRASES.contains(&stem.as_str()) {
+        return Strength::Weak;
+    }
+    // A season or a month plus a year is the other universal pattern.
+    for prefix in SEASONAL_STEMS {
+        if stem.starts_with(prefix) {
+            return Strength::Weak;
+        }
     }
 
     // `aaaaaaaaaaaa` is long and useless. Distinct-character count is a cheap
@@ -194,9 +270,25 @@ pub fn estimate_strength(passphrase: &str) -> Strength {
     // A long multi-word passphrase beats a short dense one; weight length more
     // heavily than class count, which is what actually holds up. Only distinct
     // words count, so "abc abc abc abc" scores as one word.
+    //
+    // A *single* word earns no word bonus at all, however many character
+    // classes it decorates itself with. The bonus is meant to reward the
+    // entropy of choosing several independent words; awarding it to one word
+    // is what let `Password12` clear the acceptable threshold.
     let words: std::collections::BTreeSet<&str> =
         passphrase.split_whitespace().filter(|w| w.chars().count() > 2).collect();
-    let score = len as u32 + classes * 4 + words.len() as u32 * 6;
+    let word_bonus = if words.len() >= 2 { words.len() as u32 * 6 } else { 0 };
+
+    // A single token, however decorated, has to be long before it is worth
+    // anything: character-class diversity across eight characters is a mask
+    // attack, not entropy. This vault has no recovery path, so the bar for
+    // "acceptable" is a real passphrase rather than a compliant-looking
+    // password.
+    if words.len() < 2 && len < 12 {
+        return Strength::Weak;
+    }
+
+    let score = len as u32 + classes * 4 + word_bonus;
     match score {
         0..=17 => Strength::Weak,
         18..=29 => Strength::Fair,
@@ -234,5 +326,50 @@ mod tests {
         assert!(estimate_strength("password") < Strength::Strong);
         assert!(estimate_strength("correct horse battery staple") >= Strength::Strong);
         assert!(!estimate_strength("aaaaaaaa").is_acceptable());
+    }
+
+    #[test]
+    fn common_passwords_survive_the_usual_decoration() {
+        // Every one of these is what a guessing tool tries in its first few
+        // thousand candidates. Rating any of them acceptable would be worse
+        // than showing no meter at all, because it actively reassures.
+        for candidate in [
+            "Password12",
+            "Qwerty1234",
+            "Welcome2024",
+            "Summer2025!",
+            "P@ssw0rd",
+            "Letmein123",
+            "Admin2025",
+            "Changeme1",
+        ] {
+            assert!(
+                !estimate_strength(candidate).is_acceptable(),
+                "`{candidate}` was rated {:?}, which is acceptable",
+                estimate_strength(candidate)
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_decorated_word_is_not_acceptable() {
+        // One word plus character-class decoration is not a passphrase, and
+        // the word bonus must not rescue it.
+        assert!(!estimate_strength("Zx9!qWer").is_acceptable());
+    }
+
+    #[test]
+    fn genuine_passphrases_still_pass() {
+        for candidate in [
+            "correct horse battery staple",
+            "trombone reactor plum ledger",
+            "my kingdom for a properly sized horse",
+        ] {
+            assert!(
+                estimate_strength(candidate).is_acceptable(),
+                "`{candidate}` was rejected at {:?}",
+                estimate_strength(candidate)
+            );
+        }
     }
 }

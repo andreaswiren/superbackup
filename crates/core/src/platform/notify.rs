@@ -208,10 +208,7 @@ impl Notification {
             .map(|j| j.to_string())
             .or_else(|| self.destination_id.map(|d| d.to_string()))
             .unwrap_or_else(|| "global".to_string());
-        let code = self
-            .error_code
-            .map(|c| format!("{c:?}"))
-            .unwrap_or_else(|| "none".to_string());
+        let code = self.error_code.map(|c| format!("{c:?}")).unwrap_or_else(|| "none".to_string());
         format!("{:?}|{subject}|{code}", self.kind)
     }
 
@@ -451,10 +448,7 @@ impl std::fmt::Debug for Notifier {
         f.debug_struct("Notifier")
             .field("log_only", &self.log_only)
             .field("registration", &self.registration)
-            .field(
-                "dedupe_entries",
-                &self.dedupe.lock().map(|d| d.len()).unwrap_or(0),
-            )
+            .field("dedupe_entries", &self.dedupe.lock().map(|d| d.len()).unwrap_or(0))
             .finish()
     }
 }
@@ -562,22 +556,16 @@ impl Notifier {
             .iter()
             .map(|a| (a.id.clone(), redact::scrub(&a.label).into_owned()))
             .collect();
-        let targets: HashMap<String, ActionTarget> = notification
-            .actions
-            .iter()
-            .map(|a| (a.id.clone(), a.target.clone()))
-            .collect();
+        let targets: HashMap<String, ActionTarget> =
+            notification.actions.iter().map(|a| (a.id.clone(), a.target.clone())).collect();
         let sink = match self.sink.lock() {
             Ok(g) => g.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         };
         // Clicking the notification body (rather than a button) reports the
         // platform's default action id, which we map to the first target.
-        let default_target = notification
-            .actions
-            .first()
-            .map(|a| a.target.clone())
-            .or(Some(ActionTarget::OpenApp));
+        let default_target =
+            notification.actions.first().map(|a| a.target.clone()).or(Some(ActionTarget::OpenApp));
 
         let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
         let log_title = title.clone();
@@ -585,9 +573,8 @@ impl Notifier {
         // The whole platform interaction happens on its own thread: `show()`
         // can block on a D-Bus round trip, and `wait_for_action` blocks until
         // the user clicks or the toast expires. Neither may hold up a backup.
-        let spawned = std::thread::Builder::new()
-            .name("superbackup-notify".into())
-            .spawn(move || {
+        let spawned =
+            std::thread::Builder::new().name("superbackup-notify".into()).spawn(move || {
                 let mut builder = notify_rust::Notification::new();
                 builder.summary(&title).body(&body).appname(APP_NAME);
                 #[cfg(windows)]
@@ -617,10 +604,11 @@ impl Notifier {
                         #[cfg(not(target_os = "macos"))]
                         if let Some(sink) = sink {
                             handle.wait_for_action(move |id| {
-                                let target = targets
-                                    .get(id)
-                                    .cloned()
-                                    .or(if id == "__closed" { None } else { default_target });
+                                let target = targets.get(id).cloned().or(if id == "__closed" {
+                                    None
+                                } else {
+                                    default_target
+                                });
                                 if let Some(target) = target {
                                     sink(target);
                                 }
@@ -801,10 +789,7 @@ mod tests {
         let mut s = settings();
         s.enabled = false;
         let notifier = Notifier::log_only(s);
-        assert_eq!(
-            notifier.notify(&failure(Uuid::new_v4())),
-            NotifyOutcome::SuppressedDisabled
-        );
+        assert_eq!(notifier.notify(&failure(Uuid::new_v4())), NotifyOutcome::SuppressedDisabled);
     }
 
     #[test]
@@ -869,10 +854,7 @@ mod tests {
         );
 
         let stale = Event::warn("job.stale", "no successful run in 5 days");
-        assert_eq!(
-            Notification::from_event(&stale).map(|n| n.kind),
-            Some(NotificationKind::Stale)
-        );
+        assert_eq!(Notification::from_event(&stale).map(|n| n.kind), Some(NotificationKind::Stale));
 
         let chatter = Event::info("job.started", "starting");
         assert!(Notification::from_event(&chatter).is_none(), "info events are not toasts");

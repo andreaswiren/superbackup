@@ -341,11 +341,9 @@ mod platform_impl {
         // It also means a wedged Network List Manager cannot stall the
         // scheduler: we simply stop waiting.
         let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new()
-            .name("superbackup-nlm".into())
-            .spawn(move || {
-                let _ = tx.send(query_cost());
-            });
+        let spawned = std::thread::Builder::new().name("superbackup-nlm".into()).spawn(move || {
+            let _ = tx.send(query_cost());
+        });
         if spawned.is_err() {
             return Metered::Unknown;
         }
@@ -430,11 +428,7 @@ mod platform_impl {
 /// `BatteryFlag`: bit 3 (8) charging, bit 7 (128) no system battery,
 /// 255 unknown.
 /// `BatteryLifePercent`: 0..=100, or 255 when unknown.
-pub fn parse_system_power_status(
-    ac_line: u8,
-    battery_flag: u8,
-    life_percent: u8,
-) -> PowerStatus {
+pub fn parse_system_power_status(ac_line: u8, battery_flag: u8, life_percent: u8) -> PowerStatus {
     const NO_BATTERY: u8 = 128;
     const CHARGING: u8 = 8;
 
@@ -533,8 +527,8 @@ pub fn read_power_supply(root: &Path) -> PowerStatus {
                     continue;
                 }
                 battery_present = true;
-                if let Some(capacity) = read_trimmed(&dir.join("capacity"))
-                    .and_then(|c| c.parse::<u32>().ok())
+                if let Some(capacity) =
+                    read_trimmed(&dir.join("capacity")).and_then(|c| c.parse::<u32>().ok())
                 {
                     percent = Some(capacity.min(100) as u8);
                 }
@@ -823,7 +817,9 @@ mod tests {
         detector.last_wall = t0;
 
         // A normal minute: both clocks advanced together.
-        assert!(detector.evaluate(StdDuration::from_secs(60), t0 + chrono::Duration::seconds(60)).is_none());
+        assert!(detector
+            .evaluate(StdDuration::from_secs(60), t0 + chrono::Duration::seconds(60))
+            .is_none());
 
         // Eight hours of wall clock, one second of monotonic: the lid was shut.
         let gap = detector

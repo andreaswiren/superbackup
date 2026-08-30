@@ -265,7 +265,7 @@ def workspace_version(workspace: Path) -> str:
     return m.group(1)
 
 
-def rustc_identity() -> tuple[str, str]:
+def rustc_identity(cargo: str = "cargo") -> tuple[str, str]:
     """The rustc that resolved this SBOM: version string and host triple.
 
     This is the toolchain that ran `cargo metadata`, which is not necessarily
@@ -273,19 +273,31 @@ def rustc_identity() -> tuple[str, str]:
     with that scope stated, because a consumer asking "was this built with a
     compiler carrying a known bug" deserves an answer that does not overclaim.
     """
-    try:
-        out = subprocess.run(["rustc", "-vV"], capture_output=True, text=True)
+    # Prefer the rustc sitting alongside the cargo actually being used, so that
+    # a caller passing an explicit --cargo does not silently record a different
+    # toolchain from the one that resolved the graph.
+    candidates = []
+    cargo_path = Path(cargo)
+    if cargo_path.parent != Path("."):
+        candidates.append(str(cargo_path.with_name("rustc" + cargo_path.suffix)))
+    candidates.append("rustc")
+
+    for candidate in candidates:
+        try:
+            out = subprocess.run([candidate, "-vV"], capture_output=True, text=True)
+        except OSError:
+            continue
         if out.returncode != 0:
-            return ("unknown", "unknown")
-        blob = out.stdout
-        version = blob.splitlines()[0].replace("rustc ", "").strip()
+            continue
+        lines = out.stdout.splitlines()
+        version = lines[0].replace("rustc ", "").strip() if lines else ""
         host = next(
-            (l.split(":", 1)[1].strip() for l in blob.splitlines() if l.startswith("host:")),
+            (l.split(":", 1)[1].strip() for l in lines if l.startswith("host:")),
             "unknown",
         )
-        return (version or "unknown", host)
-    except OSError:
-        return ("unknown", "unknown")
+        if version:
+            return (version, host)
+    return ("unknown", "unknown")
 
 
 def cyclonedx_version(cargo: str) -> str:
@@ -870,7 +882,7 @@ def main() -> int:
     epoch = source_date_epoch(workspace)
     version = workspace_version(workspace)
     tool_version = cyclonedx_version(args.cargo)
-    rustc = rustc_identity()
+    rustc = rustc_identity(args.cargo)
 
     boms = {}
     for target in TARGETS:

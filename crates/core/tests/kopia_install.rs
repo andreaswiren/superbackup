@@ -59,11 +59,7 @@ impl Canned {
         }
     }
     fn redirect(to: &str) -> Canned {
-        Canned {
-            status: 302,
-            headers: vec![("Location".into(), to.to_string())],
-            body: Vec::new(),
-        }
+        Canned { status: 302, headers: vec![("Location".into(), to.to_string())], body: Vec::new() }
     }
     fn not_found() -> Canned {
         Canned { status: 404, headers: Vec::new(), body: b"not found".to_vec() }
@@ -163,12 +159,8 @@ async fn serve_one(
         }
     }
     let head = String::from_utf8_lossy(&buf);
-    let path = head
-        .lines()
-        .next()
-        .and_then(|l| l.split_whitespace().nth(1))
-        .unwrap_or("/")
-        .to_string();
+    let path =
+        head.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_string();
     requested.lock().expect("requested").push(path.clone());
 
     let response =
@@ -204,8 +196,9 @@ fn build_archive(members: &[(&str, &[u8])], kind: ArchiveKind) -> Vec<u8> {
             let mut out = std::io::Cursor::new(Vec::new());
             {
                 let mut zip = zip::ZipWriter::new(&mut out);
-                let options: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Stored);
+                let options: zip::write::SimpleFileOptions =
+                    zip::write::SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Stored);
                 for (name, body) in members {
                     zip.start_file(*name, options).expect("start_file");
                     zip.write_all(body).expect("write member");
@@ -215,8 +208,7 @@ fn build_archive(members: &[(&str, &[u8])], kind: ArchiveKind) -> Vec<u8> {
             out.into_inner()
         }
         ArchiveKind::TarGz => {
-            let mut gz =
-                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
             {
                 let mut tar = tar::Builder::new(&mut gz);
                 for (name, body) in members {
@@ -336,7 +328,11 @@ async fn serve_release_with(
 
 /// Settings pointed at the fake, with the managed binary reporting `version`
 /// once it is installed.
-fn settings_for(scenario: &Scenario, paths: &superbackup_core::paths::Paths, version: &str) -> Settings {
+fn settings_for(
+    scenario: &Scenario,
+    paths: &superbackup_core::paths::Paths,
+    version: &str,
+) -> Settings {
     // The installed binary's `--version` is driven by a control file beside it,
     // and the installer probes the temp file in that same directory.
     scenario.script_in(
@@ -375,8 +371,10 @@ async fn installs_a_verified_release_and_reports_progress() {
     // The binary is where discovery will look for it, and it runs.
     assert_eq!(outcome.path, paths.bundled_kopia());
     assert!(outcome.path.is_file());
-    assert_eq!(installer.installed_version().await.map(|v| v.to_string()).as_deref(),
-        Some(TEST_VERSION));
+    assert_eq!(
+        installer.installed_version().await.map(|v| v.to_string()).as_deref(),
+        Some(TEST_VERSION)
+    );
 
     // Nothing half-written was left behind.
     let leftovers: Vec<_> = std::fs::read_dir(outcome.path.parent().expect("bin dir"))
@@ -611,7 +609,9 @@ async fn a_downgrade_is_refused() {
         .await
         .expect_err("a downgrade must be refused");
     match &err {
-        InstallError::RefusedVersion { reason } => assert!(reason.contains("downgrade"), "{reason}"),
+        InstallError::RefusedVersion { reason } => {
+            assert!(reason.contains("downgrade"), "{reason}")
+        }
         other => panic!("wrong error: {other:?}"),
     }
 }
@@ -709,7 +709,10 @@ async fn an_update_check_reports_availability_without_installing_anything() {
         .await
         .expect("notify must not fail");
     assert!(applied.is_none(), "UpdatePolicy::Notify must never replace the binary");
-    assert_eq!(installer.installed_version().await.map(|v| v.to_string()).as_deref(), Some("0.21.0"));
+    assert_eq!(
+        installer.installed_version().await.map(|v| v.to_string()).as_deref(),
+        Some("0.21.0")
+    );
 }
 
 #[tokio::test]
@@ -734,7 +737,10 @@ async fn an_automatic_update_defers_while_a_job_is_running() {
         .await
         .expect_err("must not swap the binary mid-snapshot");
     assert_eq!(err, InstallError::Busy);
-    assert_eq!(installer.installed_version().await.map(|v| v.to_string()).as_deref(), Some("0.21.0"));
+    assert_eq!(
+        installer.installed_version().await.map(|v| v.to_string()).as_deref(),
+        Some("0.21.0")
+    );
 }
 
 #[tokio::test]
@@ -799,12 +805,9 @@ async fn a_failed_check_is_a_warning_not_a_fatal_error() {
     }
     assert!(check.summary().contains("Could not check"));
 
-    let dead = KopiaInstaller::with_endpoint(
-        &paths,
-        "http://127.0.0.1:1",
-        vec!["127.0.0.1".to_string()],
-    )
-    .expect("installer");
+    let dead =
+        KopiaInstaller::with_endpoint(&paths, "http://127.0.0.1:1", vec!["127.0.0.1".to_string()])
+            .expect("installer");
     let check = dead.check_for_update(&Settings::default(), chrono::Utc::now()).await;
     assert!(
         matches!(check, UpdateCheck::Failed { .. }),
@@ -899,7 +902,10 @@ async fn a_read_only_install_directory_is_reported_not_panicked_on() {
 
     let err = server.installer(&paths).install_latest(&settings, None).await.expect_err("fails");
     assert!(
-        matches!(err, InstallError::Io(_) | InstallError::Busy | InstallError::VersionMismatch { .. }),
+        matches!(
+            err,
+            InstallError::Io(_) | InstallError::Busy | InstallError::VersionMismatch { .. }
+        ),
         "an unwritable target must degrade to a reported error, got {err:?}"
     );
     assert!(err.message().len() > 10);

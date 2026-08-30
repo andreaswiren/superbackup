@@ -19,8 +19,7 @@ impl Home {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or_default();
-        let dir =
-            std::env::temp_dir().join(format!("sb-cfg-{tag}-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sb-cfg-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         Home(dir)
     }
@@ -78,10 +77,7 @@ fn a_config_that_is_present_but_broken_is_never_silently_replaced() {
     assert!(matches!(err, Error::Config(_)), "{err:?}");
 
     // The file is still exactly where the user left it, so it can be repaired.
-    assert_eq!(
-        std::fs::read_to_string(paths.config_file()).expect("read"),
-        "{ this is not json"
-    );
+    assert_eq!(std::fs::read_to_string(paths.config_file()).expect("read"), "{ this is not json");
 }
 
 #[test]
@@ -317,9 +313,7 @@ fn a_fresh_store_is_unlocked_and_a_reopened_one_is_locked() {
     {
         let mut store = initialise(&home, "master");
         assert!(!store.is_locked());
-        store
-            .put_secret(SecretRef("s3.access:1".into()), Secret::from_str("AKIA"))
-            .expect("put");
+        store.put_secret(SecretRef("s3.access:1".into()), Secret::from_str("AKIA")).expect("put");
     }
 
     let mut store = Store::open(home.paths()).expect("open");
@@ -514,14 +508,9 @@ fn gc_never_touches_handles_it_does_not_understand() {
     // A handle from a future release, and one whose UUID still names a live
     // destination even though nothing references the handle itself.
     let destination_id = store.config().destinations[0].id;
+    store.put_secret(SecretRef("some.future.thing".into()), Secret::from_str("x")).expect("put");
     store
-        .put_secret(SecretRef("some.future.thing".into()), Secret::from_str("x"))
-        .expect("put");
-    store
-        .put_secret(
-            SecretRef(format!("unknown.kind:{destination_id}")),
-            Secret::from_str("y"),
-        )
+        .put_secret(SecretRef(format!("unknown.kind:{destination_id}")), Secret::from_str("y"))
         .expect("put");
 
     let report = store.gc_dry_run().expect("dry run");

@@ -474,8 +474,10 @@ async fn replacing_the_config_does_not_disturb_an_in_flight_run() {
     assert_eq!(run_status, RunStatus::Succeeded);
 
     // The edited job picked up its new schedule without disturbing the run.
-    poll_status(&h.handle, "the edited schedule", |s| s.next_runs.contains_key(&job_id).then_some(()))
-        .await;
+    poll_status(&h.handle, "the edited schedule", |s| {
+        s.next_runs.contains_key(&job_id).then_some(())
+    })
+    .await;
     assert!(h.handle.status().await.expect("status").running.contains_key(&job_id));
 
     // And the original run still ends on its own terms.
@@ -496,10 +498,7 @@ async fn deleting_a_job_removes_its_schedule() {
         Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 0 }] },
     );
     let job_id = job.id;
-    let h = build(
-        config_with(vec![job], vec![destination.clone()]),
-        PersistedState::default(),
-    );
+    let h = build(config_with(vec![job], vec![destination.clone()]), PersistedState::default());
     poll_status(&h.handle, "the job to be scheduled", |s| {
         s.next_runs.contains_key(&job_id).then_some(())
     })
@@ -530,5 +529,8 @@ async fn shutdown_cancels_in_flight_runs() {
     let (id, status, _) = wait_for(&mut events, "the run to stop", finished_run).await;
     assert_eq!(id, job_id);
     assert_eq!(status, RunStatus::Cancelled);
-    assert_eq!(h.clock.now_utc(), "2025-01-08T12:00:00Z".parse::<chrono::DateTime<chrono::Utc>>().expect("literal"));
+    assert_eq!(
+        h.clock.now_utc(),
+        "2025-01-08T12:00:00Z".parse::<chrono::DateTime<chrono::Utc>>().expect("literal")
+    );
 }

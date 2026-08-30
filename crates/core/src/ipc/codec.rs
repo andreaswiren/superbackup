@@ -174,11 +174,8 @@ mod tests {
     #[tokio::test]
     async fn splits_on_newlines_and_strips_cr() {
         let got = read_all(b"one\r\ntwo\n\nthree\n", 1024).await;
-        let lines: Vec<&str> = got
-            .iter()
-            .filter_map(|r| r.as_ref().ok())
-            .map(|s| s.as_str())
-            .collect();
+        let lines: Vec<&str> =
+            got.iter().filter_map(|r| r.as_ref().ok()).map(|s| s.as_str()).collect();
         assert_eq!(lines, vec!["one", "two", "", "three"]);
     }
 

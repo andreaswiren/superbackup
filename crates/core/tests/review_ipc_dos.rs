@@ -143,6 +143,53 @@ async fn one_connection_can_open_unbounded_subscriptions() {
     h.stop().await;
 }
 
+/// End-to-end proof that the quadratic `redact::scrub` (see
+/// `review_redaction.rs`) is reachable from a single unauthenticated IPC line.
+///
+/// A `cmd` serde-json does not recognise produces
+/// `"unknown variant `<the attacker's string>`, expected one of ..."`, which
+/// `ErrorPayload::new` scrubs at construction and `ServerFrame::sanitise`
+/// scrubs again on the way out — both on the connection's own reader task.
+///
+/// The line below is ~20 KB against a 1 MiB cap. Cost is quadratic, so a
+/// maximum-size line is roughly 2 700x this.
+#[tokio::test]
+async fn one_malformed_line_burns_the_connection_task_for_seconds() {
+    let h = Harness::start("scrub-dos", Limits::default());
+    let mut raw = RawClient::connect(&h.endpoint).await;
+    raw.read_frame().await.expect("hello");
+
+    // `://` trips `needs_scrubbing`; the colons are the quadratic payload.
+    let payload = format!("://{}", ":".repeat(20_000));
+    let line = serde_json::json!({
+        "type": "request",
+        "id": 1,
+        "protocol": superbackup_core::ipc::PROTOCOL_VERSION,
+        "body": { "cmd": payload },
+    })
+    .to_string();
+
+    let started = std::time::Instant::now();
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut bytes = line.into_bytes();
+        bytes.push(b'\n');
+        raw.writer.write_all(&bytes).await.expect("write");
+        raw.writer.flush().await.expect("flush");
+    }
+    let reply = raw.read_frame().await.expect("the daemon must answer");
+    let elapsed = started.elapsed();
+    assert!(matches!(reply, superbackup_core::ipc::ServerFrame::Error { .. }));
+
+    assert!(
+        elapsed.as_millis() < 250,
+        "one 20 KB malformed line occupied the daemon for {elapsed:?}; the cap \
+         is 1 MiB and redact::scrub is quadratic, so a single maximum-size line \
+         costs hours of CPU on the connection task"
+    );
+    h.stop().await;
+}
+
 /// `max_connections` is a semaphore whose permits are held for the whole life
 /// of a connection, and `connection_loop` has **no idle timeout**: its
 /// `select!` waits on shutdown, `read_line`, and finished requests, and nothing

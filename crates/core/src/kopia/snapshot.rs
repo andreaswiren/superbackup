@@ -213,8 +213,11 @@ impl KopiaDriver {
 
         if let Some(m) = &manifest {
             if let Some((files, bytes)) = m.totals() {
-                let ignored =
-                    m.stats.as_ref().map(|s| s.ignored_error_count).unwrap_or(progress.errors_ignored);
+                let ignored = m
+                    .stats
+                    .as_ref()
+                    .map(|s| s.ignored_error_count)
+                    .unwrap_or(progress.errors_ignored);
                 // Replace the rounded progress-line numbers with the exact ones.
                 progress.files_processed = files;
                 progress.files_total = Some(files);
@@ -462,10 +465,7 @@ impl KopiaDriver {
 
     /// Convenience for the browser's root view: every snapshot for this
     /// destination, newest first.
-    pub async fn browse_roots(
-        &self,
-        ctx: &RunContext,
-    ) -> KopiaResult<Vec<SnapshotManifest>> {
+    pub async fn browse_roots(&self, ctx: &RunContext) -> KopiaResult<Vec<SnapshotManifest>> {
         let mut all = self.list_snapshots(None, true, ctx).await?;
         all.sort_by_key(|m| std::cmp::Reverse(m.start_time));
         Ok(all)
@@ -497,8 +497,7 @@ fn parse_estimate(stdout: &str) -> SnapshotEstimate {
                 est.excluded_directories = dirs;
             }
         } else if let Some(rest) = line.strip_prefix("Encountered ") {
-            est.errors =
-                rest.split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0);
+            est.errors = rest.split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0);
         }
     }
     est

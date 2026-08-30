@@ -22,10 +22,7 @@ fn authorization_bearer_headers_are_not_redacted_at_all() {
     let leaked = "ghp_AbCdEf0123456789DeadBeefCafe";
     let line = format!("request failed\nAuthorization: Bearer {leaked}\n");
     let out = scrub(&line);
-    assert!(
-        !out.contains(leaked),
-        "the bearer token survived scrub() verbatim:\n{out}"
-    );
+    assert!(!out.contains(leaked), "the bearer token survived scrub() verbatim:\n{out}");
 }
 
 /// Same root cause: `credential` is a KEY_HINT but not a `needs_scrubbing`

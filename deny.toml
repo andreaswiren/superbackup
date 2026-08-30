@@ -18,7 +18,56 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+
+# Every entry here is a deliberate, argued exception with a review date — not a
+# silencing. An unexplained ignore list is how a dependency policy becomes
+# decoration. If you add one, say what the exposure actually is, why it is
+# acceptable *for this program*, and what would change the answer.
+#
+# All of these arrive through the Linux GUI stack (eframe -> winit/accesskit ->
+# GTK3 and AT-SPI). None is reachable on Windows, the priority platform, and
+# none is reachable at all in `superbackup daemon --no-tray` or in the service
+# host, which is the configuration that runs unattended.
+ignore = [
+    # --- Vulnerabilities -----------------------------------------------------
+    # quick-xml 0.30: two denial-of-service issues (quadratic attribute
+    # checking; unbounded namespace allocation) when parsing untrusted XML.
+    #
+    # Reached only via accesskit_unix -> atspi -> zbus_xml, i.e. Linux
+    # accessibility. The XML it parses is D-Bus introspection data from the
+    # session's own accessibility bus, not attacker-supplied input, and the
+    # process is already inside that trust boundary. There is no upgrade path:
+    # quick-xml 0.31 is a semver break and zbus_xml 4 pins 0.30.
+    #
+    # Revisit when accesskit updates its zbus stack. If superbackup ever parses
+    # XML from a network or from a user-supplied file, this stops being
+    # acceptable immediately.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS; Linux AT-SPI introspection only, no untrusted XML, no upgrade path" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS; same reachability as above" },
+
+    # --- Unmaintained --------------------------------------------------------
+    # gtk-rs GTK3 bindings. The entire Linux tray and file-dialog ecosystem
+    # (tray-icon, rfd) sits on these; GTK3 bindings were retired upstream in
+    # favour of GTK4, which that ecosystem has not moved to. Unmaintained is not
+    # the same as vulnerable, and there is no alternative that keeps a working
+    # Linux tray.
+    { id = "RUSTSEC-2024-0412", reason = "gdk: unmaintained GTK3 binding; required by the Linux tray, no GTK4 alternative in tray-icon" },
+    { id = "RUSTSEC-2024-0413", reason = "atk: as above" },
+    { id = "RUSTSEC-2024-0415", reason = "gtk: as above" },
+    { id = "RUSTSEC-2024-0416", reason = "atk-sys: as above" },
+    { id = "RUSTSEC-2024-0418", reason = "gdk-sys: as above" },
+    { id = "RUSTSEC-2024-0419", reason = "gdkwayland/gtk-sys: as above" },
+    { id = "RUSTSEC-2024-0420", reason = "gdkx11: as above" },
+
+    # Build-time only; neither ships in the binary.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: build-time macro helper, not present at runtime" },
+    { id = "RUSTSEC-2024-0436", reason = "paste: build-time macro helper, not present at runtime" },
+
+    # Text shaping, via resvg/usvg for tray icon rasterisation. Input is our own
+    # SVG assets, checked into this repository — never user-supplied.
+    { id = "RUSTSEC-2026-0192", reason = "rustybuzz: unmaintained; only shapes text in our own bundled SVG assets" },
+    { id = "RUSTSEC-2026-0206", reason = "ttf-parser: unmaintained; same reachability as rustybuzz" },
+]
 
 [licenses]
 version = 2
@@ -30,15 +79,34 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "0BSD",
     "ISC",
     "Zlib",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "MPL-2.0",
-    "CDLA-Permissive-2.0",
+    "CC0-1.0",
     "BSL-1.0",
-    "OpenSSL",
+    # Font licences. egui bundles its default typefaces into the binary via
+    # `epaint_default_fonts`, so superbackup redistributes them: Hack and
+    # Noto Emoji under OFL-1.1, Ubuntu Light under the Ubuntu Font Licence.
+    # Both permit redistribution inside an application under any licence,
+    # provided the notices travel with them and Reserved Font Names are not
+    # reused by a modified font. We do not modify them. See
+    # docs/compliance/THIRD_PARTY.md, which now lists them.
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
 ]
+# `0BSD` (doctest-file, recvmsg) is BSD without even the attribution clause.
+# `CC0-1.0` (notify — a direct dependency — and hexf-parse) is a public-domain
+# dedication; it imposes nothing on redistribution under MIT. It is worth
+# knowing that CC0 explicitly does *not* grant patent rights, which is why some
+# organisations decline it for code. That is a real caveat, and it is accepted
+# here deliberately rather than by omission.
+#
+# Both were absent from this list while `exceptions` was empty, which means
+# `cargo deny check licenses` would have failed the build. The gap was found by
+# generating the SBOM and reading it, not by the policy itself — a licence
+# policy that is never executed is a document, not a control. CI now runs it.
 confidence-threshold = 0.9
 # A copyleft licence that would force us to relicense is not "review it
 # later" — it is a release blocker, so there is no exceptions list here.

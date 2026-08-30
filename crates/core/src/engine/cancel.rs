@@ -83,8 +83,9 @@ impl CancelToken {
     /// takes a lock and never awaits anything but the parent's channel.
     pub fn child(&self) -> CancelToken {
         let (state, _) = tokio::sync::watch::channel(self.reason());
-        let child =
-            CancelToken { inner: Arc::new(TokenInner { state, _parent: Some(Arc::clone(&self.inner)) }) };
+        let child = CancelToken {
+            inner: Arc::new(TokenInner { state, _parent: Some(Arc::clone(&self.inner)) }),
+        };
         if child.is_cancelled() {
             return child;
         }

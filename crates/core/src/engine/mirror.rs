@@ -181,7 +181,8 @@ impl MirrorEngine {
         })?;
 
         let matcher = Arc::new(ExclusionMatcher::build(&request.exclusions)?);
-        let bucket = TokenBucket::for_upload(&request.bandwidth, Arc::clone(&self.clock)).map(Arc::new);
+        let bucket =
+            TokenBucket::for_upload(&request.bandwidth, Arc::clone(&self.clock)).map(Arc::new);
 
         let mut used_names: HashSet<String> = HashSet::new();
         for source in &request.sources {
@@ -200,7 +201,10 @@ impl MirrorEngine {
             let target = root.join(unique_folder_name(&source.path, &mut used_names));
             guard_containment(&src_root, &target)?;
 
-            let options = MirrorOptions { follow_symlinks: source.follow_symlinks, ..request.options.clone() };
+            let options = MirrorOptions {
+                follow_symlinks: source.follow_symlinks,
+                ..request.options.clone()
+            };
             self.mirror_one(
                 &src_root,
                 &target,
@@ -274,7 +278,10 @@ impl MirrorEngine {
                 ScanItem::Warning(text) => acc.warn(text),
                 ScanItem::Dir(rel) => {
                     let Some(dest) = safe_join(&target, &rel) else {
-                        acc.warn(format!("refusing to create {} outside the mirror", rel.display()));
+                        acc.warn(format!(
+                            "refusing to create {} outside the mirror",
+                            rel.display()
+                        ));
                         continue;
                     };
                     if let Err(e) = std::fs::create_dir_all(&dest) {
@@ -352,7 +359,8 @@ impl MirrorEngine {
         let src_root = src_root.to_path_buf();
         let target = target.to_path_buf();
         let cancel = cancel.clone();
-        let handle = tokio::task::spawn_blocking(move || prune_blocking(&src_root, &target, &cancel));
+        let handle =
+            tokio::task::spawn_blocking(move || prune_blocking(&src_root, &target, &cancel));
         match handle.await {
             Ok(Ok(report)) => {
                 for w in report.warnings {
@@ -362,10 +370,9 @@ impl MirrorEngine {
                 Ok(())
             }
             Ok(Err(e)) => Err(e),
-            Err(join) => Err(ExecutorError::new(
-                ErrorCode::Internal,
-                format!("prune worker failed: {join}"),
-            )),
+            Err(join) => {
+                Err(ExecutorError::new(ErrorCode::Internal, format!("prune worker failed: {join}")))
+            }
         }
     }
 }
@@ -477,10 +484,8 @@ fn scan(
     tx: &tokio::sync::mpsc::Sender<ScanItem>,
 ) {
     let max_bytes = options.max_file_size_mb.map(|mb| mb.saturating_mul(1024 * 1024));
-    let walker = walkdir::WalkDir::new(root)
-        .follow_links(options.follow_symlinks)
-        .min_depth(1)
-        .into_iter();
+    let walker =
+        walkdir::WalkDir::new(root).follow_links(options.follow_symlinks).min_depth(1).into_iter();
 
     let it = walker.filter_entry(|entry| {
         if entry.file_type().is_dir() {
@@ -728,7 +733,11 @@ struct PruneReport {
 /// Every candidate is re-validated against `target` immediately before the
 /// `remove_*` call — the check is not hoisted out of the loop, because the
 /// point of it is to be the last thing that happens before deletion.
-fn prune_blocking(src_root: &Path, target: &Path, cancel: &CancelToken) -> ExecutorResult<PruneReport> {
+fn prune_blocking(
+    src_root: &Path,
+    target: &Path,
+    cancel: &CancelToken,
+) -> ExecutorResult<PruneReport> {
     if is_filesystem_root(target) {
         return Err(ExecutorError::new(
             ErrorCode::Validation,
@@ -768,7 +777,9 @@ fn prune_blocking(src_root: &Path, target: &Path, cancel: &CancelToken) -> Execu
         // Final guard: never step outside the mirror subtree, and never follow
         // a link to decide what to delete.
         let Some(validated) = safe_join(target, rel) else {
-            report.warnings.push(format!("refusing to delete {} — outside the mirror", rel.display()));
+            report
+                .warnings
+                .push(format!("refusing to delete {} — outside the mirror", rel.display()));
             continue;
         };
         if validated != path || !validated.starts_with(target) || validated == target {
@@ -905,7 +916,11 @@ struct Accumulator {
 }
 
 impl Accumulator {
-    fn new(sink: ProgressSink, clock: Arc<dyn Clock>, started: chrono::DateTime<chrono::Utc>) -> Accumulator {
+    fn new(
+        sink: ProgressSink,
+        clock: Arc<dyn Clock>,
+        started: chrono::DateTime<chrono::Utc>,
+    ) -> Accumulator {
         Accumulator {
             sink,
             clock,

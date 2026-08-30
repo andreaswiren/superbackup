@@ -103,12 +103,11 @@ impl KopiaDriver {
             ));
         }
         if matches!(destination.kind, DestinationKind::S3 { .. }) && provider.is_none() {
-            return Err(KopiaError::local(label, KopiaFailure::Unusable, None).with_message(
-                format!(
-                    "\"{}\" points at a storage provider that no longer exists in the configuration.",
-                    destination.name
-                ),
-            ));
+            return Err(KopiaError::local(label, KopiaFailure::Unusable, None)
+                .with_message(format!(
+                "\"{}\" points at a storage provider that no longer exists in the configuration.",
+                destination.name
+            )));
         }
 
         Ok(KopiaDriver {
@@ -251,15 +250,11 @@ impl KopiaDriver {
                 };
                 let (host, scheme_disables_tls) = s3_endpoint_host(endpoint);
                 if host.is_empty() {
-                    return Err(KopiaError::local(
-                        "repository",
-                        KopiaFailure::Unusable,
-                        None,
-                    )
-                    .with_message(
-                        "The storage provider has no endpoint. StorJ's is \
+                    return Err(KopiaError::local("repository", KopiaFailure::Unusable, None)
+                        .with_message(
+                            "The storage provider has no endpoint. StorJ's is \
                          https://gateway.storjshare.io.",
-                    ));
+                        ));
                 }
                 cmd.command("s3").flag("bucket", bucket).flag("endpoint", &host);
                 if !region.is_empty() {
@@ -316,8 +311,7 @@ impl KopiaDriver {
 
         match (&self.encryption.ecc, self.encryption.ecc_overhead_percent) {
             (Some(ecc), overhead) if overhead > 0 && self.binary.supports_ecc() => {
-                cmd.flag("ecc", ecc.kopia_id())
-                    .flag("ecc-overhead-percent", overhead.to_string());
+                cmd.flag("ecc", ecc.kopia_id()).flag("ecc-overhead-percent", overhead.to_string());
             }
             _ => {}
         }
@@ -464,15 +458,11 @@ impl KopiaDriver {
         ctx: &RunContext,
     ) -> KopiaResult<()> {
         if !self.binary.supports_throttling() {
-            return Err(KopiaError::local(
-                "repository throttle set",
-                KopiaFailure::Unusable,
-                None,
-            )
-            .with_message(format!(
-                "kopia {} does not support bandwidth limits; 0.10 or newer is required.",
-                self.binary.version()
-            )));
+            return Err(KopiaError::local("repository throttle set", KopiaFailure::Unusable, None)
+                .with_message(format!(
+                    "kopia {} does not support bandwidth limits; 0.10 or newer is required.",
+                    self.binary.version()
+                )));
         }
         let mut cmd = self.base();
         cmd.command("repository").command("throttle").command("set");
@@ -600,13 +590,8 @@ pub fn s3_endpoint_host(endpoint: &str) -> (String, bool) {
     };
     // Drop any path, query or fragment: kopia's prefix, not the URL, selects
     // the location inside the bucket.
-    let host = rest
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('.')
-        .to_string();
+    let host =
+        rest.split(['/', '?', '#']).next().unwrap_or("").trim().trim_end_matches('.').to_string();
     (host, plain_http)
 }
 
@@ -774,8 +759,7 @@ impl ContentStats {
             if let Some(v) = line.strip_prefix("Count:") {
                 out.content_count = v.trim().parse().ok();
             } else if let Some(v) = line.strip_prefix("Total:") {
-                out.total_bytes =
-                    v.trim().parse().ok().or_else(|| super::progress::parse_bytes(v));
+                out.total_bytes = v.trim().parse().ok().or_else(|| super::progress::parse_bytes(v));
             }
         }
         out

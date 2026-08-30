@@ -118,7 +118,7 @@ unchanged here.
 | **TA-5 Network adversary** | On-path between the machine and a destination or a release host | Interception, substitution |
 | **TA-6 Supply-chain adversary** | Publishes a malicious crate version, or compromises an upstream release | Broad compromise of many downstream users |
 | **TA-7 Well-resourced attacker with the vault** | Offline compute against a captured vault file | Targeted access to a specific person's data |
-| **Out of scope** | Malware running as the user with the vault unlocked; a compromised OS, firmware or hypervisor; physical attacks including cold boot and DMA; a malicious `kopia` binary already in place | Excluded in `THREAT_MODEL.md` §3 |
+| **Out of scope** | Malware running as the user with the vault unlocked; a compromised OS, firmware or hypervisor; physical attacks including cold boot and DMA; a compromise of the Kopia project or of GitHub itself; traffic analysis of the destination | Excluded in `THREAT_MODEL.md` §3 |
 
 ---
 
@@ -307,14 +307,14 @@ service can run when nobody is logged in.
 ---
 
 **R-13 · A substituted or malicious `kopia` binary**
-*Threat model §3 out of scope, §7 · TA-6*
+*Threat model §A8, §7 · TA-6*
 
 | | |
 |---|---|
 | Inherent | Unlikely × Severe = **High** |
-| Mitigations at the *delivery* stage | The managed installer verifies the SHA-256 of the bytes actually received against the `checksums.txt` published with the same release, before anything is moved into place; refuses a release with no checksum file; guards archive extraction against path traversal; enforces a GitHub host allowlist **on the redirect policy itself**, so no request is ever issued to a foreign host; refuses a downgrade and anything below the version floor; and keeps the installed binary only if it reports the version the release promised (`crates/core/src/kopia/install.rs`, tested throughout `crates/core/tests/kopia_install.rs`). |
+| Mitigations at the *delivery* stage | The archive is fetched over TLS from a pinned upstream repository, restricted to a GitHub host allowlist enforced **on the redirect policy itself**, so no request is ever issued to a foreign host. It is held **in memory** and its SHA-256 compared against the `checksums.txt` published with the same release *before anything touches disk*, so a mismatch has nothing to clean up. A release with no checksum file is refused. Every archive member is checked for path traversal. Installation is temp file → `--version` probe → atomic rename, so a partially written executable is never left where the resolver would find it. A version floor is enforced, downgrades are refused, and a binary the user installed themselves is never replaced. (`crates/core/src/kopia/install.rs`, tested throughout `crates/core/tests/kopia_install.rs`.) |
 | Residual | Unlikely × Severe = **High** |
-| Treatment | **Mitigated at delivery; accepted in principle.** `THREAT_MODEL.md` §3 places a malicious `kopia` binary out of scope, and the installer does not change that: once a binary is in place and being driven, it has the repository passphrases by construction. Two residuals are stated rather than implied: (i) Kopia's `checksums.txt.sig` is **not** verified, because the signing key is not published in a form the installer can pin — so authenticity rests on TLS to `github.com` and on GitHub itself, and an attacker who can publish a release to `kopia/kopia` defeats it, exactly as they would defeat a user running `curl \| tar x`; (ii) a user may point `kopia_path` at any binary they like, and `doctor` reporting the resolved path is the only thing that makes a substitution visible. |
+| Treatment | **Mitigated at delivery; the authenticity limb accepted.** `THREAT_MODEL.md` §A8 promoted this from an operational caveat to an in-scope adversary when the application started installing Kopia itself, and states the residual: Kopia publishes `checksums.txt.sig` but not a signing key this project can pin, so **the signature is not verified**. The checksum proves the download matches what that release published; it does not prove who published it. Authenticity rests on TLS to `github.com` and on GitHub — the same exposure as `curl \| tar x`, and no worse, but not a verified signature and not to be described as one. §3 accordingly places **a compromise of the Kopia project or of GitHub itself** out of scope. Two further points: a substituted Kopia has the repository passphrases by construction, since superbackup hands them to whatever binary it resolves; and `doctor` reporting the resolved path, version and whether the binary is the managed one is what makes a substitution visible. Users wanting a stronger chain should install Kopia through a package manager that verifies signatures and point `Settings::kopia_path` at it; auto-install can be turned off entirely. |
 
 ---
 
@@ -326,7 +326,7 @@ service can run when nobody is logged in.
 | Inherent | Unlikely × Severe = **High** |
 | Mitigations | `deny.toml` restricts sources to crates.io with `unknown-registry = "deny"` and `unknown-git = "deny"`; bans `openssl`, `openssl-sys` and `native-tls` so no C TLS library enters a security-sensitive binary; fails on any RustSec advisory with `ignore = []` and on any yanked crate; and holds a licence allowlist with no exceptions. `Cargo.lock` is committed, so builds are pinned. The SBOM republishes each crate's SHA-256 and is scanned independently. |
 | Residual | Unlikely × Severe = **High** |
-| Treatment | Mitigated. The residual is irreducible for any project consuming a public registry: `cargo-deny` catches a *known* bad crate, not a crate that is bad and not yet known. Reducing it further means fewer dependencies, and the 637-component graph is largely the GUI stack. `cargo-vet` or `cargo-crev` review is on the gap list. |
+| Treatment | Mitigated. The residual is irreducible for any project consuming a public registry: `cargo-deny` catches a *known* bad crate, not a crate that is bad and not yet known. Reducing it further means fewer dependencies, and the 647-component graph is largely the GUI stack. `cargo-vet` or `cargo-crev` review is on the gap list. |
 
 ---
 
@@ -438,7 +438,7 @@ one that says nothing, because the user stops checking.
 | R-10 | Credentials echoed in third-party output | Medium |
 | R-11 | Malicious local process on the IPC endpoint | Low |
 | R-12 | OS keychain enabled for unattended runs | **High** — accepted by informed choice |
-| R-13 | Substituted or malicious `kopia` binary | **High** — mitigated at delivery, accepted in principle |
+| R-13 | Substituted or malicious `kopia` binary | **High** — mitigated at delivery; the authenticity limb accepted |
 | R-14 | Compromised crate in the dependency tree | **High** |
 | R-15 | Resource exhaustion from hostile input | Low |
 | R-16 | Loss of the master passphrase | **High** — accepted, a property of the design |

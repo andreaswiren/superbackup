@@ -228,16 +228,12 @@ fn the_plan_derives_the_old_and_the_new_password_for_each_destination() {
     // Capture what the repositories are actually using right now, so the test
     // is checking against reality rather than against itself.
     store.unlock(&pass("master")).expect("unlock");
-    let ids: Vec<Uuid> =
-        store.derived_repositories().iter().map(|r| r.destination_id).collect();
-    let before: Vec<Secret> = ids
-        .iter()
-        .map(|id| store.vault().derive_repo_passphrase(id).expect("derive"))
-        .collect();
+    let ids: Vec<Uuid> = store.derived_repositories().iter().map(|r| r.destination_id).collect();
+    let before: Vec<Secret> =
+        ids.iter().map(|id| store.vault().derive_repo_passphrase(id).expect("derive")).collect();
 
-    let rekey = store
-        .change_passphrase_migrating(&pass("master"), &pass("new master"))
-        .expect("rotate");
+    let rekey =
+        store.change_passphrase_migrating(&pass("master"), &pass("new master")).expect("rotate");
     assert_eq!(rekey.repositories().len(), 2);
 
     store.unlock(&pass("new master")).expect("unlock after rotation");
@@ -279,8 +275,7 @@ fn credentials_are_refused_for_a_destination_outside_the_plan() {
         .expect("stored destination")
         .id;
 
-    let rekey =
-        store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
+    let rekey = store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
 
     assert!(
         rekey.credentials(&stored_id).is_err(),
@@ -303,8 +298,7 @@ fn the_new_vault_is_on_disk_before_the_migration_starts() {
     let home = Home::new("ordering");
     let mut store = store_with_derived(&home, "master", 3);
 
-    let rekey =
-        store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
+    let rekey = store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
 
     let live = std::fs::read(home.paths().vault_file()).expect("read");
     assert_eq!(live, rekey.sealed_bytes(), "the rotated vault must already be committed");
@@ -348,9 +342,7 @@ fn a_migration_interrupted_halfway_can_be_resumed() {
     // A later run reopens the store and picks the migration back up from the
     // two files on disk plus the two passphrases the user still knows.
     let store = Store::open(home.paths()).expect("reopen");
-    let resumed = store
-        .resume_rekey(&backup, &pass("master"), &pass("new"))
-        .expect("resume");
+    let resumed = store.resume_rekey(&backup, &pass("master"), &pass("new")).expect("resume");
 
     assert_eq!(resumed.repositories().len(), 5);
     assert_eq!(
@@ -377,8 +369,7 @@ fn a_migration_interrupted_halfway_can_be_resumed() {
 fn resuming_across_two_different_vaults_is_refused() {
     let home = Home::new("resumewrong");
     let mut store = store_with_derived(&home, "master", 1);
-    let rekey =
-        store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
+    let rekey = store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
     let live = std::fs::read(home.paths().vault_file()).expect("read");
     let _ = rekey;
 
@@ -442,12 +433,16 @@ fn a_completed_migration_reports_itself_complete() {
 fn the_report_is_serialisable_and_carries_no_secrets() {
     let home = Home::new("report");
     let mut store = store_with_derived(&home, "master", 2);
-    let rekey =
-        store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
+    let rekey = store.change_passphrase_migrating(&pass("master"), &pass("new")).expect("rotate");
 
     let id = rekey.repositories()[0].destination_id;
-    let password =
-        rekey.credentials(&id).expect("credentials").new.expose_str().expect("printable").to_string();
+    let password = rekey
+        .credentials(&id)
+        .expect("credentials")
+        .new
+        .expose_str()
+        .expect("printable")
+        .to_string();
 
     let json = serde_json::to_string(&rekey.report()).expect("serialise");
     assert!(!json.contains(&password), "the persisted report must not contain a password");

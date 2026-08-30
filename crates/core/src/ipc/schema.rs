@@ -134,6 +134,19 @@ pub struct LimitsSpec {
     pub request_burst: u32,
     /// Connections the daemon serves at once, across all clients.
     pub max_connections: usize,
+    /// Live subscriptions one connection may hold. Beyond this, `subscribe`
+    /// returns an error rather than opening another stream.
+    pub max_subscriptions: usize,
+    /// Milliseconds a new connection may stay silent before it is closed.
+    /// Send a blank line to reset it; a blank line is a keep-alive.
+    pub handshake_timeout_ms: u64,
+    /// Milliseconds an established connection may stay silent before it is
+    /// closed. Also reset by a blank line.
+    pub idle_timeout_ms: u64,
+    /// Key derivations the daemon runs at once, process-wide. Requests whose
+    /// `flags` include `kdf` queue behind this, and one connection may have
+    /// only one of them in flight at a time.
+    pub max_concurrent_kdf: usize,
     /// How many stream items are buffered for one subscriber before the
     /// oldest are dropped and a `lagged` marker is emitted.
     pub stream_buffer: usize,

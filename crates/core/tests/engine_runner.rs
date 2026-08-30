@@ -12,7 +12,7 @@ use superbackup_core::engine::clock::{Clock, TestClock};
 use superbackup_core::engine::executor::ExecutorError;
 use superbackup_core::engine::testing::{test_job, test_repository, MockBehaviour, MockExecutor};
 use superbackup_core::engine::{
-    EngineEvent, EVENT_CHANNEL_CAPACITY, RetryPolicy, RunRequest, Runner,
+    EngineEvent, RetryPolicy, RunRequest, Runner, EVENT_CHANNEL_CAPACITY,
 };
 use superbackup_core::error::ErrorCode;
 use superbackup_core::model::{Destination, Job, JobHooks, Settings};
@@ -183,7 +183,10 @@ async fn cancellation_is_prompt_and_isolated() {
     );
     assert!(!other_job.is_cancelled(), "cancelling one job must not touch another token");
     // The clock never moved: nothing waited out a real timeout.
-    assert_eq!(h.clock.now_utc(), "2025-01-08T12:00:00Z".parse::<chrono::DateTime<chrono::Utc>>().unwrap());
+    assert_eq!(
+        h.clock.now_utc(),
+        "2025-01-08T12:00:00Z".parse::<chrono::DateTime<chrono::Utc>>().unwrap()
+    );
 }
 
 #[tokio::test]
@@ -358,8 +361,7 @@ async fn hook_output_is_captured() {
     let h = harness();
     let destinations = vec![test_repository("local", "/repos/local")];
     let mut job = job_for(&destinations);
-    job.hooks =
-        JobHooks { before: Some("echo before-ran".into()), ..JobHooks::default() };
+    job.hooks = JobHooks { before: Some("echo before-ran".into()), ..JobHooks::default() };
     let mut events = h.events.subscribe();
     let _ = h.runner.execute(request(job, destinations, CancelToken::new())).await;
 

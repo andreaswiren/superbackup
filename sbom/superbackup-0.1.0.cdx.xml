@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bom xmlns="http://cyclonedx.org/schema/bom/1.5" serialNumber="urn:uuid:eea6426f-192d-5b40-b587-98b3ee186dd2" version="1">
+<bom xmlns="http://cyclonedx.org/schema/bom/1.5" serialNumber="urn:uuid:c1021306-a15d-51a2-9bb0-98e36fb20feb" version="1">
   <metadata>
     <timestamp>2026-08-30T22:18:39Z</timestamp>
     <lifecycles>
@@ -18,6 +18,15 @@
               <url>https://github.com/CycloneDX/cyclonedx-rust-cargo</url>
             </reference>
           </externalReferences>
+        </component>
+        <component type="application">
+          <author>The Rust Project</author>
+          <name>rustc</name>
+          <version>1.97.1 (8bab26f4f 2026-07-14)</version>
+          <description>The toolchain that resolved this bill of materials. Not necessarily the toolchain that compiled any given release binary — see docs/compliance/SBOM.md.</description>
+          <properties>
+            <property name="superbackup:rustc:host">x86_64-pc-windows-msvc</property>
+          </properties>
         </component>
         <component type="application">
           <author>superbackup project</author>
@@ -464,6 +473,31 @@
       </externalReferences>
       <properties>
         <property name="superbackup:targets">all</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4">
+      <author>RustCrypto Developers</author>
+      <name>aes</name>
+      <version>0.8.4</version>
+      <description>Pure Rust implementation of the Advanced Encryption Standard (a.k.a. Rijndael)</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/aes@0.8.4</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/aes</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/RustCrypto/block-ciphers</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
       </properties>
     </component>
     <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#ahash@0.8.12">
@@ -1532,6 +1566,31 @@
         <property name="superbackup:targets">all</property>
       </properties>
     </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3">
+      <author>RustCrypto Developers</author>
+      <name>block-padding</name>
+      <version>0.3.3</version>
+      <description>Padding and unpadding of messages divided into blocks.</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/block-padding@0.3.3</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/block-padding</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/RustCrypto/utils</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">all</property>
+      </properties>
+    </component>
     <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#block2@0.5.1">
       <author>Steven Sheldon, Mads Marquart &lt;mads@marquart.dk&gt;</author>
       <name>block2</name>
@@ -1962,6 +2021,31 @@
         </reference>
         <reference type="vcs">
           <url>https://github.com/Smithay/calloop</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2">
+      <author>RustCrypto Developers</author>
+      <name>cbc</name>
+      <version>0.1.2</version>
+      <description>Cipher Block Chaining (CBC) block cipher mode of operation</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/cbc@0.1.2</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/cbc</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/RustCrypto/block-modes</url>
         </reference>
       </externalReferences>
       <properties>
@@ -7683,6 +7767,62 @@
         <property name="superbackup:targets">all</property>
       </properties>
     </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8">
+      <author>The Rust Project Developers</author>
+      <name>num-bigint</name>
+      <version>0.4.8</version>
+      <description>Big integer implementation for Rust</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/num-bigint@0.4.8</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/num-bigint</url>
+        </reference>
+        <reference type="website">
+          <url>https://github.com/rust-num/num-bigint</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/rust-num/num-bigint</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6">
+      <author>The Rust Project Developers</author>
+      <name>num-complex</name>
+      <version>0.4.6</version>
+      <description>Complex numbers implementation for Rust</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/num-complex@0.4.6</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/num-complex</url>
+        </reference>
+        <reference type="website">
+          <url>https://github.com/rust-num/num-complex</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/rust-num/num-complex</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
+      </properties>
+    </component>
     <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num-conv@0.2.2">
       <author>Jacob Pratt &lt;jacob@jhpratt.dev&gt;</author>
       <name>num-conv</name>
@@ -7703,6 +7843,90 @@
       </externalReferences>
       <properties>
         <property name="superbackup:targets">aarch64-apple-darwin,x86_64-apple-darwin</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47">
+      <author>The Rust Project Developers</author>
+      <name>num-integer</name>
+      <version>0.1.47</version>
+      <description>Integer traits and functions</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/num-integer@0.1.47</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/num-integer</url>
+        </reference>
+        <reference type="website">
+          <url>https://github.com/rust-num/num-integer</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/rust-num/num-integer</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num-iter@0.1.46">
+      <author>The Rust Project Developers</author>
+      <name>num-iter</name>
+      <version>0.1.46</version>
+      <description>External iterators for generic mathematics</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">c92800bd69a1eac91786bcfe9da64a897eb72911b8dc3095decbd07429e8048b</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/num-iter@0.1.46</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/num-iter</url>
+        </reference>
+        <reference type="website">
+          <url>https://github.com/rust-num/num-iter</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/rust-num/num-iter</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num-rational@0.4.2">
+      <author>The Rust Project Developers</author>
+      <name>num-rational</name>
+      <version>0.4.2</version>
+      <description>Rational numbers implementation for Rust</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/num-rational@0.4.2</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/num-rational</url>
+        </reference>
+        <reference type="website">
+          <url>https://github.com/rust-num/num-rational</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/rust-num/num-rational</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
       </properties>
     </component>
     <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19">
@@ -7731,6 +7955,34 @@
       </externalReferences>
       <properties>
         <property name="superbackup:targets">all</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#num@0.4.3">
+      <author>The Rust Project Developers</author>
+      <name>num</name>
+      <version>0.4.3</version>
+      <description>A collection of numeric types and traits for Rust, including bigint, complex, rational, range iterators, generic integers, and more! </description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/num@0.4.3</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/num</url>
+        </reference>
+        <reference type="website">
+          <url>https://github.com/rust-num/num</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/rust-num/num</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
       </properties>
     </component>
     <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#objc-sys@0.3.5">
@@ -10190,6 +10442,34 @@
         </reference>
         <reference type="vcs">
           <url>https://github.com/PolyMeilex/sctk-adwaita</url>
+        </reference>
+      </externalReferences>
+      <properties>
+        <property name="superbackup:targets">aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu</property>
+      </properties>
+    </component>
+    <component type="library" bom-ref="registry+https://github.com/rust-lang/crates.io-index#secret-service@4.0.0">
+      <author>Walther Chen &lt;walther.chen@gmail.com&gt;</author>
+      <name>secret-service</name>
+      <version>4.0.0</version>
+      <description>Library to interface with Secret Service API</description>
+      <scope>required</scope>
+      <hashes>
+        <hash alg="SHA-256">e4d35ad99a181be0a60ffcbe85d680d98f87bdc4d7644ade319b87076b9dbfd4</hash>
+      </hashes>
+      <licenses>
+        <expression>MIT OR Apache-2.0</expression>
+      </licenses>
+      <purl>pkg:cargo/secret-service@4.0.0</purl>
+      <externalReferences>
+        <reference type="documentation">
+          <url>https://docs.rs/secret-service</url>
+        </reference>
+        <reference type="website">
+          <url>https://github.com/hwchen/secret-service-rs.git</url>
+        </reference>
+        <reference type="vcs">
+          <url>https://github.com/hwchen/secret-service-rs.git</url>
         </reference>
       </externalReferences>
       <properties>
@@ -15635,6 +15915,11 @@
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#crypto-common@0.1.7" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7" />
     </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cipher@0.4.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cpufeatures@0.2.17" />
+    </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#ahash@0.8.12">
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#getrandom@0.3.4" />
@@ -15832,6 +16117,9 @@
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#block-buffer@0.10.4">
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7" />
     </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7" />
+    </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#block2@0.5.1">
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#objc2@0.5.2" />
     </dependency>
@@ -15902,6 +16190,9 @@
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44" />
+    </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cipher@0.4.4" />
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cc@1.4.4">
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#find-msvc-tools@0.1.11" />
@@ -16058,7 +16349,15 @@
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#data-url@0.3.2" />
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#dbus-secret-service@4.1.0">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#dbus@0.9.12" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#hkdf@0.12.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num@0.4.3" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0" />
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#dbus@0.9.12">
@@ -16745,6 +17044,7 @@
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189" />
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#inout@0.1.4">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7" />
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#interprocess@2.4.3">
@@ -16779,8 +17079,10 @@
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#byteorder@1.5.0" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#dbus-secret-service@4.1.0" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#log@0.4.34" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#secret-service@4.0.0" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#security-framework@3.7.0" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#windows-sys@0.60.2" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#zbus@4.4.0" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0" />
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#khronos-egl@6.0.0">
@@ -16956,9 +17258,36 @@
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#nu-ansi-term@0.50.3">
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#windows-sys@0.61.2" />
     </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19" />
+    </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19" />
+    </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-conv@0.2.2" />
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19" />
+    </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-iter@0.1.46">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19" />
+    </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-rational@0.4.2">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19" />
+    </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19">
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#autocfg@1.5.1" />
+    </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num@0.4.3">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-iter@0.1.46" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-rational@0.4.2" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19" />
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#objc-sys@0.3.5" />
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#objc2-app-kit@0.2.2">
@@ -17424,6 +17753,19 @@
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#memmap2@0.9.11" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#smithay-client-toolkit@0.19.2" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#tiny-skia@0.11.4" />
+    </dependency>
+    <dependency ref="registry+https://github.com/rust-lang/crates.io-index#secret-service@4.0.0">
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#hkdf@0.12.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#num@0.4.3" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#rand@0.8.8" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#zbus@4.4.0" />
     </dependency>
     <dependency ref="registry+https://github.com/rust-lang/crates.io-index#security-framework-sys@2.17.0">
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#core-foundation-sys@0.8.7" />
@@ -18322,6 +18664,7 @@
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#serde_repr@0.1.21" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#sha1@0.10.7" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#static_assertions@1.1.0" />
+      <dependency ref="registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#xdg-home@1.3.0" />
       <dependency ref="registry+https://github.com/rust-lang/crates.io-index#zbus_macros@4.4.0" />

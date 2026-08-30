@@ -207,12 +207,7 @@ pub struct Limitation {
 /// Owned `String`s rather than `&'static str` so a `Limitation` survives the
 /// round trip through IPC into the GUI process; this keeps the list below
 /// readable.
-fn limitation(
-    code: &str,
-    area: &str,
-    message: &str,
-    remedy: Option<&str>,
-) -> Limitation {
+fn limitation(code: &str, area: &str, message: &str, remedy: Option<&str>) -> Limitation {
     Limitation {
         code: code.to_string(),
         area: area.to_string(),
@@ -425,8 +420,8 @@ mod tests {
 
     #[test]
     fn disk_space_answers_for_the_temp_directory() {
-        let (available, total) = disk_space(&std::env::temp_dir())
-            .expect("the temp directory is on a real filesystem");
+        let (available, total) =
+            disk_space(&std::env::temp_dir()).expect("the temp directory is on a real filesystem");
         assert!(total > 0, "a mounted volume has a size");
         assert!(available <= total);
     }

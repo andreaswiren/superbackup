@@ -12,7 +12,11 @@ fn sealed() -> (Vec<u8>, Secret) {
     let pass = Secret::from_str("the-master-passphrase");
     let mut vault = Vault::create_unchecked(
         &pass,
-        KdfParams { memory_kib: 64, iterations: 2, ..KdfParams::insecure_for_tests().expect("kdf") },
+        KdfParams {
+            memory_kib: 64,
+            iterations: 2,
+            ..KdfParams::insecure_for_tests().expect("kdf")
+        },
     )
     .expect("vault");
     vault.put(SecretRef("s3.access:1".into()), Secret::from_str("AKIA")).expect("put");
@@ -98,8 +102,9 @@ fn a_wrong_passphrase_and_a_tampered_file_are_the_same_error() {
 
     let mut envelope = Envelope::parse(&bytes).expect("parse");
     envelope.ciphertext[4] ^= 0x01;
-    let corrupt = Vault::unlock(&reserialise(&envelope), &Secret::from_str("the-master-passphrase"))
-        .expect_err("tampered ciphertext");
+    let corrupt =
+        Vault::unlock(&reserialise(&envelope), &Secret::from_str("the-master-passphrase"))
+            .expect_err("tampered ciphertext");
 
     assert!(matches!(wrong, Error::BadPassphrase));
     assert!(matches!(corrupt, Error::BadPassphrase));

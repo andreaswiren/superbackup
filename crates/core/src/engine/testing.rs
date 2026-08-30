@@ -17,9 +17,7 @@ use crate::engine::executor::{
     SnapshotRequest, VerifyOutcome, VerifyRequest,
 };
 use crate::engine::throttle::ResolvedBandwidth;
-use crate::model::{
-    Destination, DestinationKind, ExclusionSet, Job, JobHooks, Schedule, Source,
-};
+use crate::model::{Destination, DestinationKind, ExclusionSet, Job, JobHooks, Schedule, Source};
 use crate::state::Progress;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -235,7 +233,10 @@ impl BackupExecutor for MockExecutor {
         })
     }
 
-    fn verify<'a>(&'a self, _request: VerifyRequest) -> BoxFuture<'a, ExecutorResult<VerifyOutcome>> {
+    fn verify<'a>(
+        &'a self,
+        _request: VerifyRequest,
+    ) -> BoxFuture<'a, ExecutorResult<VerifyOutcome>> {
         Box::pin(async move { Ok(VerifyOutcome { blobs_checked: 1, problems: Vec::new() }) })
     }
 }

@@ -80,21 +80,6 @@ pub const DEFAULT_PARALLELISM: u32 = 1;
 /// without making anyone safer.
 pub const MIN_NEW_MEMORY_KIB: u32 = 64 * 1024;
 
-/// Upper bound accepted when *reading* a header, in kibibytes (2 GiB).
-///
-/// This is a denial-of-service control, not a cryptographic one. A hostile
-/// `config.sbvault` pulled from a Git repository could otherwise claim
-/// `memory_kib = 4294967295` and make us try to allocate 4 TiB before we ever
-/// get to authenticate anything. Argon2 allocates before it verifies, so the
-/// bound has to be applied at parse time.
-pub const MAX_MEMORY_KIB: u32 = 2 * 1024 * 1024;
-
-/// Upper bound on passes accepted when reading a header, for the same reason.
-pub const MAX_ITERATIONS: u32 = 64;
-
-/// Upper bound on lanes accepted when reading a header.
-pub const MAX_PARALLELISM: u32 = 64;
-
 /// Ceiling applied by [`calibrate`] (1 GiB).
 ///
 /// Calibration measures one machine; the vault may be opened on a weaker one,
@@ -102,6 +87,65 @@ pub const MAX_PARALLELISM: u32 = 64;
 /// Letting a 128 GiB workstation calibrate itself to 8 GiB would produce a
 /// vault its owner's laptop cannot open at all.
 pub const CALIBRATION_MAX_MEMORY_KIB: u32 = 1024 * 1024;
+
+/// Absolute upper bound accepted when *reading* a header, in kibibytes (1 GiB).
+///
+/// This is a denial-of-service control, not a cryptographic one. A hostile
+/// `config.sbvault` pulled from a Git repository could otherwise claim
+/// `memory_kib = 4294967295` and make us try to allocate 4 TiB before we ever
+/// get to authenticate anything. Argon2 allocates before it verifies, so the
+/// bound has to be applied at parse time.
+///
+/// It is pinned to [`CALIBRATION_MAX_MEMORY_KIB`], because nothing this
+/// program writes ever exceeds that: a header asking for more did not come
+/// from us. The previous value of 2 GiB was loose enough to page out a laptop
+/// or trip the job-object memory cap on a service account, from a file the
+/// threat model explicitly assumes an attacker can supply.
+///
+/// [`KdfParams::validate`] additionally refuses anything this machine cannot
+/// hold — see [`memory_ceiling_kib`].
+pub const MAX_MEMORY_KIB: u32 = CALIBRATION_MAX_MEMORY_KIB;
+
+/// Upper bound on passes accepted when reading a header, for the same reason.
+pub const MAX_ITERATIONS: u32 = 64;
+
+/// Upper bound on lanes accepted when reading a header.
+pub const MAX_PARALLELISM: u32 = 64;
+
+/// Fraction of physical RAM a single unlock is allowed to claim.
+///
+/// Argon2 holds the whole block array live for the duration of the
+/// derivation, so this is a hard resident-set requirement, not a lazily-faulted
+/// reservation. A half is generous for a desktop and still leaves room for the
+/// rest of the process, the GUI, and whatever else the machine is doing.
+const RAM_FRACTION: u64 = 2;
+
+/// The largest memory cost this machine will accept from a vault header.
+///
+/// `min(MAX_MEMORY_KIB, total_physical_ram / RAM_FRACTION)`, floored at
+/// [`MIN_NEW_MEMORY_KIB`] so a legitimate minimum-cost vault always opens.
+///
+/// Deliberately computed from **total** physical memory rather than currently
+/// *available* memory. Available memory moves constantly, and a vault that
+/// opens now but not in five minutes — because a build kicked off in another
+/// window — would be an intermittent lockout from every backup the user owns.
+/// Total RAM is a stable property of the machine, and the point of the check
+/// is to refuse a header this hardware fundamentally cannot serve, not to
+/// arbitrate moment-to-moment memory pressure.
+///
+/// Falls back to [`MAX_MEMORY_KIB`] when the platform will not report its
+/// memory: an unknown machine gets the fixed ceiling, which is the bound that
+/// actually matters against a hostile file.
+pub fn memory_ceiling_kib() -> u32 {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let total_kib = system.total_memory() / 1024;
+    if total_kib == 0 {
+        return MAX_MEMORY_KIB;
+    }
+    let share = (total_kib / RAM_FRACTION).min(u32::MAX as u64) as u32;
+    share.clamp(MIN_NEW_MEMORY_KIB, MAX_MEMORY_KIB)
+}
 
 /// The KDF used to turn a passphrase into the master key.
 ///
@@ -232,9 +276,21 @@ impl KdfParams {
         }
         // Argon2 requires m >= 8 * p.
         let floor = 8u32.saturating_mul(self.parallelism);
-        if self.memory_kib < floor || self.memory_kib > MAX_MEMORY_KIB {
+        if self.memory_kib < floor {
             return Err(Error::VaultCorrupt(format!(
-                "Argon2 memory cost {} KiB is out of range {floor}..={MAX_MEMORY_KIB}",
+                "Argon2 memory cost {} KiB is below the {floor} KiB Argon2 requires for \
+                 {} lane(s)",
+                self.memory_kib, self.parallelism
+            )));
+        }
+        // The ceiling is checked here, before `derive` asks Argon2 to allocate
+        // and before anything in the file has been authenticated.
+        let ceiling = memory_ceiling_kib();
+        if self.memory_kib > ceiling {
+            return Err(Error::VaultCorrupt(format!(
+                "Argon2 memory cost {} KiB exceeds the {ceiling} KiB this machine will \
+                 commit to one unlock (absolute maximum {MAX_MEMORY_KIB} KiB); a vault \
+                 asking for more was not written by superbackup",
                 self.memory_kib
             )));
         }
@@ -270,7 +326,8 @@ impl KdfParams {
         )
         .map_err(|e| Error::Crypto(format!("invalid Argon2 parameters: {e}")))?;
 
-        let argon = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+        let argon =
+            argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
         let mut out = Zeroizing::new([0u8; MASTER_KEY_LEN]);
         argon
             .hash_password_into(passphrase.expose(), &self.salt, out.as_mut())
@@ -468,8 +525,7 @@ mod tests {
         );
         // Every result lands on a whole mebibyte.
         for ms in [7u64, 13, 29, 101, 997] {
-            let got =
-                scaled_memory_kib(64 * 1024, Duration::from_millis(ms), CALIBRATION_TARGET);
+            let got = scaled_memory_kib(64 * 1024, Duration::from_millis(ms), CALIBRATION_TARGET);
             assert_eq!(got % 1024, 0, "{got} KiB is not a whole MiB");
         }
     }

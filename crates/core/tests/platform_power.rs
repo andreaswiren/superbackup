@@ -18,10 +18,7 @@ fn a_machine_we_cannot_read_still_gets_its_backups() {
         assert!(!cost.should_skip(), "an unknown connection cost must never skip a backup");
     }
     if status.source == PowerSource::Unknown {
-        assert!(
-            !status.should_skip_on_battery(),
-            "an unreadable battery must never skip a backup"
-        );
+        assert!(!status.should_skip_on_battery(), "an unreadable battery must never skip a backup");
     }
     assert!(!power::is_metered_connection() || cost == Metered::Metered);
 }
@@ -89,9 +86,7 @@ fn a_suspend_is_detected_and_a_clock_step_is_not() {
     assert!(gap.seconds > 21_000, "{gap:?}");
 
     // A daylight-saving or NTP correction backwards is not a wake.
-    assert!(detector
-        .evaluate(Duration::from_secs(60), t0 - chrono::Duration::hours(1))
-        .is_none());
+    assert!(detector.evaluate(Duration::from_secs(60), t0 - chrono::Duration::hours(1)).is_none());
 }
 
 #[test]

@@ -161,11 +161,8 @@ impl Runner {
         // waiting for a wedged process — inside the code path whose whole
         // purpose is not to wait for it.
         let progress_done = CancelToken::new();
-        let forwarder = self.spawn_progress_forwarder(
-            progress_rx,
-            Arc::clone(&latest),
-            progress_done.clone(),
-        );
+        let forwarder =
+            self.spawn_progress_forwarder(progress_rx, Arc::clone(&latest), progress_done.clone());
 
         // The timeout is expressed as a cancellation so that the driver is
         // told to stop, rather than having its future dropped from underneath
@@ -243,8 +240,17 @@ impl Runner {
         }
 
         run.status = run.derive_status();
-        self.finalise(run, &request, &context, watchdog, forwarder, progress_tx, progress_done, latest)
-            .await
+        self.finalise(
+            run,
+            &request,
+            &context,
+            watchdog,
+            forwarder,
+            progress_tx,
+            progress_done,
+            latest,
+        )
+        .await
     }
 
     /// Run one destination, including the retry loop.
@@ -264,7 +270,9 @@ impl Runner {
         let mut attempt = 1u32;
         loop {
             if request.cancel.is_cancelled() {
-                return DestinationOutcome::Cancelled(self.snapshot_latest(&latest, destination.id));
+                return DestinationOutcome::Cancelled(
+                    self.snapshot_latest(&latest, destination.id),
+                );
             }
             // Re-resolved per attempt: a run that crosses into a bandwidth
             // window is throttled from that attempt onwards rather than
@@ -283,9 +291,8 @@ impl Runner {
                 Arc::clone(&self.clock),
             );
 
-            let result = self
-                .attempt_destination(request, destination, bandwidth, sink, attempt)
-                .await;
+            let result =
+                self.attempt_destination(request, destination, bandwidth, sink, attempt).await;
 
             match result {
                 Ok(outcome) => return DestinationOutcome::Succeeded(Box::new(outcome)),
@@ -545,7 +552,8 @@ impl Runner {
 
         let succeeded =
             matches!(run.status, RunStatus::Succeeded | RunStatus::SucceededWithWarnings);
-        let after_context = HookContext { status: Some(run.status.title().to_string()), ..context.clone() };
+        let after_context =
+            HookContext { status: Some(run.status.title().to_string()), ..context.clone() };
         let hook = if succeeded {
             request.job.hooks.after_success.as_ref().map(|c| (HookKind::AfterSuccess, c))
         } else {
@@ -570,7 +578,8 @@ impl Runner {
         let _ = forwarder.await;
         for dest in run.destinations.iter_mut() {
             if dest.progress.files_processed == 0 && dest.progress.bytes_processed == 0 {
-                if let Some(p) = latest.lock().ok().and_then(|m| m.get(&dest.destination_id).cloned())
+                if let Some(p) =
+                    latest.lock().ok().and_then(|m| m.get(&dest.destination_id).cloned())
                 {
                     dest.progress = p;
                 }
@@ -656,11 +665,7 @@ impl Runner {
         latest: &Arc<std::sync::Mutex<HashMap<Uuid, Progress>>>,
         destination_id: Uuid,
     ) -> Progress {
-        latest
-            .lock()
-            .ok()
-            .and_then(|m| m.get(&destination_id).cloned())
-            .unwrap_or_default()
+        latest.lock().ok().and_then(|m| m.get(&destination_id).cloned()).unwrap_or_default()
     }
 
     fn mark_remaining(&self, run: &mut JobRun, from: usize, status: RunStatus) {

@@ -392,7 +392,8 @@ mod tests {
         let job = settings(Some(100), None);
         let dest = settings(Some(200), None);
         let global = settings(Some(300), None);
-        let r = resolve_bandwidth(Some(&job), Some(&dest), &global, &Utc, at("2025-01-08T12:00:00Z"));
+        let r =
+            resolve_bandwidth(Some(&job), Some(&dest), &global, &Utc, at("2025-01-08T12:00:00Z"));
         assert_eq!(r.upload_kbps, Some(100));
         assert_eq!(r.source, BandwidthSource::Job);
     }

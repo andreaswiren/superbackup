@@ -25,6 +25,19 @@
         },
         {
           "type": "application",
+          "author": "The Rust Project",
+          "name": "rustc",
+          "version": "1.97.1 (8bab26f4f 2026-07-14)",
+          "description": "The toolchain that resolved this bill of materials. Not necessarily the toolchain that compiled any given release binary — see docs/compliance/SBOM.md.",
+          "properties": [
+            {
+              "name": "superbackup:rustc:host",
+              "value": "x86_64-pc-windows-msvc"
+            }
+          ]
+        },
+        {
+          "type": "application",
           "author": "superbackup project",
           "name": "sbom/generate.py",
           "version": "0.1.0",
@@ -701,6 +714,43 @@
         {
           "name": "superbackup:targets",
           "value": "all"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4",
+      "author": "RustCrypto Developers",
+      "name": "aes",
+      "version": "0.8.4",
+      "description": "Pure Rust implementation of the Advanced Encryption Standard (a.k.a. Rijndael)",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/aes@0.8.4",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/aes"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/block-ciphers"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
         }
       ]
     },
@@ -2292,6 +2342,43 @@
     },
     {
       "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3",
+      "author": "RustCrypto Developers",
+      "name": "block-padding",
+      "version": "0.3.3",
+      "description": "Padding and unpadding of messages divided into blocks.",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/block-padding@0.3.3",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/block-padding"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "all"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#block2@0.5.1",
       "author": "Steven Sheldon, Mads Marquart <mads@marquart.dk>",
       "name": "block2",
@@ -2929,6 +3016,43 @@
         {
           "type": "vcs",
           "url": "https://github.com/Smithay/calloop"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2",
+      "author": "RustCrypto Developers",
+      "name": "cbc",
+      "version": "0.1.2",
+      "description": "Cipher Block Chaining (CBC) block cipher mode of operation",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/cbc@0.1.2",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/cbc"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/block-modes"
         }
       ],
       "properties": [
@@ -11424,6 +11548,88 @@
     },
     {
       "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+      "author": "The Rust Project Developers",
+      "name": "num-bigint",
+      "version": "0.4.8",
+      "description": "Big integer implementation for Rust",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-bigint@0.4.8",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/num-bigint"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/rust-num/num-bigint"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-bigint"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6",
+      "author": "The Rust Project Developers",
+      "name": "num-complex",
+      "version": "0.4.6",
+      "description": "Complex numbers implementation for Rust",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-complex@0.4.6",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/num-complex"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/rust-num/num-complex"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-complex"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#num-conv@0.2.2",
       "author": "Jacob Pratt <jacob@jhpratt.dev>",
       "name": "num-conv",
@@ -11452,6 +11658,129 @@
         {
           "name": "superbackup:targets",
           "value": "aarch64-apple-darwin,x86_64-apple-darwin"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "author": "The Rust Project Developers",
+      "name": "num-integer",
+      "version": "0.1.47",
+      "description": "Integer traits and functions",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-integer@0.1.47",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/num-integer"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/rust-num/num-integer"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-integer"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#num-iter@0.1.46",
+      "author": "The Rust Project Developers",
+      "name": "num-iter",
+      "version": "0.1.46",
+      "description": "External iterators for generic mathematics",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c92800bd69a1eac91786bcfe9da64a897eb72911b8dc3095decbd07429e8048b"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-iter@0.1.46",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/num-iter"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/rust-num/num-iter"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-iter"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#num-rational@0.4.2",
+      "author": "The Rust Project Developers",
+      "name": "num-rational",
+      "version": "0.4.2",
+      "description": "Rational numbers implementation for Rust",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-rational@0.4.2",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/num-rational"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/rust-num/num-rational"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-rational"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
         }
       ]
     },
@@ -11493,6 +11822,47 @@
         {
           "name": "superbackup:targets",
           "value": "all"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#num@0.4.3",
+      "author": "The Rust Project Developers",
+      "name": "num",
+      "version": "0.4.3",
+      "description": "A collection of numeric types and traits for Rust, including bigint, complex, rational, range iterators, generic integers, and more! ",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num@0.4.3",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/num"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/rust-num/num"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
         }
       ]
     },
@@ -15159,6 +15529,47 @@
         {
           "type": "vcs",
           "url": "https://github.com/PolyMeilex/sctk-adwaita"
+        }
+      ],
+      "properties": [
+        {
+          "name": "superbackup:targets",
+          "value": "aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#secret-service@4.0.0",
+      "author": "Walther Chen <walther.chen@gmail.com>",
+      "name": "secret-service",
+      "version": "4.0.0",
+      "description": "Library to interface with Secret Service API",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e4d35ad99a181be0a60ffcbe85d680d98f87bdc4d7644ade319b87076b9dbfd4"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/secret-service@4.0.0",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/secret-service"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/hwchen/secret-service-rs.git"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/hwchen/secret-service-rs.git"
         }
       ],
       "properties": [
@@ -23253,6 +23664,14 @@
       ]
     },
     {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+        "registry+https://github.com/rust-lang/crates.io-index#cipher@0.4.4",
+        "registry+https://github.com/rust-lang/crates.io-index#cpufeatures@0.2.17"
+      ]
+    },
+    {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#ahash@0.8.12",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
@@ -23582,6 +24001,12 @@
       ]
     },
     {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7"
+      ]
+    },
+    {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#block2@0.5.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#objc2@0.5.2"
@@ -23704,6 +24129,12 @@
         "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
         "registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12",
         "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#cipher@0.4.4"
       ]
     },
     {
@@ -23986,7 +24417,15 @@
     {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#dbus-secret-service@4.1.0",
       "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4",
+        "registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3",
+        "registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2",
         "registry+https://github.com/rust-lang/crates.io-index#dbus@0.9.12",
+        "registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0",
+        "registry+https://github.com/rust-lang/crates.io-index#hkdf@0.12.4",
+        "registry+https://github.com/rust-lang/crates.io-index#num@0.4.3",
+        "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+        "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
         "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0"
       ]
     },
@@ -25090,6 +25529,7 @@
     {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#inout@0.1.4",
       "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#block-padding@0.3.3",
         "registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7"
       ]
     },
@@ -25151,8 +25591,10 @@
         "registry+https://github.com/rust-lang/crates.io-index#byteorder@1.5.0",
         "registry+https://github.com/rust-lang/crates.io-index#dbus-secret-service@4.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.34",
+        "registry+https://github.com/rust-lang/crates.io-index#secret-service@4.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#security-framework@3.7.0",
         "registry+https://github.com/rust-lang/crates.io-index#windows-sys@0.60.2",
+        "registry+https://github.com/rust-lang/crates.io-index#zbus@4.4.0",
         "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0"
       ]
     },
@@ -25456,13 +25898,58 @@
       ]
     },
     {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+        "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+      ]
+    },
+    {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#num-conv@0.2.2",
       "dependsOn": []
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#num-iter@0.1.46",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+        "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#num-rational@0.4.2",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+        "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+        "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+      ]
     },
     {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#autocfg@1.5.1"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#num@0.4.3",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+        "registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6",
+        "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+        "registry+https://github.com/rust-lang/crates.io-index#num-iter@0.1.46",
+        "registry+https://github.com/rust-lang/crates.io-index#num-rational@0.4.2",
+        "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
       ]
     },
     {
@@ -26237,6 +26724,22 @@
         "registry+https://github.com/rust-lang/crates.io-index#memmap2@0.9.11",
         "registry+https://github.com/rust-lang/crates.io-index#smithay-client-toolkit@0.19.2",
         "registry+https://github.com/rust-lang/crates.io-index#tiny-skia@0.11.4"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#secret-service@4.0.0",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#aes@0.8.4",
+        "registry+https://github.com/rust-lang/crates.io-index#cbc@0.1.2",
+        "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+        "registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7",
+        "registry+https://github.com/rust-lang/crates.io-index#hkdf@0.12.4",
+        "registry+https://github.com/rust-lang/crates.io-index#num@0.4.3",
+        "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+        "registry+https://github.com/rust-lang/crates.io-index#rand@0.8.8",
+        "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+        "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
+        "registry+https://github.com/rust-lang/crates.io-index#zbus@4.4.0"
       ]
     },
     {
@@ -27708,6 +28211,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#serde_repr@0.1.21",
         "registry+https://github.com/rust-lang/crates.io-index#sha1@0.10.7",
         "registry+https://github.com/rust-lang/crates.io-index#static_assertions@1.1.0",
+        "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
         "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
         "registry+https://github.com/rust-lang/crates.io-index#xdg-home@1.3.0",
         "registry+https://github.com/rust-lang/crates.io-index#zbus_macros@4.4.0",
@@ -27974,5 +28478,5 @@
       ]
     }
   ],
-  "serialNumber": "urn:uuid:eea6426f-192d-5b40-b587-98b3ee186dd2"
+  "serialNumber": "urn:uuid:c1021306-a15d-51a2-9bb0-98e36fb20feb"
 }

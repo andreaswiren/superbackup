@@ -51,8 +51,7 @@ fn round_trip_preserves_every_secret() {
     );
     let access = vault.get(&SecretRef("s3.access:1".into())).expect("get").expect("present");
     assert_eq!(access.expose(), b"AKIAEXAMPLECANARY");
-    let repo =
-        vault.get(&SecretRef("repo.passphrase:2".into())).expect("get").expect("present");
+    let repo = vault.get(&SecretRef("repo.passphrase:2".into())).expect("get").expect("present");
     assert_eq!(repo.expose(), b"REPOCANARYVALUE");
     assert!(vault.get(&SecretRef("nothing:0".into())).expect("get").is_none());
 }
@@ -60,9 +59,7 @@ fn round_trip_preserves_every_secret() {
 #[test]
 fn the_sealed_file_contains_no_plaintext_secret_and_no_plaintext_config() {
     let mut vault = Vault::create_unchecked(&pass("pass"), kdf()).expect("create");
-    vault
-        .put(SecretRef("s3.secret:9".into()), Secret::from_str("PLAINTEXTCANARY"))
-        .expect("put");
+    vault.put(SecretRef("s3.secret:9".into()), Secret::from_str("PLAINTEXTCANARY")).expect("put");
 
     let mut config = superbackup_core::model::Config::default();
     config.machine.label = "MACHINELABELCANARY".into();
@@ -263,10 +260,7 @@ fn a_newer_format_version_is_refused_with_a_specific_error() {
     }
     // And the same through the unlock path, so a user with a newer vault gets
     // "upgrade superbackup", not "wrong passphrase".
-    assert!(matches!(
-        Vault::unlock(&future, &pass("pass")),
-        Err(Error::VaultVersion { .. })
-    ));
+    assert!(matches!(Vault::unlock(&future, &pass("pass")), Err(Error::VaultVersion { .. })));
 }
 
 #[test]
@@ -295,9 +289,7 @@ fn every_seal_uses_a_fresh_nonce() {
     let mut vault = Vault::create_unchecked(&pass("pass"), kdf()).expect("create");
     let mut nonces = std::collections::BTreeSet::new();
     for i in 0..25u32 {
-        vault
-            .put(SecretRef(format!("k:{i}")), Secret::from_str("value"))
-            .expect("put");
+        vault.put(SecretRef(format!("k:{i}")), Secret::from_str("value")).expect("put");
         let bytes = vault.seal().expect("seal");
         let document: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         let nonce = document["nonce"].as_str().expect("nonce").to_string();

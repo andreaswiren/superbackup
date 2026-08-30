@@ -223,13 +223,8 @@ async fn exclusions_prune_whole_subtrees() {
         presets: vec![ExclusionPreset::NodeModules, ExclusionPreset::LogsAndTemp],
         ..ExclusionSet::default()
     };
-    let (req, _rx) = request(
-        &source,
-        &mirror_root,
-        exclusions,
-        MirrorOptions::default(),
-        CancelToken::new(),
-    );
+    let (req, _rx) =
+        request(&source, &mirror_root, exclusions, MirrorOptions::default(), CancelToken::new());
     let outcome = engine().run(req).await.expect("mirror");
 
     assert!(mirrored(&mirror_root, &source, "app.js").exists());
@@ -554,7 +549,7 @@ async fn cancellation_stops_the_copy() {
     let scratch = Scratch::new("cancel");
     let source = scratch.dir("src");
     for i in 0..400 {
-        scratch.write(&format!("src/file-{i:04}.txt", ), &"x".repeat(4096));
+        scratch.write(&format!("src/file-{i:04}.txt",), &"x".repeat(4096));
     }
     let mirror_root = scratch.dir("mirror");
 

@@ -116,9 +116,9 @@ impl AutostartState {
         match self {
             AutostartState::Disabled => "superbackup will not start when you log in".to_string(),
             AutostartState::Enabled => "superbackup starts when you log in".to_string(),
-            AutostartState::Stale { registered, .. } => format!(
-                "Start-at-login points at an old location ({registered}) and will not work"
-            ),
+            AutostartState::Stale { registered, .. } => {
+                format!("Start-at-login points at an old location ({registered}) and will not work")
+            }
             AutostartState::Unrecognised { registered } => {
                 format!("Start-at-login holds an entry we did not write: {registered}")
             }
@@ -367,9 +367,7 @@ fn activate_launch_agent(path: &Path) {
 fn deactivate_launch_agent(path: &Path) {
     if let Some(uid) = super::effective_uid() {
         let target = format!("gui/{uid}/{LAUNCH_AGENT_LABEL}");
-        let _ = std::process::Command::new("launchctl")
-            .args(["bootout", target.as_str()])
-            .output();
+        let _ = std::process::Command::new("launchctl").args(["bootout", target.as_str()]).output();
     }
     let _ = path;
 }
@@ -540,7 +538,10 @@ pub fn parse_windows_command_line(command: &str) -> Vec<String> {
 /// quotes. `%` is reserved for field codes and is written `%%`.
 pub fn escape_desktop_arg(arg: &str) -> String {
     let needs_quotes = arg.is_empty()
-        || arg.contains([' ', '\t', '"', '\'', '\\', '$', '`', '>', '<', '~', '|', '&', ';', '*', '?', '#', '(', ')']);
+        || arg.contains([
+            ' ', '\t', '"', '\'', '\\', '$', '`', '>', '<', '~', '|', '&', ';', '*', '?', '#', '(',
+            ')',
+        ]);
     let mut inner = String::with_capacity(arg.len());
     for ch in arg.chars() {
         match ch {
@@ -723,10 +724,7 @@ mod tests {
     fn windows_paths_with_spaces_round_trip() {
         let s = spec(r"C:\Program Files\superbackup\superbackup.exe");
         let line = s.windows_command_line();
-        assert_eq!(
-            line,
-            "\"C:\\Program Files\\superbackup\\superbackup.exe\" --minimised"
-        );
+        assert_eq!(line, "\"C:\\Program Files\\superbackup\\superbackup.exe\" --minimised");
         let argv = parse_windows_command_line(&line);
         assert_eq!(argv[0], r"C:\Program Files\superbackup\superbackup.exe");
         assert_eq!(argv[1], "--minimised");
@@ -843,11 +841,8 @@ mod tests {
     #[test]
     fn state_summaries_are_written_for_humans() {
         assert!(AutostartState::Disabled.summary().contains("will not start"));
-        assert!(AutostartState::Stale {
-            registered: "old".into(),
-            expected: "new".into()
-        }
-        .needs_repair());
+        assert!(AutostartState::Stale { registered: "old".into(), expected: "new".into() }
+            .needs_repair());
         assert!(!AutostartState::Enabled.needs_repair());
     }
 

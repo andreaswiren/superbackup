@@ -346,9 +346,7 @@ fn resolve_naive<Tz: TimeZone>(tz: &Tz, naive: NaiveDateTime) -> Option<DateTime
                 let probe = naive.checked_add_signed(Duration::minutes(step))?;
                 match tz.from_local_datetime(&probe) {
                     MappedLocalTime::Single(dt) => return Some(dt.with_timezone(&Utc)),
-                    MappedLocalTime::Ambiguous(first, _) => {
-                        return Some(first.with_timezone(&Utc))
-                    }
+                    MappedLocalTime::Ambiguous(first, _) => return Some(first.with_timezone(&Utc)),
                     MappedLocalTime::None => continue,
                 }
             }
@@ -725,8 +723,9 @@ mod tests {
     fn a_week_of_downtime_collapses_for_daily_too() {
         let tz = DstZone::EuropeStockholm;
         let s = daily(2, 0);
-        let due = catch_up_due(&s, &tz, Some(utc("2025-01-01T01:00:00Z")), utc("2025-01-08T12:00:00Z"))
-            .expect("owed one run");
+        let due =
+            catch_up_due(&s, &tz, Some(utc("2025-01-01T01:00:00Z")), utc("2025-01-08T12:00:00Z"))
+                .expect("owed one run");
         assert_eq!(due, utc("2025-01-08T01:00:00Z"), "the most recent missed 02:00 CET only");
     }
 
@@ -734,12 +733,8 @@ mod tests {
     fn nothing_is_owed_when_the_last_run_covers_the_last_occurrence() {
         let tz = DstZone::EuropeStockholm;
         let s = daily(2, 0);
-        let due = catch_up_due(
-            &s,
-            &tz,
-            Some(utc("2025-01-08T01:00:00Z")),
-            utc("2025-01-08T09:00:00Z"),
-        );
+        let due =
+            catch_up_due(&s, &tz, Some(utc("2025-01-08T01:00:00Z")), utc("2025-01-08T09:00:00Z"));
         assert!(due.is_none());
     }
 

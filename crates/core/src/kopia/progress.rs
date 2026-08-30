@@ -203,15 +203,13 @@ pub fn parse_go_duration(s: &str) -> Option<Duration> {
     }
     let mut saw_component = false;
     while !rest.is_empty() {
-        let digits_end =
-            rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
+        let digits_end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
         if digits_end == 0 {
             return None;
         }
         let value: f64 = rest[..digits_end].parse().ok()?;
         rest = &rest[digits_end..];
-        let unit_end =
-            rest.find(|c: char| c.is_ascii_digit()).unwrap_or(rest.len());
+        let unit_end = rest.find(|c: char| c.is_ascii_digit()).unwrap_or(rest.len());
         let unit = &rest[..unit_end];
         rest = &rest[unit_end..];
         let seconds = match unit {
@@ -422,10 +420,8 @@ impl ProgressTracker {
         if let Some(total) = line.estimated_total_bytes {
             self.progress.bytes_total = Some(total);
         }
-        self.progress.estimated_seconds_remaining = line
-            .time_remaining
-            .map(|d| d.as_secs())
-            .or_else(|| self.derive_eta());
+        self.progress.estimated_seconds_remaining =
+            line.time_remaining.map(|d| d.as_secs()).or_else(|| self.derive_eta());
     }
 
     /// Fallback ETA for the window before kopia has an estimate of its own.

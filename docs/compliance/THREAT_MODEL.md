@@ -238,12 +238,27 @@ Stated so the boundary is honest rather than implied:
 
 **Design rules the code is expected to hold to:**
 
-1. No secret is ever `Serialize`d, `Display`ed, or `Debug`-printed. `Secret`
-   has no such implementation that reveals contents, and tests assert it.
+1. `Secret` is never `Serialize`d, `Display`ed, or `Debug`-printed in a form
+   that reveals its contents. It implements none of those in a revealing way,
+   and tests assert it.
+
+   **One deliberate exception, stated because an absolute claim here would be
+   false.** `ipc::protocol::SecretString` — the wrapper that carries a
+   passphrase from a client to the daemon — *does* serialise its plaintext.
+   It has to: a client cannot send an unlock request otherwise. The exception
+   is bounded to that direction of travel: only clients serialise a `Request`,
+   the daemon never does, `Debug` is still redacted, and no reply type carries
+   secret material at all. An earlier version of this document asserted rule 1
+   without qualification, which adversarial review correctly identified as a
+   claim the code did not support.
 2. Secret buffers are zeroed on drop. This is best-effort: paging, hibernation
    and crash dumps can still persist plaintext, and we say so rather than
    claiming memory hygiene we cannot deliver on a general-purpose OS.
-3. Comparisons of secret values are constant-time.
+3. Comparisons of secret values are constant-time — enforced by the type
+   system rather than by discipline. Neither `Secret` nor `SecretString`
+   implements `PartialEq`, so `a == b` does not compile and `ct_eq` is the
+   only way to compare them. Deriving equality would have made the
+   variable-time path the one an author reaches for by default.
 4. A wrong passphrase and a corrupt file are the same class of failure, and
    neither partially applies a change.
 5. Nothing is rolled by hand. Every primitive above comes from an established,

@@ -128,21 +128,14 @@ fn an_entry_left_behind_by_an_upgrade_is_reported_as_stale_not_enabled() {
         }
         other => panic!("a moved executable must be Stale, got {other:?}"),
     }
-    assert!(AutostartState::Stale {
-        registered: "a".into(),
-        expected: "b".into()
-    }
-    .needs_repair());
+    assert!(AutostartState::Stale { registered: "a".into(), expected: "b".into() }.needs_repair());
 }
 
 #[test]
 fn an_entry_belonging_to_another_program_is_not_touched() {
     let want = spec();
-    let foreign = if cfg!(windows) {
-        r#""C:\Windows\System32\notepad.exe""#
-    } else {
-        "/usr/bin/gedit"
-    };
+    let foreign =
+        if cfg!(windows) { r#""C:\Windows\System32\notepad.exe""# } else { "/usr/bin/gedit" };
     let state = autostart::classify(foreign, &want);
     assert!(
         matches!(state, AutostartState::Unrecognised { .. }),
@@ -154,8 +147,7 @@ fn an_entry_belonging_to_another_program_is_not_touched() {
 #[test]
 fn a_matching_entry_is_enabled_and_needs_nothing() {
     let want = spec();
-    let current =
-        if cfg!(windows) { want.windows_command_line() } else { want.desktop_exec() };
+    let current = if cfg!(windows) { want.windows_command_line() } else { want.desktop_exec() };
     assert_eq!(autostart::classify(&current, &want), AutostartState::Enabled);
     assert!(!AutostartState::Enabled.needs_repair());
     assert!(AutostartState::Enabled.is_enabled());

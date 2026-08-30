@@ -417,14 +417,13 @@ impl Rekey {
     }
 
     fn slot(&mut self, destination_id: &Uuid) -> Result<&mut RepositoryMigration> {
-        self.repositories
-            .iter_mut()
-            .find(|r| &r.destination_id == destination_id)
-            .ok_or_else(|| {
+        self.repositories.iter_mut().find(|r| &r.destination_id == destination_id).ok_or_else(
+            || {
                 Error::Validation(format!(
                     "destination {destination_id} is not part of this passphrase rotation"
                 ))
-            })
+            },
+        )
     }
 
     /// The backup taken immediately before the rotation. Keep it until the
@@ -555,8 +554,7 @@ mod tests {
 
     #[test]
     fn credentials_are_refused_for_a_destination_outside_the_rotation() {
-        let mut vault =
-            Vault::create_unchecked(&Secret::from_str("old"), kdf()).expect("vault");
+        let mut vault = Vault::create_unchecked(&Secret::from_str("old"), kdf()).expect("vault");
         let inside = DerivedRepository {
             destination_id: Uuid::from_u128(1),
             destination_name: "in".into(),
@@ -579,8 +577,7 @@ mod tests {
 
     #[test]
     fn progress_tracking_and_reporting() {
-        let mut vault =
-            Vault::create_unchecked(&Secret::from_str("old"), kdf()).expect("vault");
+        let mut vault = Vault::create_unchecked(&Secret::from_str("old"), kdf()).expect("vault");
         let repositories: Vec<DerivedRepository> = (1..=3)
             .map(|n| DerivedRepository {
                 destination_id: Uuid::from_u128(n),
@@ -600,9 +597,7 @@ mod tests {
         assert!(!rekey.is_complete());
 
         rekey.mark_migrated(&Uuid::from_u128(1)).expect("mark");
-        rekey
-            .mark_failed(&Uuid::from_u128(2), "KOPIA_PASSWORD=hunter2 refused")
-            .expect("mark");
+        rekey.mark_failed(&Uuid::from_u128(2), "KOPIA_PASSWORD=hunter2 refused").expect("mark");
 
         let report = rekey.report();
         assert_eq!((report.total, report.migrated, report.failed, report.pending), (3, 1, 1, 1));
@@ -625,8 +620,7 @@ mod tests {
 
     #[test]
     fn rekey_debug_never_prints_a_repository_password() {
-        let mut vault =
-            Vault::create_unchecked(&Secret::from_str("old"), kdf()).expect("vault");
+        let mut vault = Vault::create_unchecked(&Secret::from_str("old"), kdf()).expect("vault");
         let rekey = vault
             .change_passphrase(
                 &Secret::from_str("old"),

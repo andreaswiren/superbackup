@@ -57,8 +57,8 @@ impl RetryPolicy {
     /// 1-based and is the attempt that just failed.
     pub fn delay_after(&self, attempt: u32) -> Duration {
         let exponent = attempt.saturating_sub(1).min(16) as i32;
-        let scaled = self.initial_delay.num_milliseconds() as f64
-            * self.multiplier.max(1.0).powi(exponent);
+        let scaled =
+            self.initial_delay.num_milliseconds() as f64 * self.multiplier.max(1.0).powi(exponent);
         let capped = scaled.min(self.max_delay.num_milliseconds() as f64).max(0.0);
         Duration::milliseconds(capped as i64)
     }
@@ -241,7 +241,10 @@ mod tests {
 
     #[test]
     fn unrecognised_failures_are_not_retried() {
-        assert_eq!(classify(&err(ErrorCode::Kopia, "something odd happened")), Retryable::Permanent);
+        assert_eq!(
+            classify(&err(ErrorCode::Kopia, "something odd happened")),
+            Retryable::Permanent
+        );
     }
 
     #[test]

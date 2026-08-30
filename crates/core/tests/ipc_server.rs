@@ -262,9 +262,8 @@ async fn a_slow_subscriber_is_told_it_lagged_instead_of_stalling_the_daemon() {
     let publisher = Arc::clone(&handler);
     let started = std::time::Instant::now();
     for i in 0..5_000u32 {
-        publisher.publish(StreamItem::Event {
-            event: Box::new(Event::info("flood", format!("{i}"))),
-        });
+        publisher
+            .publish(StreamItem::Event { event: Box::new(Event::info("flood", format!("{i}"))) });
     }
     let publish_time = started.elapsed();
     assert!(
@@ -435,10 +434,7 @@ async fn a_panicking_handler_costs_one_request_not_the_daemon() {
 
 #[tokio::test]
 async fn a_hanging_handler_is_abandoned_rather_than_owning_the_connection() {
-    let limits = Limits {
-        handler_timeout: Duration::from_millis(150),
-        ..Limits::default()
-    };
+    let limits = Limits { handler_timeout: Duration::from_millis(150), ..Limits::default() };
     let h = Harness::start_with("hang", limits, Arc::new(MockHandler::new()));
     let client = h.client().await;
 
@@ -456,11 +452,7 @@ async fn a_hanging_handler_is_abandoned_rather_than_owning_the_connection() {
 
 #[tokio::test]
 async fn requests_are_rate_limited_per_connection() {
-    let limits = Limits {
-        max_requests_per_second: 1,
-        request_burst: 5,
-        ..Limits::default()
-    };
+    let limits = Limits { max_requests_per_second: 1, request_burst: 5, ..Limits::default() };
     let h = Harness::start_with("ratelimit", limits, Arc::new(MockHandler::new()));
     let client = h.client().await;
 
@@ -468,10 +460,7 @@ async fn requests_are_rate_limited_per_connection() {
     for _ in 0..40 {
         if let Err(e) = client.ping().await {
             assert_eq!(e.code(), ErrorCode::Ipc);
-            assert!(
-                e.to_string().contains("rate limit"),
-                "the refusal must say why: {e}"
-            );
+            assert!(e.to_string().contains("rate limit"), "the refusal must say why: {e}");
             refusals += 1;
         }
     }
@@ -665,11 +654,7 @@ impl RawClient {
             .await
             .unwrap_or_else(|e| panic!("connecting to {endpoint}: {e}"));
         let (recv, send) = stream.split();
-        RawClient {
-            reader: tokio::io::BufReader::new(recv),
-            writer: send,
-            line: Vec::new(),
-        }
+        RawClient { reader: tokio::io::BufReader::new(recv), writer: send, line: Vec::new() }
     }
 
     /// Write one line. Returns false when the daemon hung up mid-write, which

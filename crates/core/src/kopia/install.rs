@@ -162,9 +162,9 @@ impl InstallError {
                  downloaded."
                     .into()
             }
-            InstallError::NoAssetForPlatform { os, arch, version } => format!(
-                "Kopia {version} does not publish a build for {os} on {arch}."
-            ),
+            InstallError::NoAssetForPlatform { os, arch, version } => {
+                format!("Kopia {version} does not publish a build for {os} on {arch}.")
+            }
             InstallError::NoChecksums { version } => format!(
                 "Kopia release {version} did not publish a checksum file, so the download could \
                  not be verified and was not installed."
@@ -390,11 +390,7 @@ impl ReleaseInfo {
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc)),
             assets,
-            html_url: v
-                .get("html_url")
-                .and_then(|u| u.as_str())
-                .unwrap_or_default()
-                .to_string(),
+            html_url: v.get("html_url").and_then(|u| u.as_str()).unwrap_or_default().to_string(),
         })
     }
 
@@ -445,11 +441,7 @@ pub fn asset_for_platform(version: &str, os: &str, arch: &str) -> Option<AssetCh
         ArchiveKind::Zip => "zip",
         ArchiveKind::TarGz => "tar.gz",
     };
-    Some(AssetChoice {
-        name: format!("kopia-{version}-{platform}.{ext}"),
-        kind,
-        emulated,
-    })
+    Some(AssetChoice { name: format!("kopia-{version}-{platform}.{ext}"), kind, emulated })
 }
 
 /// The asset picked for this machine.
@@ -667,10 +659,14 @@ impl KopiaInstaller {
         if !self.target.is_file() {
             return None;
         }
-        KopiaBinary::probe_with_floor(&self.target, KopiaSource::Bundled, &KopiaVersion::new(0, 0, 0))
-            .await
-            .ok()
-            .map(|b| b.version().to_semver())
+        KopiaBinary::probe_with_floor(
+            &self.target,
+            KopiaSource::Bundled,
+            &KopiaVersion::new(0, 0, 0),
+        )
+        .await
+        .ok()
+        .map(|b| b.version().to_semver())
     }
 
     /// Ask GitHub whether there is anything newer, honouring policy and the
@@ -808,12 +804,9 @@ impl KopiaInstaller {
         Ok(release)
     }
 
-    async fn fetch_release_by_tag(
-        &self,
-        repo: &str,
-        version: &str,
-    ) -> InstallResult<ReleaseInfo> {
-        let tag = if version.starts_with('v') { version.to_string() } else { format!("v{version}") };
+    async fn fetch_release_by_tag(&self, repo: &str, version: &str) -> InstallResult<ReleaseInfo> {
+        let tag =
+            if version.starts_with('v') { version.to_string() } else { format!("v{version}") };
         let json =
             self.get_json(&format!("{}/repos/{repo}/releases/tags/{tag}", self.api_base)).await?;
         ReleaseInfo::from_json(&json)
@@ -831,12 +824,13 @@ impl KopiaInstaller {
 
         self.check_version_acceptable(release, settings).await?;
 
-        let choice = asset_for_platform(&version_string, std::env::consts::OS, std::env::consts::ARCH)
-            .ok_or(InstallError::NoAssetForPlatform {
-                os: std::env::consts::OS,
-                arch: std::env::consts::ARCH,
-                version: version_string.clone(),
-            })?;
+        let choice =
+            asset_for_platform(&version_string, std::env::consts::OS, std::env::consts::ARCH)
+                .ok_or(InstallError::NoAssetForPlatform {
+                    os: std::env::consts::OS,
+                    arch: std::env::consts::ARCH,
+                    version: version_string.clone(),
+                })?;
         let asset = release.asset(&choice.name).ok_or(InstallError::NoAssetForPlatform {
             os: std::env::consts::OS,
             arch: std::env::consts::ARCH,
@@ -848,7 +842,12 @@ impl KopiaInstaller {
 
         emit(progress, InstallPhase::DownloadingChecksums, 0, None, Some(&version_string));
         let listing = self
-            .get_bytes(&checksums_asset.url, MAX_CHECKSUMS_BYTES, InstallPhase::DownloadingChecksums, None)
+            .get_bytes(
+                &checksums_asset.url,
+                MAX_CHECKSUMS_BYTES,
+                InstallPhase::DownloadingChecksums,
+                None,
+            )
             .await?;
         let listing = String::from_utf8_lossy(&listing).into_owned();
         let expected = checksum_for(&listing, &choice.name)
@@ -861,7 +860,13 @@ impl KopiaInstaller {
             .get_bytes(&asset.url, MAX_ARCHIVE_BYTES, InstallPhase::DownloadingArchive, progress)
             .await?;
 
-        emit(progress, InstallPhase::Verifying, archive.len() as u64, Some(archive.len() as u64), Some(&version_string));
+        emit(
+            progress,
+            InstallPhase::Verifying,
+            archive.len() as u64,
+            Some(archive.len() as u64),
+            Some(&version_string),
+        );
         let actual = hex::encode(Sha256::digest(&archive));
         if !constant_time_eq(actual.as_bytes(), expected.as_bytes()) {
             return Err(InstallError::ChecksumMismatch {
@@ -933,16 +938,19 @@ impl KopiaInstaller {
     /// Write the executable atomically, then prove it works before it becomes
     /// the binary the rest of the application will run.
     async fn install_bytes(&self, bytes: &[u8], expected: &Version) -> InstallResult<()> {
-        std::fs::create_dir_all(&self.target_dir)
-            .map_err(|e| InstallError::Io(format!("creating {}: {e}", self.target_dir.display())))?;
+        std::fs::create_dir_all(&self.target_dir).map_err(|e| {
+            InstallError::Io(format!("creating {}: {e}", self.target_dir.display()))
+        })?;
 
         // Same directory as the target, so the rename is atomic and never
         // crosses a filesystem boundary. Keeps the `.exe` suffix on Windows so
         // the temporary file is still executable while it is being verified.
-        let stem = format!(".kopia-install-{}-{}", std::process::id(), Utc::now().timestamp_nanos_opt().unwrap_or(0));
-        let temp = self
-            .target_dir
-            .join(if cfg!(windows) { format!("{stem}.exe") } else { stem });
+        let stem = format!(
+            ".kopia-install-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        let temp = self.target_dir.join(if cfg!(windows) { format!("{stem}.exe") } else { stem });
 
         write_executable(&temp, bytes)
             .map_err(|e| InstallError::Io(format!("writing {}: {e}", temp.display())))?;
@@ -950,12 +958,9 @@ impl KopiaInstaller {
         // A binary that will not run, or that is not the version the release
         // promised, is not installed. Verifying the temporary file means a
         // failure here leaves the previous working kopia untouched.
-        let probe = KopiaBinary::probe_with_floor(
-            &temp,
-            KopiaSource::Bundled,
-            &KopiaVersion::new(0, 0, 0),
-        )
-        .await;
+        let probe =
+            KopiaBinary::probe_with_floor(&temp, KopiaSource::Bundled, &KopiaVersion::new(0, 0, 0))
+                .await;
         let reported = match probe {
             Ok(b) => b.version().clone(),
             Err(e) => {
@@ -1232,9 +1237,8 @@ fn extract_from_zip(archive: &[u8]) -> InstallResult<Option<Vec<u8>>> {
         .map_err(|e| InstallError::Api(format!("the download is not a valid zip archive: {e}")))?;
     let mut result = None;
     for i in 0..zip.len() {
-        let mut entry = zip
-            .by_index(i)
-            .map_err(|e| InstallError::Api(format!("unreadable zip entry: {e}")))?;
+        let mut entry =
+            zip.by_index(i).map_err(|e| InstallError::Api(format!("unreadable zip entry: {e}")))?;
         let raw = entry.name().to_string();
         if raw.ends_with('/') || raw.ends_with('\\') {
             // A directory entry still has to be safe, but has no contents.
@@ -1392,8 +1396,7 @@ mod tests {
 
     #[test]
     fn only_github_hosts_are_accepted() {
-        let allowed: Vec<String> =
-            DEFAULT_ALLOWED_HOSTS.iter().map(|s| s.to_string()).collect();
+        let allowed: Vec<String> = DEFAULT_ALLOWED_HOSTS.iter().map(|s| s.to_string()).collect();
         for good in [
             "github.com",
             "api.github.com",

@@ -86,13 +86,7 @@ mod policy;
 mod progress;
 mod snapshot;
 
-pub use binary::{
-    configured_floor, KopiaBinary, KopiaSource, KopiaVersion, MINIMUM_KOPIA_VERSION,
-};
-pub use install::{
-    InstallError, InstallOutcome, InstallPhase, InstallProgress, InstallProgressSink,
-    KopiaInstaller, ReleaseInfo, SkipReason, UpdateCheck,
-};
+pub use binary::{configured_floor, KopiaBinary, KopiaSource, KopiaVersion, MINIMUM_KOPIA_VERSION};
 pub use command::{
     cancellation, CancelHandle, CancelToken, CommandOutput, EventSink, KopiaCommand, KopiaEvent,
     RunContext,
@@ -102,9 +96,13 @@ pub use driver::{
     KopiaResult, RepositoryStatus, UnsupportedOption,
 };
 pub use error::{classify, KopiaError, KopiaFailure};
+pub use install::{
+    InstallError, InstallOutcome, InstallPhase, InstallProgress, InstallProgressSink,
+    KopiaInstaller, ReleaseInfo, SkipReason, UpdateCheck,
+};
 pub use manifest::{
-    DirEntry, DirManifest, DirectorySummary, EntryError, EntryType, SnapshotManifest, SnapshotStats,
-    SourceInfo,
+    DirEntry, DirManifest, DirectorySummary, EntryError, EntryType, SnapshotManifest,
+    SnapshotStats, SourceInfo,
 };
 pub use policy::{MaintenanceMode, MaintenanceSettings, StoredPolicy};
 pub use progress::{

@@ -55,7 +55,7 @@
 //! every connection task has finished.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use interprocess::local_socket::tokio::prelude::*;
@@ -75,7 +75,7 @@ use super::protocol::{
 };
 use super::security;
 use super::Limits;
-use super::{MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
+use super::{KDF_FAILURE_DELAY, MAX_CONCURRENT_KDF, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
 
 /// How long the transport will wait to hand a frame to the writer before
 /// giving up on the connection.
@@ -95,6 +95,20 @@ const MAX_RATE_VIOLATIONS: u32 = 64;
 ///
 /// Prevents a permanently broken listener from spinning a core.
 const MAX_ACCEPT_FAILURES: u32 = 16;
+
+/// Process-wide gate on password-based key derivations.
+///
+/// A `static` rather than a field, because what it bounds is this process's
+/// resident memory: Argon2id is configured for 256 MiB per derivation, and
+/// `max_inflight` (16) x `max_connections` (32) is 512 of them — 128 GiB — all
+/// reachable by any local user who can open the socket, on a daemon that may
+/// be running as SYSTEM. A permit is taken by every request whose schema entry
+/// carries [`flag::kdf`](super::protocol::flag::kdf).
+///
+/// Deliberately independent of [`Limits`]: a limit that exists to stop the
+/// machine falling over must not itself be configurable into an
+/// out-of-memory kill.
+static KDF_SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_KDF));
 
 /// How the server is configured.
 ///
@@ -184,19 +198,12 @@ impl<H: Handler> Server<H> {
             .map_err(|e| Error::Ipc(format!("`{endpoint}` is not a usable IPC endpoint: {e}")))?;
 
         let opts = ListenerOptions::new().name(name).try_overwrite(options.replace_existing);
-        let opts = security::harden_listener(opts)?;
 
-        let listener = opts.create_tokio().map_err(|e| match e.kind() {
-            std::io::ErrorKind::AddrInUse => Error::Ipc(format!(
-                "another superbackup daemon is already listening on {endpoint}"
-            )),
-            std::io::ErrorKind::PermissionDenied => Error::Ipc(format!(
-                "not permitted to create the IPC endpoint {endpoint}: {e}"
-            )),
-            _ => Error::Ipc(format!("could not create the IPC endpoint {endpoint}: {e}")),
-        })?;
-
-        security::finalise_endpoint(endpoint)?;
+        // Access control, the fallback for platforms that refuse `fchmod` on a
+        // socket, and the check that the mode actually took, all live in
+        // `security::create_listener` — so there is one place where an
+        // endpoint can come into existence and it is the hardened one.
+        let listener = security::create_listener(opts, endpoint)?;
 
         let (shutdown, shutdown_rx) = watch::channel(false);
         Ok(Server {
@@ -238,6 +245,14 @@ impl<H: Handler> Server<H> {
         tracing::info!(endpoint = %self.endpoint, "IPC server listening");
 
         while !*shutdown_rx.borrow() {
+            // Reap before selecting. The `biased` ordering below puts `accept`
+            // ahead of the reaper arm, so under a connect flood `accept` would
+            // always be ready and finished connections would never be
+            // collected — the `JoinSet` would grow for as long as the flood
+            // lasted. `try_join_next` does not await, so this costs nothing
+            // when there is nothing to collect.
+            while connections.try_join_next().is_some() {}
+
             tokio::select! {
                 // Shutdown wins a tie: once asked to stop, do not pick up one
                 // more connection that will immediately be told to go away.
@@ -366,8 +381,8 @@ impl RateLimiter {
 
     fn allow(&mut self) -> bool {
         let now = Instant::now();
-        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * self.rate)
-            .min(self.burst);
+        self.tokens =
+            (self.tokens + now.duration_since(self.last).as_secs_f64() * self.rate).min(self.burst);
         self.last = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
@@ -467,6 +482,20 @@ async fn connection_loop<H: Handler>(
     let mut subscriptions: std::collections::HashMap<RequestId, tokio::task::JoinHandle<()>> =
         std::collections::HashMap::new();
 
+    // Serialises this connection's key-derivation requests. One permit, so a
+    // client cannot fill `max_inflight` with unlock attempts and pipeline its
+    // way past the failure delay; combined with `KDF_SLOTS` and that delay, a
+    // connection gets at most one passphrase guess per second.
+    let connection_kdf = Arc::new(Semaphore::new(1));
+
+    // Reset by every line received, blank ones included. Until the first line
+    // arrives the shorter handshake deadline applies: a connection permit is
+    // held for the life of the connection, so a client that connects
+    // `max_connections` times and then says nothing would otherwise lock every
+    // other process out of the daemon until it restarts.
+    let mut last_line = tokio::time::Instant::now();
+    let mut greeted = false;
+
     // Greet unprompted, so a client learns the protocol range before it sends
     // anything — including before it sends a passphrase. Sent even to a
     // connection that is about to be turned away, so the client's own
@@ -494,10 +523,25 @@ async fn connection_loop<H: Handler>(
     }
 
     let stop_reason = loop {
+        let deadline =
+            last_line + if greeted { limits.idle_timeout } else { limits.handshake_timeout };
+
         tokio::select! {
             biased;
 
             _ = shutdown.changed() => break Some("the daemon is shutting down"),
+
+            // Nothing has been received for the whole window. Close, so the
+            // connection permit goes back to a client that will use it. A
+            // blank line is a keep-alive and resets this, so a client with
+            // nothing to say can still hold its slot honestly.
+            _ = tokio::time::sleep_until(deadline) => {
+                break Some(if greeted {
+                    "idle: no request or keep-alive within the idle timeout"
+                } else {
+                    "idle: no request or keep-alive within the handshake timeout"
+                });
+            }
 
             read = codec::read_line(&mut reader, &mut line, limits.max_line_bytes) => {
                 match read {
@@ -522,9 +566,21 @@ async fn connection_loop<H: Handler>(
                     }
                 }
 
-                // A blank line is a keep-alive. Costs nothing, and lets a
-                // client hold a connection open without a ping command.
+                // Any line at all, blank ones included, proves the peer is
+                // still there and resets the idle deadline.
+                last_line = tokio::time::Instant::now();
+                greeted = true;
+
+                // A blank line is a keep-alive and nothing more. It still
+                // costs a rate-limiter token, so a keep-alive flood is bounded
+                // by the same budget as everything else.
                 if line.is_empty() {
+                    if !limiter.allow() {
+                        violations += 1;
+                        if violations >= MAX_RATE_VIOLATIONS {
+                            break Some("sustained rate-limit violations");
+                        }
+                    }
                     continue;
                 }
 
@@ -613,11 +669,50 @@ async fn connection_loop<H: Handler>(
 
                             // Also transport-level: a stream, not a response.
                             Request::Subscribe { topics } => {
-                                if let Some(old) = subscriptions.remove(&id) {
+                                // Streams that ended on their own — the daemon
+                                // dropped the channel, or the pump hit a dead
+                                // socket — still hold a map entry. Drop them
+                                // before measuring against the cap, so a
+                                // long-lived connection is not charged for
+                                // subscriptions that are already over.
+                                subscriptions.retain(|_, task| !task.is_finished());
+
+                                let replacing = subscriptions.remove(&id);
+                                if let Some(old) = replacing {
                                     // Re-subscribing on a live id replaces the
                                     // stream rather than running two.
                                     old.abort();
                                 }
+
+                                // `subscribe` is answered here rather than by
+                                // the dispatcher, so `max_inflight` never
+                                // applies to it. Without this cap one
+                                // connection could open a pump task and a
+                                // broadcast receiver for every request id it
+                                // can push past the rate limiter, and every
+                                // published event would be fanned out once
+                                // more — degrading the engine's event
+                                // publishing, not merely this connection.
+                                if subscriptions.len() >= limits.max_subscriptions {
+                                    let refusal = ServerFrame::Error {
+                                        id,
+                                        body: ErrorPayload::new(
+                                            ErrorCode::Ipc,
+                                            format!(
+                                                "this connection already holds {}                                                  subscriptions, the maximum",
+                                                limits.max_subscriptions
+                                            ),
+                                        )
+                                        .with_hint(
+                                            "Cancel a subscription you no longer read, or                                              subscribe to more topics on one id.",
+                                        ),
+                                    };
+                                    if out.send(refusal).await.is_err() {
+                                        break None;
+                                    }
+                                    continue;
+                                }
+
                                 let topics =
                                     if topics.is_empty() { Topic::all() } else { topics };
                                 match handler.event_stream(&ctx, &topics) {
@@ -657,8 +752,12 @@ async fn connection_loop<H: Handler>(
                                 let handler = Arc::clone(&handler);
                                 let out = out.clone();
                                 let timeout = limits.handler_timeout;
+                                let kdf = request
+                                    .is_kdf()
+                                    .then(|| Arc::clone(&connection_kdf));
                                 inflight.spawn(async move {
-                                    let frame = run_request(&handler, ctx, request, timeout).await;
+                                    let frame =
+                                        run_request(&handler, ctx, request, timeout, kdf).await;
                                     let _ = out.send(frame).await;
                                 });
                             }
@@ -694,20 +793,63 @@ async fn connection_loop<H: Handler>(
 /// The inner `spawn` is what gives panic isolation: a handler that panics
 /// produces a `JoinError` here and an `internal` error frame there, instead of
 /// unwinding through the connection loop and killing the connection.
+///
+/// `kdf` is `Some` for a command that runs a password-based key derivation.
+/// Two gates then apply, both *outside* the handler: the connection's own
+/// single permit, so one client cannot pipeline sixteen guesses, and the
+/// process-wide [`KDF_SLOTS`], so the machine never holds more than
+/// [`MAX_CONCURRENT_KDF`] Argon2id allocations at once whatever the client
+/// does. A failure is held for [`KDF_FAILURE_DELAY`] before it is answered.
+///
+/// The permits are taken *before* the handler timeout starts, so a request
+/// that waited in the queue is not charged for the wait; the whole call is
+/// still bounded, because the queue itself is bounded by `max_inflight` and
+/// the per-connection permit.
 async fn run_request<H: Handler>(
     handler: &Arc<H>,
     ctx: RequestContext,
     request: Request,
     timeout: Duration,
+    kdf: Option<Arc<Semaphore>>,
 ) -> ServerFrame {
     let id = ctx.request_id;
     let command = request.command();
+    let is_kdf = kdf.is_some();
+
+    let _connection_slot;
+    let _process_slot;
+    if let Some(connection_gate) = kdf {
+        // `acquire` only fails on a closed semaphore, and neither of these is
+        // ever closed; treat the impossible case as "do not run the KDF"
+        // rather than as a reason to bypass the gate.
+        match connection_gate.acquire_owned().await {
+            Ok(permit) => _connection_slot = permit,
+            Err(_) => return kdf_unavailable(id, command),
+        }
+        match KDF_SLOTS.acquire().await {
+            Ok(permit) => _process_slot = permit,
+            Err(_) => return kdf_unavailable(id, command),
+        }
+    }
+
     let handler = Arc::clone(handler);
     let task = tokio::spawn(async move { dispatch(&*handler, &ctx, request).await });
+    // `timeout` drops the `JoinHandle`, which *detaches* the task rather than
+    // stopping it: without this the abandoned handler would keep running, and
+    // keep holding whatever it holds, for the life of the daemon.
+    let abort = task.abort_handle();
 
     match tokio::time::timeout(timeout, task).await {
         Ok(Ok(Ok(reply))) => ServerFrame::Ok { id, body: Box::new(reply) },
-        Ok(Ok(Err(e))) => ServerFrame::error(id, &e),
+        Ok(Ok(Err(e))) => {
+            if is_kdf {
+                // A wrong passphrase costs a second. A right one costs
+                // nothing, so this is invisible to a legitimate user and
+                // removes the rate advantage of a local socket from a guesser.
+                tokio::time::sleep(KDF_FAILURE_DELAY).await;
+            }
+            ServerFrame::error(id, &e)
+        }
         Ok(Err(join)) => {
             tracing::error!(command, error = %join, "IPC handler panicked");
             ServerFrame::Error {
@@ -720,7 +862,8 @@ async fn run_request<H: Handler>(
             }
         }
         Err(_) => {
-            tracing::error!(command, ?timeout, "IPC handler timed out");
+            abort.abort();
+            tracing::error!(command, ?timeout, "IPC handler timed out and was aborted");
             ServerFrame::Error {
                 id,
                 body: ErrorPayload::new(
@@ -729,6 +872,16 @@ async fn run_request<H: Handler>(
                 ),
             }
         }
+    }
+}
+
+fn kdf_unavailable(id: RequestId, command: &str) -> ServerFrame {
+    ServerFrame::Error {
+        id,
+        body: ErrorPayload::new(
+            ErrorCode::Internal,
+            format!("`{command}` could not acquire the key-derivation gate"),
+        ),
     }
 }
 

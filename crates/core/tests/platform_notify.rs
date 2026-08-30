@@ -41,10 +41,7 @@ fn a_job_that_fails_every_quarter_hour_produces_one_notification_an_hour() {
     let mut shown = 0;
     for minute in (0..180).step_by(15) {
         let at = t0 + Duration::minutes(minute);
-        if notifier
-            .notify_at(&failure(job, ErrorCode::Io, "network unreachable"), at)
-            .was_shown()
-        {
+        if notifier.notify_at(&failure(job, ErrorCode::Io, "network unreachable"), at).was_shown() {
             shown += 1;
         }
     }
@@ -166,8 +163,7 @@ fn every_notification_carries_something_the_tray_can_act_on() {
 fn the_activity_log_and_the_notifier_agree_about_what_deserves_a_toast() {
     let job = Uuid::new_v4();
     assert_eq!(
-        Notification::from_event(&Event::error("job.failed", "boom").with_job(job))
-            .map(|n| n.kind),
+        Notification::from_event(&Event::error("job.failed", "boom").with_job(job)).map(|n| n.kind),
         Some(NotificationKind::Failure)
     );
     assert_eq!(

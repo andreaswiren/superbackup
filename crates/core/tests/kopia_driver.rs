@@ -625,10 +625,8 @@ async fn snapshot_create_streams_progress_and_parses_the_final_manifest() {
     let ctx = RunContext::new().with_events(sink);
     let source = Source::new(s.root.join("src"));
 
-    let outcome = driver
-        .create_snapshot(&source, &SnapshotOptions::default(), &ctx)
-        .await
-        .expect("snapshot");
+    let outcome =
+        driver.create_snapshot(&source, &SnapshotOptions::default(), &ctx).await.expect("snapshot");
 
     // The flags that make the whole thing work.
     let inv = s.only();
@@ -734,10 +732,8 @@ async fn snapshot_estimate_is_parsed_from_kopias_prose() {
     s.script(&[("mode", "ok"), ("stdout_file", &fixture.display().to_string())]);
 
     let driver = local_driver(&s);
-    let est = driver
-        .estimate_snapshot(&s.root.join("src"), &RunContext::new())
-        .await
-        .expect("estimate");
+    let est =
+        driver.estimate_snapshot(&s.root.join("src"), &RunContext::new()).await.expect("estimate");
     assert_eq!(est.included_files, 16517);
     assert_eq!(est.included_bytes, 6_500_000_000);
     assert_eq!(est.excluded_files, 40311);
@@ -757,10 +753,7 @@ async fn restore_defaults_are_safe_and_the_flags_are_the_real_ones() {
         .expect("restore");
 
     let inv = s.only();
-    assert_eq!(
-        inv.words(),
-        vec!["restore", "k9f3a1b2/src/main.rs", &target.display().to_string()]
-    );
+    assert_eq!(inv.words(), vec!["restore", "k9f3a1b2/src/main.rs", &target.display().to_string()]);
     assert_eq!(inv.flag_value("--overwrite-files").as_deref(), Some("false"));
     assert_eq!(inv.flag_value("--overwrite-directories").as_deref(), Some("false"));
     assert_eq!(inv.flag_value("--write-files-atomically").as_deref(), Some("true"));

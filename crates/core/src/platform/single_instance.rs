@@ -113,7 +113,11 @@ impl LockRecord {
 /// `alive` answers "is this PID currently running something that looks like
 /// the recorded executable?". Injected so the rule can be tested exhaustively
 /// without spawning processes.
-pub fn is_stale(record: &LockRecord, now: DateTime<Utc>, alive: impl Fn(&LockRecord) -> bool) -> bool {
+pub fn is_stale(
+    record: &LockRecord,
+    now: DateTime<Utc>,
+    alive: impl Fn(&LockRecord) -> bool,
+) -> bool {
     // Our own PID appearing in the file means we already hold it (a re-entrant
     // acquire, or a lock we failed to clean up before re-exec). Never treat it
     // as a foreign live holder.
@@ -243,10 +247,7 @@ pub fn acquire(paths: &Paths) -> Result<LockOutcome> {
 }
 
 /// [`acquire`] with an injected liveness predicate, for tests.
-pub fn acquire_with(
-    paths: &Paths,
-    alive: impl Fn(&LockRecord) -> bool,
-) -> Result<LockOutcome> {
+pub fn acquire_with(paths: &Paths, alive: impl Fn(&LockRecord) -> bool) -> Result<LockOutcome> {
     let path = paths.lock_file();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ctx(format!("creating {}", parent.display()))?;
@@ -396,9 +397,7 @@ mod named_mutex {
             // the call. Passing `None` for the security attributes gives the
             // object the default DACL, which is what we want: only this user's
             // session may open it.
-            let handle = unsafe {
-                CreateMutexW(None, true, PCWSTR(wide.as_ptr()))
-            };
+            let handle = unsafe { CreateMutexW(None, true, PCWSTR(wide.as_ptr())) };
             match handle {
                 Ok(handle) => {
                     // `CreateMutexW` succeeds and returns a handle to the
@@ -406,8 +405,8 @@ mod named_mutex {
                     // way to tell is GetLastError.
                     // SAFETY: reading the calling thread's last-error value,
                     // immediately after the call that set it.
-                    let already =
-                        unsafe { windows::Win32::Foundation::GetLastError() } == ERROR_ALREADY_EXISTS;
+                    let already = unsafe { windows::Win32::Foundation::GetLastError() }
+                        == ERROR_ALREADY_EXISTS;
                     if already {
                         // SAFETY: `handle` was returned by CreateMutexW above
                         // and has not been closed.
@@ -446,8 +445,12 @@ mod tests {
     use super::*;
 
     fn temp_paths(tag: &str) -> Paths {
-        let root = std::env::temp_dir()
-            .join(format!("sb-lock-{}-{}-{}", tag, std::process::id(), Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "sb-lock-{}-{}-{}",
+            tag,
+            std::process::id(),
+            Uuid::new_v4().simple()
+        ));
         Paths::rooted_at(root, false)
     }
 

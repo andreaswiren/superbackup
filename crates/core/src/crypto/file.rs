@@ -5,13 +5,31 @@
 //! testable without a temp directory and keeps the "did we lose the file?"
 //! reasoning in one readable place.
 //!
-//! # The rule
+//! # The rules
 //!
 //! Losing `config.sbvault` loses every repository passphrase, and therefore
-//! every backup, permanently. So: **never overwrite the vault without first
-//! copying the current bytes into [`crate::paths::Paths::vault_backup_dir`]**,
-//! and never write the live file non-atomically. Both invariants are enforced
-//! here rather than left to callers.
+//! every backup, permanently. So:
+//!
+//! 1. **Never overwrite the vault without first copying the current bytes into
+//!    [`crate::paths::Paths::vault_backup_dir`]**, and never write the live
+//!    file non-atomically.
+//! 2. **Never mutate the in-memory vault before the write has succeeded.**
+//!
+//! The second rule is the subtler one and it is worth being explicit about
+//! why. If a rotation re-keys `self.vault` and the backup or the write then
+//! fails, the call returns an error while memory holds ciphertext under the
+//! *new* passphrase and the file still holds the *old* one. The user is told
+//! the rotation failed and carries on using the old passphrase — until the
+//! next ordinary `save()` writes the new-passphrase ciphertext over the live
+//! file, with no recovery backup, because creating the backup is exactly what
+//! failed. A reported failure silently becomes a permanent lockout from every
+//! backup the installation owns.
+//!
+//! Every method here therefore follows: **prepare (fallible) -> write ->
+//! commit (infallible)**. [`crate::crypto::Vault::prepare_seal`] and
+//! [`crate::crypto::Vault::prepare_rekey`] exist to make that shape the only
+//! one expressible; there is no way to commit without first holding a value
+//! that proves the bytes were computed, and the caller writes them in between.
 
 use super::rekey::{DerivedRepository, Rekey, RekeyAcknowledgement};
 use super::vault::Vault;
@@ -67,8 +85,7 @@ impl VaultFile {
     /// Load the vault from `paths`, without unlocking it.
     pub fn load(paths: &Paths) -> Result<VaultFile> {
         let path = paths.vault_file();
-        let bytes = std::fs::read(&path)
-            .ctx(format!("reading the vault at {}", path.display()))?;
+        let bytes = std::fs::read(&path).ctx(format!("reading the vault at {}", path.display()))?;
         Ok(VaultFile {
             vault: Vault::open_locked(&bytes)?,
             path,
@@ -89,7 +106,8 @@ impl VaultFile {
 
     /// [`VaultFile::create`] from an already-built vault, so the settings
     /// screen can hand in calibrated KDF parameters.
-    pub fn create_from(paths: &Paths, mut vault: Vault) -> Result<VaultFile> {
+    pub fn create_from(paths: &Paths, vault: Vault) -> Result<VaultFile> {
+        let mut vault = vault;
         let path = paths.vault_file();
         if path.exists() {
             return Err(Error::Path {
@@ -98,9 +116,9 @@ impl VaultFile {
             });
         }
         paths.ensure()?;
-        let bytes = vault.seal()?;
-        paths::write_atomic(&path, &bytes)?;
-        paths::harden_file(&path)?;
+        let sealed = vault.prepare_seal()?;
+        paths::write_atomic(&path, sealed.bytes())?;
+        vault.commit_seal(sealed);
         Ok(VaultFile { path, backup_dir: paths.vault_backup_dir(), vault })
     }
 
@@ -111,10 +129,12 @@ impl VaultFile {
     /// first; see [`crate::remote`]. A backup of the current file is taken
     /// before anything is replaced.
     pub fn replace_with(&mut self, bytes: &[u8], reason: BackupReason) -> Result<()> {
+        // Parse first, so a garbage payload is refused before a backup is
+        // taken; then write; then adopt. `self.vault` changes only once the
+        // bytes it describes are the bytes on disk.
         let replacement = Vault::open_locked(bytes)?;
         self.backup(reason)?;
         paths::write_atomic(&self.path, replacement.sealed_bytes())?;
-        paths::harden_file(&self.path)?;
         self.vault = replacement;
         Ok(())
     }
@@ -137,33 +157,42 @@ impl VaultFile {
 
     /// Seal and write, if anything changed. A no-op when the vault is clean,
     /// so an idle daemon does not rewrite the file every minute.
+    ///
+    /// The vault is marked clean only after the write succeeds. Sealing first
+    /// and writing second would leave a failed save looking like a completed
+    /// one, and the retry the caller makes after handling the error would find
+    /// nothing to do and silently drop the change.
     pub fn save(&mut self) -> Result<()> {
         if !self.vault.is_dirty() {
             return Ok(());
         }
-        let bytes = self.vault.seal()?;
-        paths::write_atomic(&self.path, &bytes)?;
-        paths::harden_file(&self.path)?;
+        let sealed = self.vault.prepare_seal()?;
+        paths::write_atomic(&self.path, sealed.bytes())?;
+        self.vault.commit_seal(sealed);
         Ok(())
     }
 
-    /// Rotate the master passphrase: re-key, back up, write, prune.
+    /// Rotate the master passphrase: prepare, back up, write, commit, prune.
     ///
     /// The ordering is the whole point.
     ///
-    /// 1. Verify the old passphrase and produce the complete new ciphertext in
-    ///    memory ([`Vault::change_passphrase`] does all of it, or none of it).
-    ///    Doing this first means a mistyped passphrase does not litter the
-    ///    backup directory with a copy on every attempt.
+    /// 1. [`Vault::prepare_rekey`] verifies the old passphrase, audits the
+    ///    acknowledgement, derives both key hierarchies and produces the
+    ///    complete new ciphertext — all of it or none of it, and **without
+    ///    touching the vault**. Doing this first also means a mistyped
+    ///    passphrase does not litter the backup directory on every attempt.
     /// 2. Copy the *current* file into the backup directory. This is the
     ///    recovery anchor for the repository migration that follows, and its
     ///    path is recorded on the returned [`Rekey`].
     /// 3. Write the new bytes atomically over the live file.
+    /// 4. Only now [`Vault::commit_rekey`], which cannot fail.
     ///
-    /// A crash after step 2 leaves a valid old vault plus a backup of it. A
-    /// crash during step 3 leaves either the old file or the new one, because
-    /// [`crate::paths::write_atomic`] renames rather than truncates. There is
-    /// no interleaving that loses the keys.
+    /// A failure at step 1, 2 or 3 leaves the in-memory vault and the file
+    /// both on the old passphrase — consistent with each other and with what
+    /// the user has just been told. A crash during step 3 leaves either the
+    /// old file or the new one, because [`crate::paths::write_atomic`] renames
+    /// rather than truncates. There is no interleaving that loses the keys and
+    /// none that leaves memory and disk disagreeing about the passphrase.
     ///
     /// # Then what
     ///
@@ -178,10 +207,10 @@ impl VaultFile {
         new: &Secret,
         ack: &RekeyAcknowledgement,
     ) -> Result<Rekey> {
-        let mut rekey = self.vault.change_passphrase(old, new, ack)?;
+        let plan = self.vault.prepare_rekey(old, new, ack)?;
         let backup = self.backup_without_pruning(BackupReason::Rekey)?;
-        paths::write_atomic(&self.path, rekey.sealed_bytes())?;
-        paths::harden_file(&self.path)?;
+        paths::write_atomic(&self.path, plan.sealed_bytes())?;
+        let mut rekey = self.vault.commit_rekey(plan);
         // Prune only after the new file is safely in place, and never below
         // the backup this rotation just took — pruning it away mid-migration
         // would destroy the only on-disk copy of the old key hierarchy.
@@ -218,10 +247,7 @@ impl VaultFile {
     /// The fallback for [`VaultFile::resume_rekey`] when the interrupted run's
     /// report did not survive.
     pub fn latest_rekey_backup(&self) -> Result<Option<PathBuf>> {
-        Ok(self
-            .list_backups()?
-            .into_iter()
-            .find(|p| p.extension().is_some_and(|e| e == "rekey")))
+        Ok(self.list_backups()?.into_iter().find(|p| p.extension().is_some_and(|e| e == "rekey")))
     }
 
     /// Copy the current on-disk vault into the backup directory.
@@ -243,8 +269,8 @@ impl VaultFile {
             .ctx(format!("creating {}", self.backup_dir.display()))?;
         paths::harden_dir(&self.backup_dir)?;
 
-        let bytes = std::fs::read(&self.path)
-            .ctx(format!("reading {} for backup", self.path.display()))?;
+        let bytes =
+            std::fs::read(&self.path).ctx(format!("reading {} for backup", self.path.display()))?;
 
         // Names are `config.sbvault.<UTC timestamp>-<counter>.<reason>`.
         //
@@ -275,10 +301,8 @@ impl VaultFile {
             });
         }
 
-        let candidate =
-            self.backup_dir.join(format!("{prefix}{next:03}.{}", reason.tag()));
+        let candidate = self.backup_dir.join(format!("{prefix}{next:03}.{}", reason.tag()));
         paths::write_atomic(&candidate, &bytes)?;
-        paths::harden_file(&candidate)?;
         Ok(Some(candidate))
     }
 

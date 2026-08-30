@@ -279,8 +279,14 @@ fn degenerate_schedules_are_rejected() {
     let cases: Vec<(Schedule, &str)> = vec![
         (Schedule::Interval { minutes: 0 }, "continuously"),
         (Schedule::Daily { times: vec![] }, "never runs"),
-        (Schedule::Weekly { weekdays: vec![], times: vec![TimeOfDay { hour: 1, minute: 0 }] }, "never runs"),
-        (Schedule::Weekly { weekdays: vec![9], times: vec![TimeOfDay { hour: 1, minute: 0 }] }, "out of range"),
+        (
+            Schedule::Weekly { weekdays: vec![], times: vec![TimeOfDay { hour: 1, minute: 0 }] },
+            "never runs",
+        ),
+        (
+            Schedule::Weekly { weekdays: vec![9], times: vec![TimeOfDay { hour: 1, minute: 0 }] },
+            "out of range",
+        ),
         (Schedule::Daily { times: vec![TimeOfDay { hour: 25, minute: 0 }] }, "not a valid time"),
         (
             Schedule::OnChange { debounce_seconds: 0, min_interval_minutes: 10 },
@@ -301,8 +307,7 @@ fn a_destination_inside_its_own_jobs_source_is_rejected() {
     // "Back up C:\code to C:\code\backups" — the most natural thing to type,
     // and it fills the disk.
     config.jobs[0].sources = vec![Source::new(abs("code"))];
-    config.destinations[0].kind =
-        DestinationKind::LocalRepository { path: abs("code/backups") };
+    config.destinations[0].kind = DestinationKind::LocalRepository { path: abs("code/backups") };
     assert_error_mentioning(&validate(&config), "grow without bound");
 
     // Exactly equal is the same problem.
@@ -319,8 +324,7 @@ fn a_sibling_directory_with_a_shared_prefix_is_not_nesting() {
     // right, and getting it wrong would block a legitimate configuration.
     let mut config = valid_config();
     config.jobs[0].sources = vec![Source::new(abs("data/back"))];
-    config.destinations[0].kind =
-        DestinationKind::LocalRepository { path: abs("data/backups") };
+    config.destinations[0].kind = DestinationKind::LocalRepository { path: abs("data/backups") };
     let report = validate(&config);
     assert!(report.is_ok(), "siblings must be allowed: {:#?}", report.errors);
 }

@@ -1,0 +1,3 @@
+# generate.py is a script, not a package. Its bytecode cache is not an artefact.
+__pycache__/
+*.pyc

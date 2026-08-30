@@ -50,22 +50,28 @@ fn new_vault(paths: &Paths, pass: &str) -> VaultFile {
     VaultFile::create_from(paths, vault).expect("create")
 }
 
-/// `VaultFile::change_passphrase` rotates the **in-memory** vault before it
-/// takes the recovery backup and before it writes anything. If the backup step
-/// fails, the call reports failure — but the in-memory vault is already sealed
-/// under the *new* passphrase, while the file on disk is still under the old
-/// one.
+/// Regression guard for H1.
 ///
-/// The next successful `save()` then silently writes the new-passphrase
-/// ciphertext over the live file. The user was told the rotation failed and
-/// still believes their old passphrase works. It does not, and there is no
-/// recovery backup either — the backup is exactly what failed.
+/// `VaultFile::change_passphrase` used to rotate the **in-memory** vault before
+/// it took the recovery backup and before it wrote anything. If the backup step
+/// failed, the call reported failure — but the in-memory vault was already
+/// sealed under the *new* passphrase while the file on disk was still under the
+/// old one, and the next ordinary `save()` silently wrote the new-passphrase
+/// ciphertext over the live file. The user had been told the rotation failed,
+/// still believed their old passphrase worked, and there was no recovery backup
+/// either, because creating it is exactly what had failed. Permanent, silent
+/// lockout from every backup.
+///
+/// The fix is `Vault::prepare_rekey` / `Vault::commit_rekey`: everything
+/// fallible happens before the vault is touched, the caller writes in between,
+/// and the commit cannot fail. A failure anywhere leaves memory and disk both
+/// on the old passphrase, consistent with what the user was just told.
 ///
 /// The I/O failure is provoked here by putting a plain file where the backup
 /// *directory* must go, which is the moral equivalent of a full disk, a
 /// revoked ACL, or an antivirus lock on `vault-backups`.
 #[test]
-fn a_failed_rotation_leaves_the_in_memory_vault_rotated_and_the_disk_file_not() {
+fn a_failed_rotation_leaves_both_memory_and_disk_on_the_old_passphrase() {
     let home = TempHome::new("rotate-split");
     let paths = home.paths();
     let mut file = new_vault(&paths, "old-passphrase");
@@ -107,9 +113,92 @@ fn a_failed_rotation_leaves_the_in_memory_vault_rotated_and_the_disk_file_not() 
     let after = std::fs::read(file.path()).expect("read");
     assert!(
         Vault::unlock(&after, &Secret::from_str("old-passphrase")).is_ok(),
-        "after a rotation that REPORTED FAILURE, the live vault no longer opens \
-         with the old passphrase: the failed rotation was silently committed by \
-         the next save"
+        "after a rotation that REPORTED FAILURE, the live vault must still open \
+         with the old passphrase: a failed rotation must never be committed by \
+         a later save"
+    );
+    assert!(
+        matches!(
+            Vault::unlock(&after, &Secret::from_str("new-passphrase")),
+            Err(superbackup_core::error::Error::BadPassphrase)
+        ),
+        "and it must not open with the passphrase the failed rotation tried to set"
+    );
+
+    // The secret written after the failed rotation is present, so the save
+    // really did happen — the guard is not passing because nothing was written.
+    let vault = Vault::unlock(&after, &Secret::from_str("old-passphrase")).expect("unlock");
+    assert_eq!(
+        vault
+            .get(&superbackup_core::model::SecretRef("s3.access:1".into()))
+            .expect("get")
+            .expect("present")
+            .expose(),
+        b"AKIAEXAMPLE"
+    );
+
+    // And the rotation can simply be retried now that the obstruction is gone.
+    file.change_passphrase(
+        &Secret::from_str("old-passphrase"),
+        &Secret::from_str("new-passphrase"),
+        &RekeyAcknowledgement::NoDerivedRepositories,
+    )
+    .expect("a retried rotation must succeed");
+    let rotated = std::fs::read(file.path()).expect("read");
+    assert!(Vault::unlock(&rotated, &Secret::from_str("new-passphrase")).is_ok());
+}
+
+/// The same ordering rule, for the ordinary save path.
+///
+/// `VaultFile::save` used to seal — which marks the vault clean — and write
+/// afterwards. A write that failed therefore left a vault that believed it had
+/// no pending changes, so the retry a caller makes after handling the error
+/// found nothing to do and silently dropped the edit.
+///
+/// The guard is on the property that made that possible: preparing ciphertext
+/// must not, by itself, change what the vault believes is on disk.
+#[test]
+fn preparing_a_seal_does_not_mark_the_vault_clean() {
+    let home = TempHome::new("save-order");
+    let paths = home.paths();
+    let mut file = new_vault(&paths, "pass");
+    file.save().expect("save");
+    let before = std::fs::read(file.path()).expect("read");
+
+    file.vault_mut()
+        .put(
+            superbackup_core::model::SecretRef("s3.access:1".into()),
+            Secret::from_str("AKIAEXAMPLE"),
+        )
+        .expect("put");
+    assert!(file.vault().is_dirty(), "the edit is pending");
+
+    let sealed = file.vault().prepare_seal().expect("prepare");
+    assert!(
+        file.vault().is_dirty(),
+        "preparing ciphertext must not mark the vault clean; if it did, a write          that then failed would leave the retry with nothing to do and the edit          silently dropped"
+    );
+    assert_eq!(
+        file.vault().sealed_bytes(),
+        before.as_slice(),
+        "and the vault must still believe the old bytes are the ones on disk"
+    );
+    assert_ne!(sealed.bytes(), before.as_slice(), "the candidate really is new content");
+
+    // Committing is what changes its mind, and `save` only does that after the
+    // write succeeds.
+    file.save().expect("save");
+    assert!(!file.vault().is_dirty());
+    let on_disk = std::fs::read(file.path()).expect("read");
+    assert_eq!(file.vault().sealed_bytes(), on_disk.as_slice());
+    let vault = Vault::unlock(&on_disk, &Secret::from_str("pass")).expect("unlock");
+    assert_eq!(
+        vault
+            .get(&superbackup_core::model::SecretRef("s3.access:1".into()))
+            .expect("get")
+            .expect("present")
+            .expose(),
+        b"AKIAEXAMPLE"
     );
 }
 
@@ -167,22 +256,54 @@ fn the_temp_file_name_is_fully_predictable() {
     );
 }
 
-/// The documented DoS bound on a hostile vault header is 2 GiB. Anyone who can
-/// hand this installation a `config.sbvault` — which is the *designed* threat,
-/// since the file is pulled from a Git repository — can therefore make it
-/// commit 2 GiB of RAM per unlock attempt before a single byte is
-/// authenticated.
+/// Regression guard for M7.
+///
+/// The documented DoS bound on a hostile vault header used to be 2 GiB, and
+/// `validate()` accepted it. Anyone who can hand this installation a
+/// `config.sbvault` — which is the *designed* threat, since the file is pulled
+/// from a Git repository — could therefore make it commit 2 GiB of RAM per
+/// unlock attempt before a single byte was authenticated.
+///
+/// The bound is now 1 GiB, pinned to `CALIBRATION_MAX_MEMORY_KIB` because
+/// nothing this program writes ever exceeds that, and `validate()` additionally
+/// refuses anything above what this machine can hold.
 #[test]
-fn a_hostile_header_can_still_demand_a_two_gibibyte_allocation() {
-    let hostile = KdfParams {
-        memory_kib: MAX_MEMORY_KIB,
-        ..KdfParams::insecure_for_tests().expect("base")
-    };
+fn a_hostile_header_cannot_demand_more_memory_than_the_ceiling_allows() {
+    const ONE_GIB_KIB: u32 = 1024 * 1024;
+    const OLD_CEILING_KIB: u32 = 2 * 1024 * 1024;
+
     assert!(
-        hostile.validate().is_err(),
-        "validate() accepts memory_kib = {} KiB ({} GiB); a pulled vault can make \
-         the daemon allocate that much before authenticating anything",
-        MAX_MEMORY_KIB,
-        MAX_MEMORY_KIB / (1024 * 1024)
+        MAX_MEMORY_KIB <= ONE_GIB_KIB,
+        "the absolute ceiling has crept back up to {} KiB",
+        MAX_MEMORY_KIB
     );
+
+    let base = KdfParams::insecure_for_tests().expect("base");
+
+    // The value the review demonstrated, and everything above it.
+    for demand in [OLD_CEILING_KIB, OLD_CEILING_KIB + 1, u32::MAX] {
+        let hostile = KdfParams { memory_kib: demand, ..base.clone() };
+        assert!(
+            hostile.validate().is_err(),
+            "validate() accepts memory_kib = {demand} KiB; a pulled vault could make \
+             the daemon allocate that much before authenticating anything"
+        );
+    }
+
+    // Anything above what this machine will commit to one unlock is refused,
+    // whatever the fixed ceiling says.
+    let ceiling = superbackup_core::crypto::kdf::memory_ceiling_kib();
+    assert!(ceiling <= MAX_MEMORY_KIB);
+    if let Some(over) = ceiling.checked_add(1) {
+        let hostile = KdfParams { memory_kib: over, ..base.clone() };
+        assert!(hostile.validate().is_err(), "{over} KiB is above this machine's ceiling");
+    }
+
+    // The check must not have become so strict that ordinary vaults break: the
+    // recommended parameters, and the floor, still validate.
+    KdfParams::recommended().expect("recommended").validate().expect("defaults must open");
+    KdfParams { memory_kib: superbackup_core::crypto::kdf::MIN_NEW_MEMORY_KIB, ..base.clone() }
+        .validate()
+        .expect("the documented floor must open");
+    base.validate().expect("test parameters must still parse");
 }

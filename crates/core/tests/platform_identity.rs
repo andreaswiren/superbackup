@@ -61,8 +61,7 @@ fn the_machine_id_is_persisted_and_stable_across_runs() {
     assert_eq!(first.get_version_num(), 4, "the id must not be a hardware fingerprint");
 
     // A corrupt id file must not stop the program starting.
-    std::fs::write(paths.config_dir.join(identity::MACHINE_ID_FILE), b"not-a-uuid")
-        .expect("write");
+    std::fs::write(paths.config_dir.join(identity::MACHINE_ID_FILE), b"not-a-uuid").expect("write");
     let third = identity::load_or_create_id(&paths).expect("a corrupt id file is replaced");
     assert_ne!(third, first);
 }
@@ -120,7 +119,10 @@ fn two_machines_with_the_same_label_get_separate_folders_and_both_are_listed() {
     assert!(slugs.contains(&a.slug.as_str()));
     assert!(slugs.contains(&b.slug.as_str()));
 
-    assert_eq!(identity::describe_occupancy(&listed, &a.id), "Holds backups from this PC and 1 other");
+    assert_eq!(
+        identity::describe_occupancy(&listed, &a.id),
+        "Holds backups from this PC and 1 other"
+    );
     assert!(listed.iter().any(|m| m.is_foreign(&a.id)));
 }
 

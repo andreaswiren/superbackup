@@ -175,15 +175,9 @@ fn the_user_instance_and_the_service_instance_are_separate() {
 fn the_real_liveness_check_recognises_this_process() {
     let mut me = foreign_record(std::process::id());
     me.executable = std::env::current_exe().ok();
-    assert!(
-        single_instance::holder_is_alive(&me),
-        "the test binary is definitely running"
-    );
+    assert!(single_instance::holder_is_alive(&me), "the test binary is definitely running");
 
     let mut ghost = foreign_record(0xffff_fff0);
     ghost.executable = std::env::current_exe().ok();
-    assert!(
-        !single_instance::holder_is_alive(&ghost),
-        "a PID that high is not in use"
-    );
+    assert!(!single_instance::holder_is_alive(&ghost), "a PID that high is not in use");
 }

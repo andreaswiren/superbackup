@@ -57,9 +57,7 @@ fn an_older_version_of_the_same_vault_is_accepted_without_complaint() {
 
     // v2: the user rotates the credential and publishes.
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    vault
-        .put(SecretRef("s3.access:1".into()), Secret::from_str("NEW-ROTATED-KEY"))
-        .expect("put");
+    vault.put(SecretRef("s3.access:1".into()), Secret::from_str("NEW-ROTATED-KEY")).expect("put");
     let v2 = vault.seal().expect("seal v2");
     assert_ne!(v1, v2);
 
@@ -70,17 +68,13 @@ fn an_older_version_of_the_same_vault_is_accepted_without_complaint() {
 
     // The local machine already holds v2. The attacker serves v1.
     let local = Vault::unlock(&v2, &pass).expect("local");
-    let fetched =
-        FetchedVault { bytes: v1, source_url: "https://example/x".into(), sha: None };
+    let fetched = FetchedVault { bytes: v1, source_url: "https://example/x".into(), sha: None };
 
     let plan = verify_pull(&fetched, &Config::default(), &local, &source(Vec::new()), &pass)
         .expect("verify_pull accepts it");
 
     let rolled_back = Vault::unlock(plan.bytes(), &pass).expect("unlock the plan");
-    let key = rolled_back
-        .get(&SecretRef("s3.access:1".into()))
-        .expect("get")
-        .expect("present");
+    let key = rolled_back.get(&SecretRef("s3.access:1".into())).expect("get").expect("present");
 
     assert_ne!(
         key.expose(),
@@ -118,8 +112,7 @@ fn a_pulled_config_can_clear_the_pinned_signer_list() {
     local_config.remote = Some(local_source.clone());
 
     let local = Vault::unlock(&signed, &pass).expect("local");
-    let fetched =
-        FetchedVault { bytes: signed, source_url: "https://example/x".into(), sha: None };
+    let fetched = FetchedVault { bytes: signed, source_url: "https://example/x".into(), sha: None };
 
     let plan = verify_pull(&fetched, &local_config, &local, &local_source, &pass)
         .expect("a correctly signed vault verifies");

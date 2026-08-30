@@ -219,7 +219,8 @@ impl KopiaBinary {
                 banner.chars().take(80).collect::<String>()
             ))
         })?;
-        let floor = if floor.at_least(&MINIMUM_KOPIA_VERSION) { floor } else { &MINIMUM_KOPIA_VERSION };
+        let floor =
+            if floor.at_least(&MINIMUM_KOPIA_VERSION) { floor } else { &MINIMUM_KOPIA_VERSION };
         if !version.at_least(floor) {
             return Err(Error::Validation(format!(
                 "kopia {version} at {} is too old; superbackup needs {floor} or newer",
@@ -341,8 +342,10 @@ mod tests {
         assert_eq!(KopiaVersion::parse("v0.18.2"), Some(KopiaVersion::new(0, 18, 2)));
         assert_eq!(KopiaVersion::parse("0.20.0-rc1 build: x"), Some(KopiaVersion::new(0, 20, 0)));
         assert_eq!(KopiaVersion::parse("1.0"), Some(KopiaVersion::new(1, 0, 0)));
-        assert_eq!(KopiaVersion::parse("20260830.0.104645 build: dev"),
-            Some(KopiaVersion::new(20260830, 0, 104645)));
+        assert_eq!(
+            KopiaVersion::parse("20260830.0.104645 build: dev"),
+            Some(KopiaVersion::new(20260830, 0, 104645))
+        );
     }
 
     #[test]

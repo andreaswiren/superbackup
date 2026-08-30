@@ -23,8 +23,7 @@ impl Home {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or_default();
-        let dir =
-            std::env::temp_dir().join(format!("sb-rem-{tag}-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sb-rem-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         Home(dir)
     }
@@ -113,12 +112,9 @@ fn store(home: &Home, passphrase: &str) -> Store {
 
 /// What the publishing machine would upload.
 fn published(passphrase: &str, config: &Config, secrets: &[(&str, &str)]) -> FetchedVault {
-    let mut vault =
-        Vault::create_unchecked(&Secret::from_str(passphrase), kdf()).expect("vault");
+    let mut vault = Vault::create_unchecked(&Secret::from_str(passphrase), kdf()).expect("vault");
     for (handle, value) in secrets {
-        vault
-            .put(SecretRef((*handle).into()), Secret::from_str(value))
-            .expect("put");
+        vault.put(SecretRef((*handle).into()), Secret::from_str(value)).expect("put");
     }
     vault.set_embedded_config(Some(config.clone())).expect("embed");
     FetchedVault {
@@ -135,8 +131,7 @@ fn published_signed(
     config: &Config,
     secrets: &[(&str, &str)],
 ) -> (FetchedVault, String) {
-    let mut vault =
-        Vault::create_unchecked(&Secret::from_str(passphrase), kdf()).expect("vault");
+    let mut vault = Vault::create_unchecked(&Secret::from_str(passphrase), kdf()).expect("vault");
     for (handle, value) in secrets {
         vault.put(SecretRef((*handle).into()), Secret::from_str(value)).expect("put");
     }
@@ -146,8 +141,7 @@ fn published_signed(
     (
         FetchedVault {
             bytes,
-            source_url: "https://raw.githubusercontent.com/andreas/cfg/main/config.sbvault"
-                .into(),
+            source_url: "https://raw.githubusercontent.com/andreas/cfg/main/config.sbvault".into(),
             sha: Some("abc123".into()),
         },
         fingerprint,
@@ -217,11 +211,7 @@ fn a_full_pull_shows_a_diff_and_then_applies_it() {
     local.unlock(&Secret::from_str("shared master")).expect("unlock");
     assert_eq!(local.state(), StoreState::Unlocked);
     assert_eq!(
-        local
-            .secret(&SecretRef("s3.access:9".into()))
-            .expect("get")
-            .expect("present")
-            .expose(),
+        local.secret(&SecretRef("s3.access:9".into())).expect("get").expect("present").expose(),
         b"AKIAFROMTHEOTHERPC"
     );
 }
@@ -256,8 +246,7 @@ fn a_tampered_remote_vault_is_rejected_before_anything_is_written() {
 
     let mut fetched = published("shared", &Config::default(), &[("a:1", "value")]);
     // Someone with write access to the repository flips a bit.
-    let mut document: serde_json::Value =
-        serde_json::from_slice(&fetched.bytes).expect("json");
+    let mut document: serde_json::Value = serde_json::from_slice(&fetched.bytes).expect("json");
     let ciphertext = document["ciphertext"].as_str().expect("ct").to_string();
     let mut chars: Vec<char> = ciphertext.chars().collect();
     let middle = chars.len() / 2;
@@ -361,8 +350,7 @@ fn a_good_signature_from_an_unpinned_key_is_rejected() {
 fn a_signature_over_a_tampered_payload_is_rejected() {
     let home = Home::new("pullforged");
     let local = store(&home, "shared");
-    let (mut fetched, signer) =
-        published_signed("shared", &Config::default(), &[("a:1", "value")]);
+    let (mut fetched, signer) = published_signed("shared", &Config::default(), &[("a:1", "value")]);
 
     // Flip a bit in the ciphertext, leaving the signature and its fingerprint
     // untouched. The signature covers the ciphertext, so it must stop
@@ -494,9 +482,7 @@ fn a_vault_with_no_published_config_updates_only_the_secrets() {
     // machine chose to share keys, not schedules.
     let mut remote_vault =
         Vault::create_unchecked(&Secret::from_str("shared"), kdf()).expect("vault");
-    remote_vault
-        .put(SecretRef("s3.access:1".into()), Secret::from_str("SHAREDKEY"))
-        .expect("put");
+    remote_vault.put(SecretRef("s3.access:1".into()), Secret::from_str("SHAREDKEY")).expect("put");
     let fetched = FetchedVault {
         bytes: remote_vault.seal().expect("seal"),
         source_url: "https://example.com/config.sbvault".into(),
@@ -558,8 +544,7 @@ fn a_publication_payload_round_trips_to_a_second_machine() {
     config.destinations.push(destination);
     config.jobs.push(job("nightly", vec![destination_id]));
     a.set_config(config).expect("set config");
-    a.put_secret(SecretRef("s3.access:1".into()), Secret::from_str("AKIAFROMA"))
-        .expect("put");
+    a.put_secret(SecretRef("s3.access:1".into()), Secret::from_str("AKIAFROMA")).expect("put");
 
     let payload = a.publication_payload().expect("payload");
     let request = superbackup_core::remote::PushRequest::new(payload.clone(), "publish");

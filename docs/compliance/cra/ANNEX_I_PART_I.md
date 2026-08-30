@@ -41,7 +41,7 @@ be finished before a release could honestly claim conformity.
 A backup tool reads everything its user owns and holds the keys that make it
 recoverable. The risk profile is stated in [`THREAT_MODEL.md`](../THREAT_MODEL.md)
 §1–§3 and assessed in [`RISK_ASSESSMENT.md`](RISK_ASSESSMENT.md), which
-identifies seven in-scope adversaries and states, for each, the defence and the
+identifies eight in-scope adversaries and states, for each, the defence and the
 residual risk. Article 13(3) requires the assessment to say *whether* and *how*
 each Part I point (2) requirement applies; that mapping is this document.
 
@@ -356,8 +356,11 @@ altered in transit or at a CDN edge; its authenticity rests on TLS to
 `github.com` and on GitHub. An attacker able to publish a release to
 `kopia/kopia` defeats it — exactly as they would defeat a user running
 `curl | tar x`. This is stated in the installer's module documentation, carried
-in `InstallOutcome::signature_verified` (always `false`), and recorded as an
-accepted residual risk in [`RISK_ASSESSMENT.md`](RISK_ASSESSMENT.md).
+in `InstallOutcome::signature_verified` (always `false`), argued in
+[`THREAT_MODEL.md`](../THREAT_MODEL.md) §A8, and recorded as an accepted
+residual risk (R-13) in [`RISK_ASSESSMENT.md`](RISK_ASSESSMENT.md). §3 of the
+threat model places a compromise of the Kopia project or of GitHub itself out
+of scope, and this document does not claim otherwise.
 
 ---
 

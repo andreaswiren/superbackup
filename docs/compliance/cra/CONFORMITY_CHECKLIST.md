@@ -78,7 +78,7 @@ Full detail in [`ANNEX_I_PART_II.md`](ANNEX_I_PART_II.md).
 | C2 | (1) SBOM stays current | Done | `sbom/generate.py --check` gated in `sbom.yml` |
 | C3 | (1) SBOM schema-valid | Done | Validated against `bom-1.5.schema.json` and `bom-1.5.xsd` in CI |
 | C4 | (1) SBOM covers non-cargo runtime dependencies | Done | `EXTERNAL_COMPONENTS` in `sbom/generate.py` — Kopia and the Linux system libraries |
-| C5 | (1) SBOM records the build toolchain | **Gap** | G-10 |
+| C5 | (1) SBOM records the toolchain | Partial — records the resolving `rustc`, cannot bind one to a binary | G-10 |
 | C6 | (2) Remediate without delay; documented triage | Done as policy | [`ANNEX_I_PART_II.md`](ANNEX_I_PART_II.md) point (2) |
 | C7 | (2) Dependency vulnerability policy, with written exceptions only | Done | `deny.toml` `ignore = []`; policy in `ANNEX_I_PART_II.md` |
 | C8 | (2) Kopia advisories watched | **Gap** | G-03 |
@@ -313,16 +313,18 @@ fix and nothing else. Stated as a commitment in
 
 ---
 
-### G-10 · The SBOM does not record the build toolchain
-**Severity: low-medium.** Annex I Part II (1).
+### G-10 · The SBOM cannot bind a toolchain to a released binary
+**Severity: low-medium.** Annex I Part II (1). Depends on G-01.
 
-The SBOM records every crate but not the `rustc` that compiled them. A consumer
-cannot tell from the SBOM whether a binary was built with a toolchain carrying a
-known compiler bug.
+`metadata.tools` records the `rustc` version and host triple that *resolved* the
+SBOM. That is not necessarily the toolchain that compiled a given release
+binary, and the SBOM says so rather than overclaiming. A consumer asking "was
+this binary built with a compiler carrying a known bug" therefore still cannot
+get an answer from the SBOM alone.
 
-*Action.* Add the resolved `rustc` version and host triple as a component in
-`metadata.tools` or as a `metadata.component` property in `sbom/generate.py`.
-This is a small change to a file this package owns and should be done next.
+*Action.* Closing this needs a release pipeline (G-01) that pins its toolchain
+and emits the SBOM from the same job that produces the binaries, so that the
+recorded `rustc` is the one that did the compiling.
 
 ---
 
@@ -442,23 +444,22 @@ specifically, which is where a review has the most value per hour spent.
 
 ---
 
-### G-18 · Documentation cross-reference to a threat-model section that may not exist
-**Severity: low, but it is exactly the kind of drift this project says it does
-not tolerate.**
+### G-18 · *(closed 2026-08-31)* Threat model coverage of the managed Kopia download
 
-`crates/core/src/model.rs`, in the `KopiaManagement` documentation, points the
-reader at `docs/compliance/THREAT_MODEL.md` **§A8** for the supply-chain
-reasoning behind the managed Kopia download. At the time this package was
-written, `THREAT_MODEL.md` version 1 contained adversaries A1 through A7 and no
-A8; the Kopia binary is addressed in §3 (out of scope) and §7 (what we inherit
-from Kopia).
+Raised while this package was being written: `crates/core/src/model.rs` pointed
+the reader at `THREAT_MODEL.md` **§A8** for the supply-chain reasoning behind
+the managed Kopia download, and the threat model had adversaries A1 through A7
+only.
 
-*Action.* Either add §A8 to the threat model covering the managed-download
-supply-chain path — the analysis exists, in the module documentation of
-`crates/core/src/kopia/install.rs` and in R-13 of
-[`RISK_ASSESSMENT.md`](RISK_ASSESSMENT.md) — or correct the cross-reference in
-`model.rs`. `THREAT_MODEL.md` and `crates/**` are outside this package's
-ownership. If §A8 has landed since, this gap closes with a tick.
+**Closed.** §A8 "A malicious `kopia` binary" has since landed, promoting the
+Kopia binary from an operational caveat to an in-scope adversary and stating the
+residual — the checksum is verified, `checksums.txt.sig` is not — and §3 now
+excludes *"a compromise of the Kopia project or of GitHub itself"* rather than
+"a malicious kopia binary". R-13 in
+[`RISK_ASSESSMENT.md`](RISK_ASSESSMENT.md) is written to agree with it.
+
+Kept in the list rather than deleted, because a gap list that only ever grows is
+easier to trust than one that quietly rewrites itself.
 
 ---
 
@@ -492,4 +493,4 @@ here usually changes a residual rating in
 
 | Version | Date | Change |
 |---|---|---|
-| 1 | 2026-08-31 | Initial checklist for 0.1.0. 18 gaps identified. |
+| 1 | 2026-08-31 | Initial checklist for 0.1.0. 18 gaps identified, one (G-18) closed the same day. |

@@ -25,7 +25,11 @@ fn options(scope: ServiceScope, account: ServiceAccount) -> ServiceOptions {
         account,
         scope,
         ..ServiceOptions::new(
-            if cfg!(windows) { r"C:\Program Files\superbackup\superbackup.exe" } else { "/usr/bin/superbackup" },
+            if cfg!(windows) {
+                r"C:\Program Files\superbackup\superbackup.exe"
+            } else {
+                "/usr/bin/superbackup"
+            },
             &paths,
         )
     }
@@ -124,7 +128,8 @@ fn a_user_scoped_unit_reaches_everything_the_user_can() {
 
 #[test]
 fn the_system_unit_can_read_every_home_but_write_none_of_them() {
-    let unit = service::render_systemd_unit(&options(ServiceScope::System, ServiceAccount::LocalSystem));
+    let unit =
+        service::render_systemd_unit(&options(ServiceScope::System, ServiceAccount::LocalSystem));
 
     // The mistake that breaks a backup daemon: ProtectHome=yes hides exactly
     // the files the user cares about.
@@ -141,7 +146,8 @@ fn the_system_unit_can_read_every_home_but_write_none_of_them() {
 
 #[test]
 fn the_user_unit_does_not_lock_the_user_out_of_their_own_home() {
-    let unit = service::render_systemd_unit(&options(ServiceScope::User, ServiceAccount::LocalSystem));
+    let unit =
+        service::render_systemd_unit(&options(ServiceScope::User, ServiceAccount::LocalSystem));
     assert!(!unit.contains("ProtectHome"), "{unit}");
     assert!(!unit.contains("ProtectSystem=strict"));
     assert!(unit.contains("WantedBy=default.target"));
@@ -162,10 +168,7 @@ fn exec_start_quotes_a_path_with_spaces() {
     let paths = Paths::rooted_at("/var/lib/superbackup", true);
     let opts = ServiceOptions::new("/opt/super backup/bin/superbackup", &paths);
     let unit = service::render_systemd_unit(&opts);
-    let exec = unit
-        .lines()
-        .find_map(|l| l.strip_prefix("ExecStart="))
-        .expect("an ExecStart line");
+    let exec = unit.lines().find_map(|l| l.strip_prefix("ExecStart=")).expect("an ExecStart line");
     assert!(exec.starts_with('"'), "systemd splits on whitespace: {exec}");
     assert!(exec.contains("/opt/super backup/bin/superbackup"));
     assert!(exec.contains("--service"));
@@ -268,10 +271,7 @@ fn installing_without_elevation_gives_an_actionable_error() {
 #[test]
 #[ignore = "installs and removes a real service; needs Administrator (Windows) or root (Unix)"]
 fn install_start_stop_uninstall_round_trip() {
-    assert!(
-        service::is_elevated(),
-        "run this test from an elevated shell, or it proves nothing"
-    );
+    assert!(service::is_elevated(), "run this test from an elevated shell, or it proves nothing");
     let paths = Paths::for_service().expect("service paths");
     let mut opts = ServiceOptions::current(&paths).expect("current exe");
     opts.name = "superbackup-selftest".into();
@@ -300,10 +300,8 @@ fn a_failed_install_leaves_nothing_behind() {
     let mut opts = ServiceOptions::current(&paths).expect("current exe");
     opts.name = "superbackup-selftest-broken".into();
     // An account that cannot possibly exist: the SCM rejects it at create time.
-    opts.account = ServiceAccount::User {
-        username: r".\superbackup-no-such-account".into(),
-        password: None,
-    };
+    opts.account =
+        ServiceAccount::User { username: r".\superbackup-no-such-account".into(), password: None };
 
     let _ = service::install(&opts);
     let status = service::status(&opts.name, opts.scope).expect("status");

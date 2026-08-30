@@ -213,8 +213,7 @@ mod tests {
     #[test]
     fn eu_transition_dates_are_correct() {
         // Last Sundays: 2025-03-30 and 2025-10-26.
-        let (start, end) =
-            DstZone::EuropeStockholm.transitions_utc(2025).expect("transitions");
+        let (start, end) = DstZone::EuropeStockholm.transitions_utc(2025).expect("transitions");
         assert_eq!(start, naive("2025-03-30 01:00:00"));
         assert_eq!(end, naive("2025-10-26 01:00:00"));
     }
@@ -236,7 +235,10 @@ mod tests {
         ));
         // 01:59 is still CET, 03:00 is already CEST.
         let before = tz.from_local_datetime(&naive("2025-03-30 01:59:00")).single().expect("cet");
-        assert_eq!(before.with_timezone(&Utc), Utc.with_ymd_and_hms(2025, 3, 30, 0, 59, 0).unwrap());
+        assert_eq!(
+            before.with_timezone(&Utc),
+            Utc.with_ymd_and_hms(2025, 3, 30, 0, 59, 0).unwrap()
+        );
         let after = tz.from_local_datetime(&naive("2025-03-30 03:00:00")).single().expect("cest");
         assert_eq!(after.with_timezone(&Utc), Utc.with_ymd_and_hms(2025, 3, 30, 1, 0, 0).unwrap());
     }

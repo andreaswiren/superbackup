@@ -101,8 +101,8 @@ cyclonedx-cli validate --input-file sbom/superbackup-0.1.0.cdx.json
 
 ## Reproducibility
 
-Two runs over the same `Cargo.lock` with the same `cargo-cyclonedx` produce the
-same bytes:
+Two runs over the same `Cargo.lock` with the same `cargo-cyclonedx` and the same
+`rustc` produce the same bytes:
 
 - the timestamp comes from `SOURCE_DATE_EPOCH`, or failing that from the commit
   date of `HEAD`, never from the wall clock;

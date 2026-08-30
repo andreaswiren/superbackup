@@ -38,8 +38,7 @@ impl Home {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or_default();
-        let dir = std::env::temp_dir()
-            .join(format!("sb-it-{tag}-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sb-it-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         Home(dir)
     }
@@ -238,10 +237,7 @@ fn a_rotation_with_the_wrong_old_passphrase_changes_nothing() {
     assert_eq!(v.sealed_bytes(), before.as_slice(), "the sealed bytes must be untouched");
     assert_eq!(v.header().kdf.salt, salt_before, "the salt must be untouched");
     assert!(!v.is_locked(), "a failed rotation must not lock the user out of an open vault");
-    assert_eq!(
-        v.get(&SecretRef("a:1".into())).expect("get").expect("present").expose(),
-        b"value"
-    );
+    assert_eq!(v.get(&SecretRef("a:1".into())).expect("get").expect("present").expose(), b"value");
     assert!(Vault::unlock(&before, &pass("correct")).is_ok());
     assert!(matches!(Vault::unlock(&before, &pass("attacker")), Err(Error::BadPassphrase)));
 }
@@ -270,9 +266,8 @@ fn a_locked_vault_can_still_be_rotated_and_stays_locked() {
     let bytes = v.seal().expect("seal");
 
     let mut locked = Vault::open_locked(&bytes).expect("parse");
-    let rotated = locked
-        .change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE)
-        .expect("rotate");
+    let rotated =
+        locked.change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE).expect("rotate");
     assert!(locked.is_locked(), "rotating must not open a vault the caller kept closed");
 
     let reopened = Vault::unlock(rotated.sealed_bytes(), &pass("new")).expect("unlock");
@@ -316,14 +311,11 @@ fn rotation_on_disk_backs_up_first_and_the_backup_still_opens() {
     let home = Home::new("rotate");
     let paths = home.paths();
     let mut file = VaultFile::create_from(&paths, vault("old")).expect("create");
-    file.vault_mut()
-        .put(SecretRef("s3.access:1".into()), Secret::from_str("AKIA"))
-        .expect("put");
+    file.vault_mut().put(SecretRef("s3.access:1".into()), Secret::from_str("AKIA")).expect("put");
     file.save().expect("save");
 
-    let rekey = file
-        .change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE)
-        .expect("rotate");
+    let rekey =
+        file.change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE).expect("rotate");
     assert!(rekey.recovery_backup().is_some(), "the recovery anchor must be recorded");
 
     let live = std::fs::read(file.path()).expect("read live");

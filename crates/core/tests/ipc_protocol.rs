@@ -30,8 +30,9 @@ use superbackup_core::ipc::protocol::{
     StatusReply, StoppedReply, StorageStatsReply, SubscribedReply, UnlockedReply, UsedByReply,
     VersionReply,
 };
-use superbackup_core::ipc::{ClientFrame, ServerFrame, Topic, MIN_PROTOCOL_VERSION,
-    PROTOCOL_VERSION};
+use superbackup_core::ipc::{
+    ClientFrame, ServerFrame, Topic, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
+};
 use superbackup_core::model::{
     BandwidthSettings, Destination, DestinationKind, EncryptionSettings, ExclusionSet, Job,
     JobHooks, ProviderKind, RetentionPolicy, S3Credentials, S3Flavour, Schedule, SecretRef,
@@ -181,11 +182,7 @@ fn sample_requests() -> Vec<Request> {
             session_token: None,
         },
         // snapshots
-        Request::SnapshotList {
-            destination: "drive".into(),
-            job: None,
-            limit: 50,
-        },
+        Request::SnapshotList { destination: "drive".into(), job: None, limit: 50 },
         Request::SnapshotBrowse {
             destination: "drive".into(),
             snapshot: "k1234".into(),
@@ -323,11 +320,7 @@ fn sample_replies() -> Vec<Reply> {
         }),
         Reply::UsedBy(UsedByReply { destinations: vec![], jobs: vec![] }),
         Reply::Snapshots(SnapshotsReply { snapshots: vec![] }),
-        Reply::Listing(ListingReply {
-            path: String::new(),
-            entries: vec![],
-            truncated: false,
-        }),
+        Reply::Listing(ListingReply { path: String::new(), entries: vec![], truncated: false }),
         Reply::Unlocked(UnlockedReply { unlocked: true, auto_lock_at: None }),
         Reply::SecretRefs(SecretRefsReply {
             refs: vec![SecretRef::new("s3-access-key", &Uuid::nil())],
@@ -352,10 +345,7 @@ fn sample_replies() -> Vec<Reply> {
             scope: "system".into(),
             detail: None,
         }),
-        Reply::Subscribed(SubscribedReply {
-            subscription: RequestId(7),
-            topics: Topic::all(),
-        }),
+        Reply::Subscribed(SubscribedReply { subscription: RequestId(7), topics: Topic::all() }),
     ]
 }
 
@@ -368,13 +358,10 @@ fn every_request_round_trips_through_json() {
     for request in sample_requests() {
         let json = serde_json::to_string(&request)
             .unwrap_or_else(|e| panic!("{} failed to serialise: {e}", request.command()));
-        let back: Request = serde_json::from_str(&json)
-            .unwrap_or_else(|e| panic!("{} failed to deserialise from {json}: {e}", request.command()));
-        assert_eq!(
-            back.command(),
-            request.command(),
-            "round trip changed the command: {json}"
-        );
+        let back: Request = serde_json::from_str(&json).unwrap_or_else(|e| {
+            panic!("{} failed to deserialise from {json}: {e}", request.command())
+        });
+        assert_eq!(back.command(), request.command(), "round trip changed the command: {json}");
 
         // The wire form must carry the command under `cmd`, flat, so that a
         // request can be written by hand.
@@ -572,11 +559,8 @@ fn schema_describes_replies_error_codes_topics_and_limits() {
 fn schema_marks_secrets_and_mutations() {
     let schema = protocol::schema();
 
-    let unlock = schema
-        .commands
-        .iter()
-        .find(|c| c.name == "vault.unlock")
-        .expect("vault.unlock must exist");
+    let unlock =
+        schema.commands.iter().find(|c| c.name == "vault.unlock").expect("vault.unlock must exist");
     let passphrase =
         unlock.params.iter().find(|p| p.name == "passphrase").expect("passphrase parameter");
     assert!(passphrase.secret, "the passphrase parameter must be flagged secret");
@@ -622,10 +606,7 @@ fn a_passphrase_never_appears_in_debug_output() {
 
     let request = Request::VaultUnlock { passphrase: secret(PASSPHRASE) };
     let rendered = format!("{request:?}");
-    assert!(
-        !rendered.contains(PASSPHRASE),
-        "Debug for Request leaked the passphrase: {rendered}"
-    );
+    assert!(!rendered.contains(PASSPHRASE), "Debug for Request leaked the passphrase: {rendered}");
     assert!(rendered.contains("redacted"), "expected a redaction marker: {rendered}");
 
     // The same must hold once it is wrapped in a frame, which is what a
@@ -703,8 +684,8 @@ fn there_is_no_request_that_reads_a_secret_back() {
 fn protocol_version_mismatch_is_rejected_with_an_actionable_message() {
     protocol::check_protocol(PROTOCOL_VERSION).expect("the current version must be accepted");
 
-    let too_new = protocol::check_protocol(PROTOCOL_VERSION + 1)
-        .expect_err("a newer client must be refused");
+    let too_new =
+        protocol::check_protocol(PROTOCOL_VERSION + 1).expect_err("a newer client must be refused");
     assert_eq!(too_new.code(), ErrorCode::Ipc);
     let message = too_new.to_string();
     assert!(message.contains("upgrade the daemon"), "unhelpful message: {message}");
@@ -716,10 +697,7 @@ fn protocol_version_mismatch_is_rejected_with_an_actionable_message() {
     if MIN_PROTOCOL_VERSION > 0 {
         let too_old = protocol::check_protocol(MIN_PROTOCOL_VERSION - 1)
             .expect_err("an older client must be refused");
-        assert!(
-            too_old.to_string().contains("upgrade the client"),
-            "unhelpful message: {too_old}"
-        );
+        assert!(too_old.to_string().contains("upgrade the client"), "unhelpful message: {too_old}");
     }
 }
 
@@ -733,7 +711,12 @@ fn outbound_frames_are_scrubbed() {
 
     let frame = ServerFrame::Error {
         id: RequestId(1),
-        body: ErrorPayload { code: ErrorCode::Remote, message: leaky.into(), hint: None, detail: None },
+        body: ErrorPayload {
+            code: ErrorCode::Remote,
+            message: leaky.into(),
+            hint: None,
+            detail: None,
+        },
     }
     .sanitise();
     let json = serde_json::to_string(&frame).expect("serialise");

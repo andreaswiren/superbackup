@@ -83,16 +83,13 @@ jobs:
           python -m pip install --quiet jsonschema referencing lxml
           python sbom/generate.py --validate
 
-      # The regenerated files must be identical to the committed ones. --check
-      # compares content; this compares bytes, and catches a generator change
-      # that alters formatting without altering the component set.
-      - name: Fail if regeneration changed the committed files
-        run: |
-          if ! git diff --quiet -- sbom/; then
-            echo "::error::sbom/ is out of date. Run 'python sbom/generate.py' and commit the result."
-            git --no-pager diff --stat -- sbom/
-            exit 1
-          fi
+      # Deliberately no byte-for-byte diff against the committed files here.
+      # The BOM records the rustc that resolved it, and this job runs on a
+      # floating stable toolchain, so a compiler release would turn every
+      # subsequent push red for a reason that has nothing to do with what the
+      # product contains. The --check step above compares what actually
+      # matters: the component set, the dependency edges and the product
+      # version. See "Verifying" in sbom/README.md.
 
       - name: Upload SBOM
         uses: actions/upload-artifact@v4

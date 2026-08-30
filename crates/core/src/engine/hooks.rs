@@ -302,7 +302,8 @@ mod tests {
 
     #[tokio::test]
     async fn failing_hook_reports_its_status() {
-        let outcome = runner().run(HookKind::Before, "exit 3", &context(), &CancelToken::new()).await;
+        let outcome =
+            runner().run(HookKind::Before, "exit 3", &context(), &CancelToken::new()).await;
         assert!(!outcome.succeeded());
         assert_eq!(outcome.exit_code, Some(3));
     }
@@ -316,13 +317,9 @@ mod tests {
     #[tokio::test]
     async fn a_hanging_hook_is_killed_by_the_timeout() {
         // A command that would otherwise run for two minutes.
-        let command = if cfg!(windows) {
-            "ping -n 120 127.0.0.1 > nul"
-        } else {
-            "sleep 120"
-        };
-        let runner = HookRunner::new(Arc::new(SystemClock::new()))
-            .with_timeout(Duration::milliseconds(300));
+        let command = if cfg!(windows) { "ping -n 120 127.0.0.1 > nul" } else { "sleep 120" };
+        let runner =
+            HookRunner::new(Arc::new(SystemClock::new())).with_timeout(Duration::milliseconds(300));
         let started = std::time::Instant::now();
         let outcome = runner.run(HookKind::Before, command, &context(), &CancelToken::new()).await;
         assert!(outcome.timed_out, "{outcome:?}");

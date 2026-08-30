@@ -92,11 +92,16 @@ impl Paths {
     /// supports them. Safe to call repeatedly.
     pub fn ensure(&self) -> Result<()> {
         for dir in [&self.config_dir, &self.data_dir, &self.log_dir, &self.cache_dir] {
-            std::fs::create_dir_all(dir)
-                .ctx(format!("creating directory {}", dir.display()))?;
+            std::fs::create_dir_all(dir).ctx(format!("creating directory {}", dir.display()))?;
         }
+        // Logs and cache are hardened too. Logs carry third-party output from
+        // kopia and git, which redaction is a safety net for rather than a
+        // guarantee, so they are exactly as interesting to another local user
+        // as the config is.
         harden_dir(&self.config_dir)?;
         harden_dir(&self.data_dir)?;
+        harden_dir(&self.log_dir)?;
+        harden_dir(&self.cache_dir)?;
         Ok(())
     }
 
@@ -195,8 +200,8 @@ pub fn harden_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let meta = std::fs::metadata(path)
-            .ctx(format!("reading permissions of {}", path.display()))?;
+        let meta =
+            std::fs::metadata(path).ctx(format!("reading permissions of {}", path.display()))?;
         let mut perms = meta.permissions();
         if perms.mode() & 0o077 != 0 {
             perms.set_mode(0o700);
@@ -236,6 +241,21 @@ pub fn harden_file(path: &Path) -> Result<()> {
 /// then rename over the target. A crash leaves either the old file or the new
 /// one, never a truncated mixture — which for the vault is the difference
 /// between an inconvenience and a total loss of every repository key.
+///
+/// # Two mistakes this function used to make
+///
+/// Both were found by adversarial review, and both could destroy a vault.
+///
+/// 1. It unlinked the destination first on Windows, believing `rename` could
+///    not replace an existing file. That is **false**: `std::fs::rename` maps
+///    to `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` and replaces the
+///    destination atomically. The unlink was not merely redundant — it opened
+///    a window in which the vault existed nowhere, and a sharing violation
+///    from an antivirus scanner holding the temp file (an ordinary event on
+///    Windows) turned that window into permanent loss.
+/// 2. Its error path deleted the temporary file. Combined with (1) that
+///    destroyed *both* copies. The temp file is now deliberately left behind
+///    on failure, under a recognisable name, so a human can recover from it.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     use std::io::Write;
 
@@ -244,32 +264,47 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         .ok_or_else(|| Error::Path { path: path.into(), reason: "has no parent".into() })?;
     std::fs::create_dir_all(dir).ctx(format!("creating {}", dir.display()))?;
 
+    // Random suffix, not just the pid: two writers in one process targeting the
+    // same file would otherwise collide on one temp path, and the second
+    // `create` would truncate the first's buffer mid-write.
     let tmp = dir.join(format!(
-        ".{}.tmp-{}",
+        ".{}.tmp-{}-{:08x}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
-        std::process::id()
+        std::process::id(),
+        rand::random::<u32>()
     ));
 
     {
-        let mut f = std::fs::File::create(&tmp)
-            .ctx(format!("creating temporary file {}", tmp.display()))?;
+        // Create with restrictive permissions from the outset rather than
+        // widening then narrowing: the previous ordering wrote the plaintext
+        // bytes under the default umask and only chmod'd afterwards, leaving a
+        // window in which the file was world-readable.
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp).ctx(format!("creating temporary file {}", tmp.display()))?;
         f.write_all(contents).ctx("writing temporary file")?;
         f.flush().ctx("flushing temporary file")?;
         f.sync_all().ctx("syncing temporary file")?;
     }
     harden_file(&tmp)?;
 
-    // Windows `rename` fails if the destination exists, so replace explicitly.
-    #[cfg(windows)]
-    {
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-
+    // `rename` replaces the destination atomically on every supported platform.
+    // Nothing is unlinked first, so the target always names either the old
+    // contents or the new ones. On failure the temp file survives.
     std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        Error::io(format!("replacing {}", path.display()), e)
+        Error::io(
+            format!(
+                "replacing {} (the new contents were written to {} and have been left there)",
+                path.display(),
+                tmp.display()
+            ),
+            e,
+        )
     })?;
 
     // Fsync the directory so the rename itself is durable (no-op on Windows).

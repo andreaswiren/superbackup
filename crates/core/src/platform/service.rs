@@ -104,10 +104,9 @@ impl Clone for ServiceAccount {
             ServiceAccount::LocalSystem => ServiceAccount::LocalSystem,
             ServiceAccount::LocalService => ServiceAccount::LocalService,
             ServiceAccount::NetworkService => ServiceAccount::NetworkService,
-            ServiceAccount::User { username, password } => ServiceAccount::User {
-                username: username.clone(),
-                password: password.clone(),
-            },
+            ServiceAccount::User { username, password } => {
+                ServiceAccount::User { username: username.clone(), password: password.clone() }
+            }
         }
     }
 }
@@ -197,7 +196,11 @@ impl ServiceOptions {
             account: ServiceAccount::LocalSystem,
             scope: ServiceScope::System,
             start_mode: StartMode::AutomaticDelayed,
-            state_dirs: vec![paths.data_dir.clone(), paths.log_dir.clone(), paths.cache_dir.clone()],
+            state_dirs: vec![
+                paths.data_dir.clone(),
+                paths.log_dir.clone(),
+                paths.cache_dir.clone(),
+            ],
         }
     }
 
@@ -506,9 +509,9 @@ mod platform_impl {
     use std::ffi::OsString;
     use std::time::Duration;
     use windows_service::service::{
-        ServiceAccess, ServiceAction, ServiceActionType, ServiceErrorControl, ServiceFailureActions,
-        ServiceFailureResetPeriod, ServiceInfo, ServiceStartType, ServiceState as WinState,
-        ServiceType,
+        ServiceAccess, ServiceAction, ServiceActionType, ServiceErrorControl,
+        ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo, ServiceStartType,
+        ServiceState as WinState, ServiceType,
     };
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
@@ -527,7 +530,8 @@ mod platform_impl {
     }
 
     pub fn install(options: &ServiceOptions) -> Result<()> {
-        let manager = manager(ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)?;
+        let manager =
+            manager(ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)?;
 
         let password = match &options.account {
             ServiceAccount::User { password: Some(secret), .. } => {
@@ -594,10 +598,7 @@ mod platform_impl {
                     action_type: ServiceActionType::Restart,
                     delay: Duration::from_secs(300),
                 },
-                ServiceAction {
-                    action_type: ServiceActionType::None,
-                    delay: Duration::ZERO,
-                },
+                ServiceAction { action_type: ServiceActionType::None, delay: Duration::ZERO },
             ]),
         };
         if let Err(e) = service.update_failure_actions(actions) {
@@ -637,9 +638,7 @@ mod platform_impl {
             }
         }
 
-        service
-            .delete()
-            .map_err(|e| Error::Service(describe_scm_error("removing the service", &e)))
+        service.delete().map_err(|e| Error::Service(describe_scm_error("removing the service", &e)))
     }
 
     pub fn start(name: &str, _scope: ServiceScope) -> Result<()> {
@@ -1067,9 +1066,7 @@ mod platform_impl {
 
     fn unit_path(name: &str, scope: ServiceScope) -> Result<PathBuf> {
         match scope {
-            ServiceScope::System => {
-                Ok(PathBuf::from("/etc/systemd/system").join(unit_name(name)))
-            }
+            ServiceScope::System => Ok(PathBuf::from("/etc/systemd/system").join(unit_name(name))),
             ServiceScope::User => {
                 let base = directories::BaseDirs::new()
                     .ok_or_else(|| Error::Config("no home directory for this user".into()))?;
@@ -1157,9 +1154,8 @@ mod platform_impl {
             return Ok(ServiceStatus::not_installed());
         }
         let target = format!("{}/{LAUNCH_DAEMON_LABEL}", domain(scope));
-        let output = std::process::Command::new("launchctl")
-            .args(["print", target.as_str()])
-            .output();
+        let output =
+            std::process::Command::new("launchctl").args(["print", target.as_str()]).output();
         let mut status = match output {
             Ok(o) => super::parse_launchctl_print(&String::from_utf8_lossy(&o.stdout)),
             Err(_) => ServiceStatus::not_installed(),
@@ -1169,8 +1165,8 @@ mod platform_impl {
             status.state = ServiceState::Stopped;
         }
         if let Ok(text) = std::fs::read_to_string(&path) {
-            status.executable = super::super::autostart::parse_launch_agent_command(&text)
-                .map(|c| {
+            status.executable =
+                super::super::autostart::parse_launch_agent_command(&text).map(|c| {
                     PathBuf::from(
                         super::super::autostart::parse_desktop_exec(&c)
                             .first()
@@ -1431,10 +1427,7 @@ pub fn parse_systemctl_show(text: &str) -> ServiceStatus {
             .map(PathBuf::from)
     });
 
-    let pid = fields
-        .get("MainPID")
-        .and_then(|p| p.parse::<u32>().ok())
-        .filter(|p| *p != 0);
+    let pid = fields.get("MainPID").and_then(|p| p.parse::<u32>().ok()).filter(|p| *p != 0);
 
     ServiceStatus {
         installed: true,
@@ -1685,7 +1678,8 @@ mod tests {
 
     #[test]
     fn launch_daemon_plist_keeps_the_daemon_alive() {
-        let plist = render_launch_daemon(&options(ServiceScope::System, ServiceAccount::LocalSystem));
+        let plist =
+            render_launch_daemon(&options(ServiceScope::System, ServiceAccount::LocalSystem));
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("<key>Label</key>"));
         assert!(plist.contains("io.superbackup.daemon"));

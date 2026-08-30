@@ -99,8 +99,7 @@ impl ValidationReport {
         if self.errors.is_empty() {
             return Ok(self);
         }
-        let joined =
-            self.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+        let joined = self.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
         Err(Error::Validation(format!("configuration is not valid: {joined}")))
     }
 }
@@ -172,7 +171,10 @@ fn validate_identity(config: &Config, report: &mut ValidationReport) {
         report.error("machine.slug", "the machine slug is what keeps this PC's backups separate from every other PC's inside a shared destination; it cannot be empty");
     }
     if config.machine.label.trim().is_empty() {
-        report.warn("machine.label", "this machine has no label; it will be hard to identify in a shared destination");
+        report.warn(
+            "machine.label",
+            "this machine has no label; it will be hard to identify in a shared destination",
+        );
     }
 }
 
@@ -222,10 +224,8 @@ fn validate_providers(config: &Config, report: &mut ValidationReport) {
             );
         }
         if config.destinations_using(&provider.id).is_empty() {
-            report.warn(
-                format!("providers[{}]", provider.name),
-                "no destination uses this provider",
-            );
+            report
+                .warn(format!("providers[{}]", provider.name), "no destination uses this provider");
         }
     }
 }
@@ -501,7 +501,10 @@ fn validate_remote(config: &Config, report: &mut ValidationReport) {
         report.error("remote.path", "the path to the vault inside the repository cannot be empty");
     }
     if remote.auto_pull && remote.pull_interval_minutes == 0 {
-        report.error("remote.pull_interval_minutes", "an automatic pull interval of zero would poll continuously");
+        report.error(
+            "remote.pull_interval_minutes",
+            "an automatic pull interval of zero would poll continuously",
+        );
     }
     if let RemoteAuth::Token { token_ref } = &remote.auth {
         if token_ref.as_str().trim().is_empty() {
@@ -551,9 +554,10 @@ pub fn migrate(mut value: Value) -> Result<(Value, Vec<String>)> {
     // runs on the raw document.
     let mut version = match value.get("schema_version") {
         None => 0,
-        Some(Value::Number(n)) => n.as_u64().ok_or_else(|| {
-            Error::Config("schema_version is not a non-negative integer".into())
-        })? as u32,
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .ok_or_else(|| Error::Config("schema_version is not a non-negative integer".into()))?
+            as u32,
         Some(_) => return Err(Error::Config("schema_version is not a number".into())),
     };
 
@@ -612,9 +616,8 @@ fn migrate_0_to_1(value: &mut Value, notes: &mut Vec<String>) -> Result<()> {
         let identity = serde_json::to_value(model::MachineIdentity::default())
             .map_err(|e| Error::Config(format!("could not build a machine identity: {e}")))?;
         object.insert("machine".into(), identity);
-        notes.push(
-            "this configuration predates machine identities; a new one was generated".into(),
-        );
+        notes
+            .push("this configuration predates machine identities; a new one was generated".into());
     }
 
     let mut normalised = 0usize;
@@ -706,8 +709,8 @@ impl ConfigStore {
             return Ok((Config::default(), LoadOutcome::default(), ValidationReport::default()));
         }
 
-        let metadata = std::fs::metadata(&path)
-            .ctx(format!("reading metadata of {}", path.display()))?;
+        let metadata =
+            std::fs::metadata(&path).ctx(format!("reading metadata of {}", path.display()))?;
         if metadata.len() > MAX_CONFIG_BYTES {
             return Err(Error::Config(format!(
                 "{} is {} bytes; the maximum is {MAX_CONFIG_BYTES}",
@@ -720,12 +723,12 @@ impl ConfigStore {
         let raw: Value = serde_json::from_slice(&bytes)
             .map_err(|e| Error::Config(format!("{} is not valid JSON: {e}", path.display())))?;
 
-        let found_version =
-            raw.get("schema_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let found_version = raw.get("schema_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
         let (migrated_value, notes) = migrate(raw)?;
 
-        let mut config: Config = serde_json::from_value(migrated_value)
-            .map_err(|e| Error::Config(format!("{} is not a valid configuration: {e}", path.display())))?;
+        let mut config: Config = serde_json::from_value(migrated_value).map_err(|e| {
+            Error::Config(format!("{} is not a valid configuration: {e}", path.display()))
+        })?;
         normalise(&mut config);
 
         let report = validate(&config);
@@ -1065,8 +1068,7 @@ impl Store {
     pub fn change_passphrase(&mut self, old: &Secret, new: &Secret) -> Result<Rekey> {
         let derived = self.derived_repositories();
         if !derived.is_empty() {
-            let names: Vec<&str> =
-                derived.iter().map(|r| r.destination_name.as_str()).collect();
+            let names: Vec<&str> = derived.iter().map(|r| r.destination_name.as_str()).collect();
             return Err(Error::Validation(format!(
                 "{} repositor{} derive their password from the master passphrase and would \
                  become unopenable if it changed without them ({}). Use \
@@ -1159,11 +1161,7 @@ impl Store {
 /// [`model::PassphraseSource`] and dispatches accordingly.
 pub fn destination_passphrase(store: &Store, destination: &Destination) -> Result<Secret> {
     use model::PassphraseSource::*;
-    let source = destination
-        .encryption
-        .as_ref()
-        .map(|e| e.passphrase_source)
-        .unwrap_or(Generated);
+    let source = destination.encryption.as_ref().map(|e| e.passphrase_source).unwrap_or(Generated);
     match source {
         DerivedFromMaster => store.vault().derive_repo_passphrase(&destination.id),
         Generated | UserSupplied => {

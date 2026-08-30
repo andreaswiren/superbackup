@@ -90,10 +90,11 @@ Stated so the boundary is honest rather than implied.
 - **The operating system.** Windows system DLLs, macOS frameworks, and libc are
   not components superbackup ships or chooses. The `windows` crate's bindings
   are in the SBOM; `kernel32.dll` is not.
-- **The Rust toolchain.** The compiler and standard library that produced a
-  given binary are recorded by the release build, not by this SBOM. There is no
-  `metadata.component` entry for `rustc`. This is a gap; see
-  [`cra/CONFORMITY_CHECKLIST.md`](cra/CONFORMITY_CHECKLIST.md).
+- **The toolchain that compiled a release binary.** `metadata.tools` records
+  the `rustc` version and host triple that *resolved* the SBOM, which is not
+  necessarily the one that compiled any given binary. Binding a toolchain to a
+  binary requires a release build pipeline, which does not exist yet; see the
+  gap list in [`cra/CONFORMITY_CHECKLIST.md`](cra/CONFORMITY_CHECKLIST.md).
 - **Kopia's own dependency tree.** Kopia is a Go program with its own graph.
   superbackup's SBOM identifies Kopia as a component; it does not restate
   Kopia's SBOM. A consumer who needs that should take it from the Kopia

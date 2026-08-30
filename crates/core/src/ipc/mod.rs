@@ -47,11 +47,19 @@
 //!   **fails** rather than falling back to an open pipe.
 //! * **Unix.** The socket is created mode `0600` inside a `0700` directory,
 //!   and every accepted connection's `SO_PEERCRED` uid is compared against the
-//!   daemon's own effective uid. A different user is disconnected before a
-//!   byte is read.
+//!   daemon's own effective uid. This check **fails closed**: a peer whose
+//!   credentials cannot be read, or that reports no uid, is disconnected
+//!   before a byte is read, exactly like one belonging to another user.
+//!   Platforms that refuse `fchmod` on a socket (macOS) are bound under a
+//!   restrictive `umask` instead, and the resulting mode is verified rather
+//!   than assumed.
 //! * **Both.** Oversized lines close the connection, requests are rate limited
-//!   per connection, total connections are capped, and a slow subscriber is
-//!   made to drop items rather than allowed to grow a queue inside the daemon.
+//!   per connection, total connections are capped, silent connections are
+//!   reclaimed so the cap cannot be squatted, subscriptions are capped per
+//!   connection, password-based key derivations are gated process-wide so a
+//!   client cannot turn `vault.unlock` into an out-of-memory kill, and a slow
+//!   subscriber is made to drop items rather than allowed to grow a queue
+//!   inside the daemon.
 //!
 //! What the transport does *not* do is treat "reached the socket" as
 //! "authorised to act as SYSTEM". Anything that touches secret material
@@ -147,6 +155,49 @@ pub struct Limits {
     /// difference from a hang.
     pub max_connections: usize,
 
+    /// Live subscriptions one connection may hold at once.
+    ///
+    /// `subscribe` is answered by the transport, so [`max_inflight`] never
+    /// bounds it: without this cap one connection could open a new pump task
+    /// and a new `broadcast::Receiver` for every request id it can push past
+    /// the rate limiter — 180 000 an hour at the default rate — and every
+    /// published event is fanned out once per receiver, so the damage lands on
+    /// the engine's event publishing as well as on memory.
+    ///
+    /// Eight is generous: a GUI needs one, `superbackup watch` needs one, and
+    /// nothing legitimate needs a third on the same socket.
+    ///
+    /// [`max_inflight`]: Limits::max_inflight
+    pub max_subscriptions: usize,
+
+    /// How long a freshly accepted connection may stay silent before it is
+    /// closed, measured from accept until the first line of any kind.
+    ///
+    /// A connection permit is held for the life of the connection, so without
+    /// this a client that connects [`max_connections`] times and then says
+    /// nothing locks every other process out of the daemon until it restarts.
+    /// This is the same control an SSH server's `LoginGraceTime` provides, and
+    /// it is short because on a local socket a client that has something to
+    /// say says it in microseconds.
+    ///
+    /// A blank line counts, so any client that cannot speak yet can still
+    /// prove it is alive. [`Client`](crate::ipc::Client) sends one the instant
+    /// it connects.
+    ///
+    /// [`max_connections`]: Limits::max_connections
+    pub handshake_timeout: std::time::Duration,
+
+    /// How long an established connection may stay silent before it is closed.
+    ///
+    /// Resets on every line received, blank ones included. Generous, because
+    /// once a client has proved it speaks the protocol the cost of keeping its
+    /// slot is one task and a small buffer; the point is only that a slot is
+    /// never held forever by something that has gone away without closing its
+    /// socket — a half-open TCP-style hang that the OS will not report.
+    ///
+    /// [`Client`](crate::ipc::Client) keeps itself alive automatically.
+    pub idle_timeout: std::time::Duration,
+
     /// Frames queued for one connection before producers are made to wait.
     ///
     /// The writer task owns the socket and everything else reaches it through
@@ -177,6 +228,27 @@ pub struct Limits {
     pub max_inflight: usize,
 }
 
+/// Key derivations that may run in this process at once, across every
+/// connection and every server.
+///
+/// **Deliberately not a field of [`Limits`].** It bounds a physical resource —
+/// Argon2id is configured for 256 MiB per derivation — rather than a policy,
+/// and a daemon that could be configured to allow 512 concurrent derivations
+/// would be configurable into a 128 GiB allocation. `max_inflight` (16) times
+/// `max_connections` (32) is exactly that number, and the rate limiter's burst
+/// fills those slots in microseconds, so nothing else in this file bounds it.
+///
+/// Two, so an interactive unlock is not queued behind a background one.
+pub const MAX_CONCURRENT_KDF: usize = 2;
+
+/// How long a connection is held after a key-derivation request *fails*.
+///
+/// Costs a legitimate user nothing — a correct passphrase never waits — and
+/// removes the rate advantage an online guesser would otherwise get from a
+/// local socket. Combined with the per-connection serialisation of
+/// key-derivation requests, one connection gets at most one guess per second.
+pub const KDF_FAILURE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl Default for Limits {
     fn default() -> Self {
         Limits {
@@ -184,6 +256,9 @@ impl Default for Limits {
             max_requests_per_second: 50,
             request_burst: 100,
             max_connections: 32,
+            max_subscriptions: 8,
+            handshake_timeout: std::time::Duration::from_secs(1),
+            idle_timeout: std::time::Duration::from_secs(300),
             stream_buffer: 512,
             handler_timeout: std::time::Duration::from_secs(120),
             max_inflight: 16,

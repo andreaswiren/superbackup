@@ -141,12 +141,9 @@ pub fn refresh(identity: &mut MachineIdentity) -> Vec<Event> {
     let os_version = detect_os_version();
     if os_version != identity.os_version {
         events.push(
-            Event::info(
-                "machine.os_updated",
-                format!("Operating system is now {os_version}"),
-            )
-            .with_field("previous", identity.os_version.clone())
-            .with_field("current", os_version.clone()),
+            Event::info("machine.os_updated", format!("Operating system is now {os_version}"))
+                .with_field("previous", identity.os_version.clone())
+                .with_field("current", os_version.clone()),
         );
         identity.os_version = os_version;
     }
@@ -425,10 +422,9 @@ pub fn write_manifest_at(
     let mut record = match read_record(&path) {
         Some(mut existing) => {
             if existing.label != identity.label {
-                existing.previous_labels.push(LabelChange {
-                    label: existing.label.clone(),
-                    changed_at: now,
-                });
+                existing
+                    .previous_labels
+                    .push(LabelChange { label: existing.label.clone(), changed_at: now });
                 // Bound the history: a script renaming the machine in a loop
                 // must not grow the record without limit.
                 let len = existing.previous_labels.len();
@@ -562,10 +558,7 @@ pub fn render_readme(machines: &[MachineRecord], generated: DateTime<Utc>) -> St
     if machines.is_empty() {
         lines.push("No computer has finished writing a backup here yet.".into());
     } else {
-        lines.push(format!(
-            "Computers backing up here ({}):",
-            machines.len()
-        ));
+        lines.push(format!("Computers backing up here ({}):", machines.len()));
         lines.push(String::new());
         for m in machines {
             lines.push(format!("  Folder:      {}", m.slug));
@@ -575,10 +568,7 @@ pub fn render_readme(machines: &[MachineRecord], generated: DateTime<Utc>) -> St
             }
             let os = if m.os_version.is_empty() { m.os.clone() } else { m.os_version.clone() };
             lines.push(format!("  System:      {os} ({})", m.arch));
-            lines.push(format!(
-                "  First seen:  {}",
-                m.first_seen.format("%Y-%m-%d")
-            ));
+            lines.push(format!("  First seen:  {}", m.first_seen.format("%Y-%m-%d")));
             lines.push(format!(
                 "  Last backup: {} ({} days ago)",
                 m.last_seen.format("%Y-%m-%d %H:%M UTC"),
@@ -637,9 +627,7 @@ pub fn write_manifest_for_destinations(
         .filter_map(|d| match &d.kind {
             DestinationKind::LocalRepository { path }
             | DestinationKind::OneDrive { path, .. }
-            | DestinationKind::LocalMirror { path } => {
-                Some((d.id, write_manifest(path, identity)))
-            }
+            | DestinationKind::LocalMirror { path } => Some((d.id, write_manifest(path, identity))),
             DestinationKind::S3 { .. } => None,
         })
         .collect()
