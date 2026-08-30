@@ -98,8 +98,8 @@ impl DstZone {
         }
     }
 
-    fn wrap(&self, seconds: i32) -> Option<DstOffset> {
-        FixedOffset::east_opt(seconds).map(|offset| DstOffset { zone: *self, offset })
+    fn wrap(&self, seconds: i32) -> DstOffset {
+        DstOffset { zone: *self, seconds }
     }
 }
 
@@ -109,18 +109,31 @@ impl DstZone {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DstOffset {
     zone: DstZone,
-    offset: FixedOffset,
+    /// Seconds east of UTC. Held as an integer so that construction is
+    /// infallible: `FixedOffset::east_opt` returns an `Option`, and a trait
+    /// method that must return an offset has nowhere to put the error.
+    seconds: i32,
+}
+
+impl DstOffset {
+    fn fixed(&self) -> FixedOffset {
+        // Only `|seconds| < 86_400` is accepted; every value this module
+        // produces is within ±6 hours, so the fallback is unreachable. It is
+        // spelled out rather than unwrapped because the engine forbids panics
+        // outside tests.
+        FixedOffset::east_opt(self.seconds).unwrap_or_else(|| chrono::Utc.fix())
+    }
 }
 
 impl Offset for DstOffset {
     fn fix(&self) -> FixedOffset {
-        self.offset
+        self.fixed()
     }
 }
 
 impl std::fmt::Display for DstOffset {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.offset, f)
+        std::fmt::Display::fmt(&self.fixed(), f)
     }
 }
 
@@ -149,39 +162,25 @@ impl TimeZone for DstZone {
         let std_ok = as_std.map(|u| !self.is_daylight(u)).unwrap_or(false);
         let dst_ok = as_dst.map(|u| self.is_daylight(u)).unwrap_or(false);
         match (std_ok, dst_ok) {
-            (true, false) => match self.wrap(std_secs) {
-                Some(o) => MappedLocalTime::Single(o),
-                None => MappedLocalTime::None,
-            },
-            (false, true) => match self.wrap(dst_secs) {
-                Some(o) => MappedLocalTime::Single(o),
-                None => MappedLocalTime::None,
-            },
+            (true, false) => MappedLocalTime::Single(self.wrap(std_secs)),
+            (false, true) => MappedLocalTime::Single(self.wrap(dst_secs)),
             // Fold. `Ambiguous` is ordered (earliest, latest); the earliest
             // UTC instant is the one reached with the *larger* offset, i.e.
             // still on daylight time.
-            (true, true) => match (self.wrap(dst_secs), self.wrap(std_secs)) {
-                (Some(first), Some(second)) => MappedLocalTime::Ambiguous(first, second),
-                _ => MappedLocalTime::None,
-            },
+            (true, true) => MappedLocalTime::Ambiguous(self.wrap(dst_secs), self.wrap(std_secs)),
             (false, false) => MappedLocalTime::None,
         }
     }
 
     fn offset_from_utc_date(&self, utc: &NaiveDate) -> DstOffset {
-        let dt = utc.and_hms_opt(0, 0, 0).unwrap_or_else(|| {
-            // `and_hms_opt(0,0,0)` cannot fail for a valid `NaiveDate`; fall
-            // back to the epoch rather than panicking in a trait impl.
-            NaiveDate::from_ymd_opt(1970, 1, 1)
-                .and_then(|d| d.and_hms_opt(0, 0, 0))
-                .unwrap_or_default()
-        });
+        // `and_hms_opt(0, 0, 0)` cannot fail for a valid `NaiveDate`; falling
+        // back to the epoch keeps this panic-free either way.
+        let dt = utc.and_hms_opt(0, 0, 0).unwrap_or_default();
         self.offset_from_utc_datetime(&dt)
     }
 
     fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> DstOffset {
-        let secs = self.offset_seconds_for_utc(*utc);
-        self.wrap(secs).unwrap_or(DstOffset { zone: *self, offset: FixedOffset::east_opt(0).unwrap_or_default() })
+        self.wrap(self.offset_seconds_for_utc(*utc))
     }
 }
 
