@@ -147,12 +147,17 @@ pub struct Limits {
     /// difference from a hang.
     pub max_connections: usize,
 
-    /// Items buffered for one subscriber before the oldest are dropped.
+    /// Frames queued for one connection before producers are made to wait.
     ///
-    /// The number that decides how far behind a client may fall before it is
-    /// told it missed something. Large enough that a GUI redrawing at 60Hz
-    /// never lags; small enough that a stopped debugger costs the daemon a
-    /// few hundred kilobytes rather than everything.
+    /// The writer task owns the socket and everything else reaches it through
+    /// a channel this deep. It decides how far behind a client may fall before
+    /// backpressure reaches the subscription pump, which is where the
+    /// broadcast channel starts dropping the oldest items and emitting
+    /// [`StreamItem::Lagged`].
+    ///
+    /// Large enough that a GUI redrawing at 60Hz never lags; small enough that
+    /// a client stopped in a debugger costs the daemon a few hundred kilobytes
+    /// rather than everything.
     pub stream_buffer: usize,
 
     /// How long a handler may take before the transport gives up on it and

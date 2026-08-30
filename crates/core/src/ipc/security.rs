@@ -147,7 +147,8 @@ fn own_uid() -> Option<u32> {
 /// Decide whether an accepted connection may proceed, and describe its peer.
 ///
 /// `Err` means "hang up now". `Ok` means the connection is allowed; the
-/// returned [`PeerIdentity`] is recorded on every [`RequestContext`] so the
+/// returned [`PeerIdentity`] is recorded on every
+/// [`RequestContext`](super::RequestContext) so the
 /// daemon can attribute actions in its event log.
 ///
 /// Failing to *obtain* credentials is not by itself grounds for refusal: some
@@ -163,7 +164,10 @@ pub fn verify_peer(stream: &interprocess::local_socket::tokio::Stream) -> Result
         Err(_) => return Ok(PeerIdentity::default()),
     };
 
-    let pid = creds.pid().map(|p| p as u32);
+    // `Pid` is `u32` on Windows and `pid_t` (`i32`) on unix. Widening to `i64`
+    // first is lossless from either, and narrowing back is a real, checked
+    // conversion on both — so this needs no `cfg` and no lint exception.
+    let pid = creds.pid().and_then(|p| u32::try_from(i64::from(p)).ok());
 
     #[cfg(unix)]
     {

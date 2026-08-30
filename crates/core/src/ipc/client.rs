@@ -43,7 +43,7 @@ use interprocess::local_socket::tokio::prelude::*;
 use interprocess::local_socket::tokio::Stream;
 use interprocess::local_socket::GenericFilePath;
 use tokio::io::BufReader;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::error::{Error, ErrorCode, Result};
 use crate::state::StatusSnapshot;
@@ -54,7 +54,7 @@ use super::protocol::{
     StatusReply, StreamItem, Topic, UnlockedReply, VersionReply,
 };
 use super::schema::Schema;
-use super::{Limits, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
+use super::{MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
 
 /// Default ceiling on one request/response round trip.
 ///
@@ -70,6 +70,15 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 /// stalls loses the oldest items and is told, rather than growing a queue in
 /// the client process.
 const SUBSCRIPTION_DEPTH: usize = 256;
+
+/// Largest response line this client will accept.
+///
+/// Deliberately larger than the request cap the daemon enforces: requests are
+/// small and hostile input arrives on that side, whereas a legitimate
+/// response — a status snapshot, a long snapshot listing, the schema — is the
+/// big direction. The cap still exists, because a client should not be
+/// destroyed by whatever is on the other end of a socket either.
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 /// What the daemon said about itself when the connection opened.
 #[derive(Debug, Clone)]
@@ -108,6 +117,16 @@ struct Inner {
     hello: Hello,
     endpoint: String,
     timeout: Duration,
+    /// Never sent on. Its *drop* is the signal: when the last [`Client`] and
+    /// the last [`Subscription`] are gone, this sender goes with them, the
+    /// read loop's `changed()` resolves with an error, and the receive half of
+    /// the socket is released.
+    ///
+    /// Without it the read loop would hold the connection open for the life of
+    /// the process: dropping only the send half does not close a split
+    /// `interprocess` stream, so the daemon would keep serving a client that
+    /// no longer exists.
+    _closed: watch::Sender<bool>,
 }
 
 /// An asynchronous, cloneable connection to the daemon.
@@ -156,7 +175,7 @@ impl Client {
         let mut line = Vec::with_capacity(1024);
 
         // The daemon greets first. Anything else is not a daemon we know.
-        codec::read_line(&mut reader, &mut line, Limits::default().max_line_bytes)
+        codec::read_line(&mut reader, &mut line, MAX_RESPONSE_BYTES)
             .await
             .map_err(|e| match e {
                 LineError::Eof => Error::DaemonUnreachable,
@@ -195,6 +214,7 @@ impl Client {
 
         let (outbound, mut outbox) = mpsc::channel::<ClientFrame>(64);
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+        let (closed, closed_rx) = watch::channel(false);
 
         // Writer: sole owner of the send half.
         tokio::spawn(async move {
@@ -208,9 +228,8 @@ impl Client {
         // Reader: sole owner of the receive half, and the only thing that
         // resolves a pending request.
         let reader_pending = Arc::clone(&pending);
-        let max_line = Limits::default().max_line_bytes;
         tokio::spawn(async move {
-            read_loop(reader, line, reader_pending, max_line).await;
+            read_loop(reader, line, reader_pending, closed_rx).await;
         });
 
         Ok(Client {
@@ -221,6 +240,7 @@ impl Client {
                 hello,
                 endpoint: endpoint.to_string(),
                 timeout,
+                _closed: closed,
             }),
         })
     }
@@ -273,7 +293,7 @@ impl Client {
     /// Send a request and await its typed reply.
     ///
     /// A daemon-side failure comes back as an [`Error`] carrying the same
-    /// [`ErrorCode`](crate::error::ErrorCode) the daemon sent, so a caller can
+    /// [`ErrorCode`] the daemon sent, so a caller can
     /// branch on `error.code()` exactly as it would in-process.
     pub async fn request(&self, request: Request) -> Result<Reply> {
         let id = self.inner.next_request_id();
@@ -349,6 +369,7 @@ impl Client {
             topics: confirmed.topics,
             items: items_rx,
             outbound: self.inner.outbound.clone(),
+            _connection: self.clone(),
         })
     }
 
@@ -438,16 +459,23 @@ async fn read_loop<R>(
     mut reader: BufReader<R>,
     mut line: Vec<u8>,
     pending: PendingMap,
-    max_line: usize,
+    mut closed: watch::Receiver<bool>,
 ) where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut goodbye: Option<String> = None;
 
     loop {
-        match codec::read_line(&mut reader, &mut line, max_line).await {
-            Ok(()) => {}
-            Err(_) => break,
+        tokio::select! {
+            // The last handle to this connection went away; release the socket
+            // instead of holding it open on the daemon for nobody.
+            _ = closed.changed() => break,
+
+            read = codec::read_line(&mut reader, &mut line, MAX_RESPONSE_BYTES) => {
+                if read.is_err() {
+                    break;
+                }
+            }
         }
         if line.is_empty() {
             continue;
@@ -560,6 +588,10 @@ pub struct Subscription {
     topics: Vec<Topic>,
     items: mpsc::Receiver<StreamItem>,
     outbound: mpsc::Sender<ClientFrame>,
+    /// Held, never read: its only job is to keep the connection alive for as
+    /// long as anyone is listening, so a caller can drop the [`Client`] and
+    /// keep the stream — which is exactly what `superbackup watch` does.
+    _connection: Client,
 }
 
 impl Subscription {

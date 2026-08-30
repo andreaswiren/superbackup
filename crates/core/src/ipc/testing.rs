@@ -300,7 +300,7 @@ impl Handler for MockHandler {
                 hint: None,
                 fixable: false,
             }],
-            fixed: if fix { vec![] } else { vec![] },
+            fixed: if fix { vec!["kopia.present".to_string()] } else { vec![] },
         })
     }
 

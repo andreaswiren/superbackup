@@ -85,10 +85,6 @@ use super::{MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
 /// hold its slot denies it to a working one.
 const WRITE_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Frames that may sit in the writer's queue. Small: the queue exists to
-/// decouple producers from one socket write, not to store a backlog.
-const WRITE_QUEUE_DEPTH: usize = 64;
-
 /// Consecutive rate-limit violations before the connection is closed.
 ///
 /// One violation is a burst; sixty-four in a row is a client in a spin loop,
@@ -100,9 +96,11 @@ const MAX_RATE_VIOLATIONS: u32 = 64;
 /// Prevents a permanently broken listener from spinning a core.
 const MAX_ACCEPT_FAILURES: u32 = 16;
 
-/// How the server is configured. Everything has a defensible default; a
-/// daemon that just wants to serve does not have to name any of it.
-#[derive(Debug, Clone)]
+/// How the server is configured.
+///
+/// Every field has a defensible default, so a daemon that just wants to serve
+/// can write `ServerOptions::default()` and get the safe behaviour.
+#[derive(Debug, Clone, Default)]
 pub struct ServerOptions {
     /// Transport limits. See [`Limits`].
     pub limits: Limits,
@@ -115,12 +113,6 @@ pub struct ServerOptions {
     /// ([`crate::paths::Paths::lock_file`]); this flag exists for the
     /// recovery case where a crashed daemon left a corpse socket behind.
     pub replace_existing: bool,
-}
-
-impl Default for ServerOptions {
-    fn default() -> Self {
-        ServerOptions { limits: Limits::default(), replace_existing: false }
-    }
 }
 
 /// A remote control for a running [`Server`].
@@ -182,7 +174,7 @@ impl<H: Handler> Server<H> {
     /// reactor as it is created.
     ///
     /// Access control is applied *before* the endpoint becomes visible — see
-    /// [`security`](super::security). If it cannot be applied, this fails
+    /// [`security`]. If it cannot be applied, this fails
     /// rather than opening an endpoint anyone could reach.
     pub fn bind(endpoint: &str, handler: Arc<H>, options: ServerOptions) -> Result<Server<H>> {
         security::prepare_endpoint(endpoint)?;
@@ -424,7 +416,10 @@ async fn serve_connection<H: Handler>(
     };
 
     let (recv_half, mut send_half) = stream.split();
-    let (tx, mut rx) = mpsc::channel::<ServerFrame>(WRITE_QUEUE_DEPTH);
+    // `stream_buffer` frames may sit here before producers feel backpressure.
+    // This is the published limit, so what a client is told matches what it
+    // gets.
+    let (tx, mut rx) = mpsc::channel::<ServerFrame>(limits.stream_buffer.max(1));
     let out = Outbound(tx);
 
     // Sole owner of the send half.
@@ -472,16 +467,11 @@ async fn connection_loop<H: Handler>(
     let mut subscriptions: std::collections::HashMap<RequestId, tokio::task::JoinHandle<()>> =
         std::collections::HashMap::new();
 
-    // A connection accepted in the instant before shutdown was requested has
-    // a receiver that already considers `true` seen, so `changed()` would
-    // never fire for it. Check the value directly first.
-    if *shutdown.borrow() {
-        let _ = out.send(ServerFrame::Bye { reason: "the daemon is shutting down".into() }).await;
-        return Ok(());
-    }
-
     // Greet unprompted, so a client learns the protocol range before it sends
-    // anything — including before it sends a passphrase.
+    // anything — including before it sends a passphrase. Sent even to a
+    // connection that is about to be turned away, so the client's own
+    // handshake completes and it reports "the daemon stopped" rather than
+    // "that was not a superbackup daemon".
     if out
         .send(ServerFrame::Hello {
             protocol: PROTOCOL_VERSION,
@@ -492,6 +482,14 @@ async fn connection_loop<H: Handler>(
         .await
         .is_err()
     {
+        return Ok(());
+    }
+
+    // A connection accepted in the instant before shutdown was requested has a
+    // receiver that already considers `true` seen, so `changed()` below would
+    // never fire for it. Check the value directly once.
+    if *shutdown.borrow() {
+        let _ = out.send(ServerFrame::Bye { reason: "the daemon is shutting down".into() }).await;
         return Ok(());
     }
 
