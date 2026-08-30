@@ -304,10 +304,17 @@ mod tests {
     use crate::crypto::kdf::KdfParams;
 
     fn envelope() -> Envelope {
+        // Realistic cost parameters, so that "an attacker lowers memory_kib"
+        // is an actual change rather than a no-op. Nothing here runs the KDF.
+        let kdf = KdfParams {
+            memory_kib: 256 * 1024,
+            iterations: 3,
+            ..KdfParams::insecure_for_tests().expect("kdf")
+        };
         Envelope {
             magic: MAGIC.into(),
             format_version: FORMAT_VERSION,
-            header: VaultHeader::new(KdfParams::insecure_for_tests().expect("kdf")),
+            header: VaultHeader::new(kdf),
             nonce: vec![7u8; NONCE_LEN],
             ciphertext: vec![9u8; 64],
             signature: None,
@@ -356,7 +363,7 @@ mod tests {
         assert_ne!(base, reidentified.associated_data().expect("id"), "vault identity");
 
         let mut retimed = e.clone();
-        retimed.header.updated_at = retimed.header.updated_at + chrono::Duration::seconds(1);
+        retimed.header.updated_at += chrono::Duration::seconds(1);
         assert_ne!(base, retimed.associated_data().expect("time"), "rollback of updated_at");
 
         let mut reversioned = e;

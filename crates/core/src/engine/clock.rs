@@ -102,6 +102,12 @@ struct TestClockInner {
     /// advancing time, which is what removes the last race from these tests.
     sleepers: tokio::sync::watch::Sender<usize>,
     sleeper_count: AtomicUsize,
+    /// Total sleeps ever started. Monotonic, and therefore the value a test
+    /// should synchronise on: the concurrent count can transiently still
+    /// include a sleeper that has woken but not yet been dropped, which makes
+    /// "wait for the *next* sleep" ambiguous. "wait until N sleeps have ever
+    /// happened" never is.
+    total_sleeps: tokio::sync::watch::Sender<u64>,
 }
 
 /// A manually advanced clock.
@@ -127,8 +133,14 @@ impl TestClock {
     pub fn new(start: DateTime<Utc>) -> TestClock {
         let (now, _) = tokio::sync::watch::channel(start);
         let (sleepers, _) = tokio::sync::watch::channel(0usize);
+        let (total_sleeps, _) = tokio::sync::watch::channel(0u64);
         TestClock {
-            inner: Arc::new(TestClockInner { now, sleepers, sleeper_count: AtomicUsize::new(0) }),
+            inner: Arc::new(TestClockInner {
+                now,
+                sleepers,
+                sleeper_count: AtomicUsize::new(0),
+                total_sleeps,
+            }),
         }
     }
 
@@ -182,13 +194,36 @@ impl TestClock {
         self.inner.sleeper_count.load(Ordering::SeqCst)
     }
 
-    /// Wait until at least `n` futures are parked on this clock.
+    /// Wait until at least `n` futures are parked on this clock *right now*.
+    ///
+    /// Prefer [`TestClock::wait_for_sleeps`] when the test drives several
+    /// deadlines in sequence; see the note on `total_sleeps`.
+    pub async fn wait_for_sleepers(&self, n: usize) {
+        let mut rx = self.inner.sleepers.subscribe();
+        loop {
+            if *rx.borrow_and_update() >= n {
+                return;
+            }
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// How many sleeps have ever started on this clock.
+    pub fn total_sleeps(&self) -> u64 {
+        *self.inner.total_sleeps.borrow()
+    }
+
+    /// Wait until at least `n` sleeps have started since the clock was created.
     ///
     /// This is the deterministic replacement for `yield_now()` sprinkling: a
     /// test advances time only once the component under test has committed to
-    /// a deadline, so there is no window in which the advance is missed.
-    pub async fn wait_for_sleepers(&self, n: usize) {
-        let mut rx = self.inner.sleepers.subscribe();
+    /// its `n`-th deadline, so there is no window in which the advance is
+    /// missed and none in which a previous sleeper is mistaken for the next
+    /// one.
+    pub async fn wait_for_sleeps(&self, n: u64) {
+        let mut rx = self.inner.total_sleeps.subscribe();
         loop {
             if *rx.borrow_and_update() >= n {
                 return;
@@ -208,6 +243,7 @@ struct SleeperGuard(Arc<TestClockInner>);
 impl SleeperGuard {
     fn new(inner: Arc<TestClockInner>) -> SleeperGuard {
         let n = inner.sleeper_count.fetch_add(1, Ordering::SeqCst) + 1;
+        inner.total_sleeps.send_modify(|total| *total += 1);
         let _ = inner.sleepers.send(n);
         SleeperGuard(inner)
     }

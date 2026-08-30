@@ -1,0 +1,440 @@
+//! The vault on disk: atomic writes, timestamped backups, and pruning.
+//!
+//! Everything in [`super::vault`] is pure: bytes in, bytes out. This module is
+//! the only place that touches the filesystem, which keeps the cryptography
+//! testable without a temp directory and keeps the "did we lose the file?"
+//! reasoning in one readable place.
+//!
+//! # The rule
+//!
+//! Losing `config.sbvault` loses every repository passphrase, and therefore
+//! every backup, permanently. So: **never overwrite the vault without first
+//! copying the current bytes into [`crate::paths::Paths::vault_backup_dir`]**,
+//! and never write the live file non-atomically. Both invariants are enforced
+//! here rather than left to callers.
+
+use super::vault::Vault;
+use crate::error::{Error, IoContext, Result};
+use crate::paths::{self, Paths};
+use crate::secret::Secret;
+use chrono::Utc;
+use std::path::{Path, PathBuf};
+
+/// How many rotation backups to keep.
+///
+/// Each is a few kilobytes, so the cost of keeping them is nil, and the value
+/// of the oldest one is "the user rotated their passphrase four times last
+/// month and can no longer remember which one they actually committed to".
+/// Ten is deep enough to survive a bad week and shallow enough that the
+/// directory stays readable.
+pub const BACKUP_KEEP: usize = 10;
+
+/// Prefix of every backup file name.
+const BACKUP_PREFIX: &str = "config.sbvault.";
+
+/// Why a backup was taken. Ends up in the file name, so a user browsing the
+/// directory can tell a routine save from a passphrase rotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupReason {
+    /// Before a passphrase rotation.
+    Rekey,
+    /// Before replacing the local vault with one pulled from a remote.
+    RemotePull,
+    /// Explicitly requested by the user.
+    Manual,
+}
+
+impl BackupReason {
+    fn tag(&self) -> &'static str {
+        match self {
+            BackupReason::Rekey => "rekey",
+            BackupReason::RemotePull => "pull",
+            BackupReason::Manual => "manual",
+        }
+    }
+}
+
+/// A vault bound to a location on disk.
+#[derive(Debug)]
+pub struct VaultFile {
+    path: PathBuf,
+    backup_dir: PathBuf,
+    vault: Vault,
+}
+
+impl VaultFile {
+    /// Load the vault from `paths`, without unlocking it.
+    pub fn load(paths: &Paths) -> Result<VaultFile> {
+        let path = paths.vault_file();
+        let bytes = std::fs::read(&path)
+            .ctx(format!("reading the vault at {}", path.display()))?;
+        Ok(VaultFile {
+            vault: Vault::open_locked(&bytes)?,
+            path,
+            backup_dir: paths.vault_backup_dir(),
+        })
+    }
+
+    /// Whether a vault exists at this location. Drives first-run detection.
+    pub fn exists(paths: &Paths) -> bool {
+        paths.vault_file().is_file()
+    }
+
+    /// Create a new vault and write it. Refuses to clobber an existing file:
+    /// "create" must never be a way to destroy every key on the machine.
+    pub fn create(paths: &Paths, passphrase: &Secret) -> Result<VaultFile> {
+        Self::create_from(paths, Vault::create(passphrase)?)
+    }
+
+    /// [`VaultFile::create`] from an already-built vault, so the settings
+    /// screen can hand in calibrated KDF parameters.
+    pub fn create_from(paths: &Paths, mut vault: Vault) -> Result<VaultFile> {
+        let path = paths.vault_file();
+        if path.exists() {
+            return Err(Error::Path {
+                path: path.clone(),
+                reason: "a vault already exists here; refusing to overwrite it".into(),
+            });
+        }
+        paths.ensure()?;
+        let bytes = vault.seal()?;
+        paths::write_atomic(&path, &bytes)?;
+        paths::harden_file(&path)?;
+        Ok(VaultFile { path, backup_dir: paths.vault_backup_dir(), vault })
+    }
+
+    /// Adopt bytes that came from somewhere other than this file — a remote
+    /// pull, or a restore from backup — after they have already been verified.
+    ///
+    /// The caller is responsible for having decrypted the bytes successfully
+    /// first; see [`crate::remote`]. A backup of the current file is taken
+    /// before anything is replaced.
+    pub fn replace_with(&mut self, bytes: &[u8], reason: BackupReason) -> Result<()> {
+        let replacement = Vault::open_locked(bytes)?;
+        self.backup(reason)?;
+        paths::write_atomic(&self.path, replacement.sealed_bytes())?;
+        paths::harden_file(&self.path)?;
+        self.vault = replacement;
+        Ok(())
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn backup_dir(&self) -> &Path {
+        &self.backup_dir
+    }
+
+    pub fn vault(&self) -> &Vault {
+        &self.vault
+    }
+
+    pub fn vault_mut(&mut self) -> &mut Vault {
+        &mut self.vault
+    }
+
+    /// Seal and write, if anything changed. A no-op when the vault is clean,
+    /// so an idle daemon does not rewrite the file every minute.
+    pub fn save(&mut self) -> Result<()> {
+        if !self.vault.is_dirty() {
+            return Ok(());
+        }
+        let bytes = self.vault.seal()?;
+        paths::write_atomic(&self.path, &bytes)?;
+        paths::harden_file(&self.path)?;
+        Ok(())
+    }
+
+    /// Rotate the master passphrase: back up, re-key, write, prune.
+    ///
+    /// The ordering is the whole point.
+    ///
+    /// 1. Verify the old passphrase and produce the complete new ciphertext in
+    ///    memory ([`Vault::change_passphrase`] does both, or neither).
+    /// 2. Copy the *current* file into the backup directory.
+    /// 3. Write the new bytes atomically over the live file.
+    ///
+    /// A crash after step 2 leaves a valid old vault plus a backup of it. A
+    /// crash during step 3 leaves either the old file or the new one, because
+    /// [`crate::paths::write_atomic`] renames rather than truncates. There is
+    /// no interleaving that loses the keys.
+    pub fn change_passphrase(&mut self, old: &Secret, new: &Secret) -> Result<()> {
+        // Step 1 first: if the old passphrase is wrong we must not litter the
+        // backup directory with a copy on every mistyped attempt.
+        let bytes = self.vault.change_passphrase(old, new)?;
+        self.backup(BackupReason::Rekey)?;
+        paths::write_atomic(&self.path, &bytes)?;
+        paths::harden_file(&self.path)?;
+        self.prune_backups(BACKUP_KEEP)?;
+        Ok(())
+    }
+
+    /// Copy the current on-disk vault into the backup directory.
+    ///
+    /// Returns `Ok(None)` when there is nothing to back up yet.
+    pub fn backup(&self, reason: BackupReason) -> Result<Option<PathBuf>> {
+        if !self.path.exists() {
+            return Ok(None);
+        }
+        std::fs::create_dir_all(&self.backup_dir)
+            .ctx(format!("creating {}", self.backup_dir.display()))?;
+        paths::harden_dir(&self.backup_dir)?;
+
+        let bytes = std::fs::read(&self.path)
+            .ctx(format!("reading {} for backup", self.path.display()))?;
+
+        // Names are `config.sbvault.<UTC timestamp>-<counter>.<reason>`.
+        //
+        // The timestamp is fixed-width, big-endian and second-resolution; the
+        // three-digit counter disambiguates the several rotations a test — or
+        // an impatient user — can perform inside one second. Both fields are
+        // fixed width so that a plain lexicographic sort is a chronological
+        // sort, which is what [`VaultFile::list_backups`] relies on. The
+        // counter continues from the highest one still present rather than
+        // restarting at zero, so pruning cannot cause a later backup to sort
+        // before an earlier one.
+        let stamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let prefix = format!("{BACKUP_PREFIX}{stamp}-");
+        let next = self
+            .list_backups()?
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .filter_map(|n| n.strip_prefix(&prefix))
+            .filter_map(|rest| rest.split('.').next())
+            .filter_map(|counter| counter.parse::<u32>().ok())
+            .max()
+            .map(|max| max + 1)
+            .unwrap_or(0);
+        if next > 999 {
+            return Err(Error::Path {
+                path: self.backup_dir.clone(),
+                reason: "more than 1000 vault backups in a single second".into(),
+            });
+        }
+
+        let candidate =
+            self.backup_dir.join(format!("{prefix}{next:03}.{}", reason.tag()));
+        paths::write_atomic(&candidate, &bytes)?;
+        paths::harden_file(&candidate)?;
+        self.prune_backups(BACKUP_KEEP)?;
+        Ok(Some(candidate))
+    }
+
+    /// Every backup, newest first.
+    pub fn list_backups(&self) -> Result<Vec<PathBuf>> {
+        if !self.backup_dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut found: Vec<PathBuf> = Vec::new();
+        let entries = std::fs::read_dir(&self.backup_dir)
+            .ctx(format!("listing {}", self.backup_dir.display()))?;
+        for entry in entries {
+            let entry = entry.ctx("reading a backup directory entry")?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.starts_with(BACKUP_PREFIX) && entry.path().is_file() {
+                found.push(entry.path());
+            }
+        }
+        // The timestamp is fixed-width and lexicographically ordered, so a
+        // plain sort is a chronological sort — and unlike mtime it survives a
+        // copy, a restore, or a filesystem with coarse timestamps.
+        found.sort();
+        found.reverse();
+        Ok(found)
+    }
+
+    /// Delete all but the newest `keep` backups.
+    ///
+    /// Returns what was deleted, so the caller can log it. Failures to delete
+    /// an individual file are reported rather than ignored, but pruning never
+    /// touches the newest `keep` entries, so a partial failure can never
+    /// remove the backup you were about to need.
+    pub fn prune_backups(&self, keep: usize) -> Result<Vec<PathBuf>> {
+        let backups = self.list_backups()?;
+        let mut removed = Vec::new();
+        for stale in backups.into_iter().skip(keep) {
+            std::fs::remove_file(&stale)
+                .ctx(format!("removing stale backup {}", stale.display()))?;
+            removed.push(stale);
+        }
+        Ok(removed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::kdf::KdfParams;
+    use crate::model::SecretRef;
+
+    struct TempHome(PathBuf);
+
+    impl TempHome {
+        fn new(tag: &str) -> TempHome {
+            let dir = std::env::temp_dir().join(format!(
+                "sb-vaultfile-{tag}-{}-{:?}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            std::fs::create_dir_all(&dir).expect("temp dir");
+            TempHome(dir)
+        }
+        fn paths(&self) -> Paths {
+            Paths::rooted_at(&self.0, false)
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn new_vault(paths: &Paths, pass: &str) -> VaultFile {
+        let vault = Vault::create_unchecked(
+            &Secret::from_str(pass),
+            KdfParams::insecure_for_tests().expect("kdf"),
+        )
+        .expect("vault");
+        VaultFile::create_from(paths, vault).expect("create")
+    }
+
+    #[test]
+    fn create_refuses_to_clobber_an_existing_vault() {
+        let home = TempHome::new("clobber");
+        let paths = home.paths();
+        let _first = new_vault(&paths, "one");
+        let vault = Vault::create_unchecked(
+            &Secret::from_str("two"),
+            KdfParams::insecure_for_tests().expect("kdf"),
+        )
+        .expect("vault");
+        assert!(
+            VaultFile::create_from(&paths, vault).is_err(),
+            "creating over an existing vault would destroy every key on the machine"
+        );
+    }
+
+    #[test]
+    fn rotation_backs_up_before_it_overwrites() {
+        let home = TempHome::new("rotate");
+        let paths = home.paths();
+        let mut file = new_vault(&paths, "old-passphrase");
+        file.vault_mut()
+            .put(SecretRef("s3.access:1".into()), Secret::from_str("AKIA"))
+            .expect("put");
+        file.save().expect("save");
+        let before = std::fs::read(file.path()).expect("read");
+
+        file.change_passphrase(&Secret::from_str("old-passphrase"), &Secret::from_str("new-one"))
+            .expect("rotate");
+
+        let backups = file.list_backups().expect("list");
+        assert_eq!(backups.len(), 1, "exactly one backup for one rotation");
+        assert_eq!(
+            std::fs::read(&backups[0]).expect("read backup"),
+            before,
+            "the backup must be the pre-rotation bytes"
+        );
+
+        // The live file opens with the new passphrase and not the old one.
+        let bytes = std::fs::read(file.path()).expect("read");
+        assert!(Vault::unlock(&bytes, &Secret::from_str("new-one")).is_ok());
+        assert!(matches!(
+            Vault::unlock(&bytes, &Secret::from_str("old-passphrase")),
+            Err(Error::BadPassphrase)
+        ));
+        // And the backup still opens with the old one, which is the entire
+        // reason it exists.
+        let backup = std::fs::read(&backups[0]).expect("read backup");
+        assert!(Vault::unlock(&backup, &Secret::from_str("old-passphrase")).is_ok());
+    }
+
+    #[test]
+    fn a_failed_rotation_writes_nothing_at_all() {
+        let home = TempHome::new("failrotate");
+        let paths = home.paths();
+        let mut file = new_vault(&paths, "correct");
+        let before = std::fs::read(file.path()).expect("read");
+
+        let err = file
+            .change_passphrase(&Secret::from_str("wrong"), &Secret::from_str("whatever"))
+            .expect_err("must fail");
+        assert!(matches!(err, Error::BadPassphrase));
+
+        assert_eq!(std::fs::read(file.path()).expect("read"), before, "file must be untouched");
+        assert!(
+            file.list_backups().expect("list").is_empty(),
+            "a mistyped passphrase must not litter the backup directory"
+        );
+        assert!(Vault::unlock(&before, &Secret::from_str("correct")).is_ok());
+    }
+
+    #[test]
+    fn backups_are_pruned_newest_first() {
+        let home = TempHome::new("prune");
+        let paths = home.paths();
+        let file = new_vault(&paths, "pass");
+        for _ in 0..(BACKUP_KEEP + 5) {
+            file.backup(BackupReason::Manual).expect("backup");
+        }
+        let backups = file.list_backups().expect("list");
+        assert_eq!(backups.len(), BACKUP_KEEP);
+        // Newest first, and the newest is the one with the highest suffix.
+        let mut sorted = backups.clone();
+        sorted.sort();
+        sorted.reverse();
+        assert_eq!(backups, sorted);
+    }
+
+    #[test]
+    fn save_is_a_no_op_when_nothing_changed() {
+        let home = TempHome::new("nosave");
+        let paths = home.paths();
+        let mut file = new_vault(&paths, "pass");
+        let before = std::fs::read(file.path()).expect("read");
+        file.save().expect("save");
+        assert_eq!(std::fs::read(file.path()).expect("read"), before);
+
+        file.vault_mut().put(SecretRef("a:1".into()), Secret::from_str("x")).expect("put");
+        file.save().expect("save");
+        assert_ne!(std::fs::read(file.path()).expect("read"), before);
+    }
+
+    #[test]
+    fn replace_with_backs_up_first() {
+        let home = TempHome::new("replace");
+        let paths = home.paths();
+        let mut file = new_vault(&paths, "local");
+        let original = std::fs::read(file.path()).expect("read");
+
+        let mut other = Vault::create_unchecked(
+            &Secret::from_str("remote"),
+            KdfParams::insecure_for_tests().expect("kdf"),
+        )
+        .expect("vault");
+        let incoming = other.seal().expect("seal");
+
+        file.replace_with(&incoming, BackupReason::RemotePull).expect("replace");
+        assert_eq!(std::fs::read(file.path()).expect("read"), incoming);
+        let backups = file.list_backups().expect("list");
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(&backups[0]).expect("read"), original);
+    }
+
+    #[test]
+    fn replace_with_rejects_garbage_before_touching_the_file() {
+        let home = TempHome::new("replacebad");
+        let paths = home.paths();
+        let mut file = new_vault(&paths, "local");
+        let original = std::fs::read(file.path()).expect("read");
+        assert!(file.replace_with(b"definitely not a vault", BackupReason::RemotePull).is_err());
+        assert_eq!(std::fs::read(file.path()).expect("read"), original);
+        assert!(file.list_backups().expect("list").is_empty());
+    }
+}

@@ -112,7 +112,7 @@ impl MasterKeys {
         let mut out = Zeroizing::new([0u8; SUBKEY_LEN]);
         hk.expand(&info, out.as_mut())
             .map_err(|_| Error::Crypto("repo-passphrase expansion failed".into()))?;
-        Ok(encode_passphrase(out.as_ref()))
+        Ok(encode_passphrase(&out))
     }
 }
 
@@ -162,7 +162,7 @@ const GROUP: usize = 4;
 /// ```
 ///
 /// The 256 input bits are packed most-significant-bit first into 52 symbols of
-/// the [`ALPHABET`] (52 x 5 = 260 bits; the final symbol carries four zero
+/// the Crockford alphabet above (52 x 5 = 260 bits; the final symbol carries four zero
 /// padding bits in its low positions), then grouped in fours and joined with
 /// `-`. The result is 68 characters, carries the full 256 bits of the input,
 /// and contains only `A-Z`, `0-9` and `-`, so it survives every shell, every
@@ -212,7 +212,7 @@ pub fn encode_passphrase(key: &[u8; SUBKEY_LEN]) -> Secret {
 pub fn generate_passphrase() -> Result<Secret> {
     let mut key = Zeroizing::new([0u8; SUBKEY_LEN]);
     super::fill_random(key.as_mut())?;
-    Ok(encode_passphrase(key.as_ref()))
+    Ok(encode_passphrase(&key))
 }
 
 #[cfg(test)]
@@ -227,8 +227,8 @@ mod tests {
     fn subkeys_are_distinct() {
         let k = keys([7u8; 32], b"salty-salty-salty-salt");
         assert_ne!(k.vault_key(), k.signing_seed());
-        assert_ne!(k.vault_key().as_slice(), k.repo_root.as_ref().as_slice());
-        assert_ne!(k.signing_seed().as_slice(), k.repo_root.as_ref().as_slice());
+        assert_ne!(k.vault_key(), &*k.repo_root);
+        assert_ne!(k.signing_seed(), &*k.repo_root);
         assert_ne!(k.vault_key(), &[7u8; 32], "the master key must not be used directly");
     }
 
@@ -308,6 +308,6 @@ mod tests {
         let k = keys([0xde; 32], b"salt-salt-salt-salt");
         let rendered = format!("{k:?}");
         assert_eq!(rendered, "MasterKeys([redacted])");
-        assert!(!rendered.contains("de"));
+        assert!(!rendered.contains("dede"), "no key material may appear: {rendered}");
     }
 }

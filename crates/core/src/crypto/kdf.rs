@@ -95,7 +95,7 @@ pub const MAX_ITERATIONS: u32 = 64;
 /// Upper bound on lanes accepted when reading a header.
 pub const MAX_PARALLELISM: u32 = 64;
 
-/// Ceiling applied by [`KdfParams::calibrate`] (1 GiB).
+/// Ceiling applied by [`calibrate`] (1 GiB).
 ///
 /// Calibration measures one machine; the vault may be opened on a weaker one,
 /// possibly a low-memory VM or a service account with a job-object memory cap.
