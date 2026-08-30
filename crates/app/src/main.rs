@@ -17,6 +17,20 @@ fn main() -> std::process::ExitCode {
             println!("superbackup {} — tray mode not yet wired", superbackup_core::VERSION);
             std::process::ExitCode::SUCCESS
         }
+        Some(cli::Command::Schema) => {
+            // Always JSON: the command exists to be machine-read, so a
+            // caller should not have to remember to ask for it.
+            match cli::Schema::generate().to_json() {
+                Ok(json) => {
+                    println!("{json}");
+                    std::process::ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("superbackup: could not render schema: {e}");
+                    std::process::ExitCode::from(cli::exit::FAILED as u8)
+                }
+            }
+        }
         Some(cli::Command::Version) => {
             let info = superbackup_core::build_info();
             if parsed.global.json {

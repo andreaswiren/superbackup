@@ -229,7 +229,13 @@ impl Default for MachineIdentity {
 #[serde(default)]
 pub struct Settings {
     /// Explicit path to the kopia executable. `None` means "discover it".
+    ///
+    /// When set, superbackup uses exactly this binary and never manages it —
+    /// a user who has pinned their own build has said something deliberate,
+    /// and silently replacing it would be wrong.
     pub kopia_path: Option<PathBuf>,
+    #[serde(default)]
+    pub kopia: KopiaManagement,
     pub start_at_login: bool,
     pub start_minimised: bool,
     pub run_as_service: bool,
@@ -260,6 +266,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             kopia_path: None,
+            kopia: KopiaManagement::default(),
             start_at_login: true,
             start_minimised: true,
             run_as_service: false,
@@ -285,6 +292,104 @@ pub enum Theme {
     System,
     Light,
     Dark,
+}
+
+/// How superbackup looks after the `kopia` binary it depends on.
+///
+/// Kopia is a hard prerequisite: without it, repository destinations cannot
+/// work at all. Rather than presenting a new user with an installation errand,
+/// superbackup fetches a verified build from Kopia's own GitHub releases on
+/// first run and keeps it current.
+///
+/// That convenience is also a supply-chain decision, so it is bounded: the
+/// download must come from the pinned upstream repository, its SHA-256 must
+/// match the checksum file published with the same release, and the binary is
+/// only moved into place after verification. See
+/// `docs/compliance/THREAT_MODEL.md` §A8.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KopiaManagement {
+    /// Download and install kopia automatically when it is missing.
+    ///
+    /// On by default: a backup tool that cannot back up until the user has
+    /// completed a separate installation is a backup tool that does not run.
+    pub auto_install: bool,
+    /// Check GitHub for a newer kopia release and offer or apply the upgrade.
+    pub auto_update: UpdatePolicy,
+    /// Minimum hours between update checks. Prevents a machine that restarts
+    /// often from hammering the GitHub API, which is rate-limited per IP.
+    pub check_interval_hours: u32,
+    /// Upstream repository, as `owner/name`. Configurable so an organisation
+    /// can point at an internal mirror, but any change moves the trust anchor
+    /// and the interface says so.
+    pub source_repo: String,
+    /// Accept pre-release builds. Off by default.
+    pub allow_prerelease: bool,
+    /// Refuse to run against a kopia older than this. Guards against a
+    /// downgrade attack and against genuinely incompatible old releases.
+    pub minimum_version: String,
+    /// Pin an exact version and stop tracking latest, for reproducible
+    /// deployments.
+    pub pinned_version: Option<String>,
+    /// Prefer a kopia already on `PATH` over the managed one.
+    ///
+    /// True by default: if the user has installed kopia themselves, that is
+    /// the one they expect to be used.
+    pub prefer_system_binary: bool,
+    /// When the last update check happened, so `check_interval_hours` can be
+    /// honoured across restarts.
+    pub last_check_at: Option<DateTime<Utc>>,
+    /// The version currently installed under superbackup's own directory.
+    pub managed_version: Option<String>,
+}
+
+impl Default for KopiaManagement {
+    fn default() -> Self {
+        KopiaManagement {
+            auto_install: true,
+            auto_update: UpdatePolicy::Notify,
+            check_interval_hours: 24,
+            source_repo: "kopia/kopia".into(),
+            allow_prerelease: false,
+            // Kopia's snapshot JSON output and repository flags settled by
+            // 0.17; below that the driver's parsers cannot be relied upon.
+            minimum_version: "0.17.0".into(),
+            pinned_version: None,
+            prefer_system_binary: true,
+            last_check_at: None,
+            managed_version: None,
+        }
+    }
+}
+
+/// What to do when a newer kopia release exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdatePolicy {
+    /// Never check.
+    Off,
+    /// Check, and tell the user. Nothing is replaced without a decision.
+    ///
+    /// The default. Kopia is the component that reads and writes the
+    /// repository, so swapping it underneath a working setup without asking
+    /// is not a decision superbackup should make on the user's behalf.
+    #[default]
+    Notify,
+    /// Check and install, but never while a job is running.
+    Automatic,
+}
+
+impl UpdatePolicy {
+    pub fn checks_for_updates(&self) -> bool {
+        !matches!(self, UpdatePolicy::Off)
+    }
+    pub fn title(&self) -> &'static str {
+        match self {
+            UpdatePolicy::Off => "Never check",
+            UpdatePolicy::Notify => "Tell me when an update is available",
+            UpdatePolicy::Automatic => "Install updates automatically",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

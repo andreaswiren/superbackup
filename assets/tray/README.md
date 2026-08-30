@@ -1,5 +1,25 @@
 # Tray icons
 
+> **Status: superseded, pending reimplementation.**
+>
+> [`design/DESIGN_SYSTEM.md`](../../design/DESIGN_SYSTEM.md) §"Tray icons" is the
+> authoritative specification. The SVGs in this directory are an earlier
+> single-variant design and are kept only so the tray has something to render
+> until the specified set is built.
+>
+> The specified design is better, and the reason is worth recording. These icons
+> solve the light-taskbar/dark-taskbar problem by compromise: one mid-luminance
+> accent that scores an identical 3.83:1 against both backgrounds and is
+> therefore optimal against neither. The design system instead ships **two
+> variants per state** on Windows and swaps them on the `SystemUsesLightTheme`
+> preference, so each variant can be genuinely high-contrast on the taskbar it
+> is actually drawn on. It also moves state onto a neutral ring silhouette with
+> a small chromatic pip, which survives macOS template rendering — where colour
+> is stripped entirely — rather than merely surviving greyscale.
+>
+> What carries over unchanged is the principle below: shape, not colour, is what
+> distinguishes the states.
+
 Five states, one per variant of `superbackup_core::state::Health`. The stem of
 each file matches `Health::icon_stem()`, so the tray code resolves an icon by
 asking the health value for its name rather than by matching on it again.
