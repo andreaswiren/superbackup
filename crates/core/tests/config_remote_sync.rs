@@ -128,6 +128,32 @@ fn published(passphrase: &str, config: &Config, secrets: &[(&str, &str)]) -> Fet
     }
 }
 
+/// The same, signed by the publishing machine, plus that machine's signer
+/// fingerprint for pinning.
+fn published_signed(
+    passphrase: &str,
+    config: &Config,
+    secrets: &[(&str, &str)],
+) -> (FetchedVault, String) {
+    let mut vault =
+        Vault::create_unchecked(&Secret::from_str(passphrase), kdf()).expect("vault");
+    for (handle, value) in secrets {
+        vault.put(SecretRef((*handle).into()), Secret::from_str(value)).expect("put");
+    }
+    vault.set_embedded_config(Some(config.clone())).expect("embed");
+    let bytes = vault.seal_signed().expect("sign");
+    let fingerprint = vault.signer_fingerprint().expect("fingerprint");
+    (
+        FetchedVault {
+            bytes,
+            source_url: "https://raw.githubusercontent.com/andreas/cfg/main/config.sbvault"
+                .into(),
+            sha: Some("abc123".into()),
+        },
+        fingerprint,
+    )
+}
+
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -282,12 +308,123 @@ fn garbage_served_instead_of_a_vault_is_rejected() {
 }
 
 #[test]
-fn pinning_a_signer_fails_closed_in_a_build_that_cannot_verify() {
-    // This is the point of the whole exercise: a security control that cannot
-    // be evaluated must reject, not wave things through. If Ed25519 is ever
-    // linked in, this test should start failing with "signature is valid" —
-    // and that is the signal to update it, not to delete the pinning.
-    let home = Home::new("pullsigned");
+fn a_good_signature_from_a_pinned_key_verifies() {
+    let home = Home::new("pullpinned");
+    let local = store(&home, "shared");
+    let (fetched, signer) = published_signed("shared", &Config::default(), &[]);
+
+    let plan = verify_pull(
+        &fetched,
+        local.config(),
+        local.vault(),
+        &remote_source(vec![signer.clone()]),
+        &Secret::from_str("shared"),
+    )
+    .expect("a vault signed by a pinned key must be accepted");
+    assert_eq!(plan.vault_id, Vault::open_locked(&fetched.bytes).expect("parse").id());
+
+    // Pinning tolerates case and stray whitespace, because the value gets
+    // copied between machines by hand.
+    assert!(verify_pull(
+        &fetched,
+        local.config(),
+        local.vault(),
+        &remote_source(vec![format!("  {}  ", signer.to_uppercase())]),
+        &Secret::from_str("shared"),
+    )
+    .is_ok());
+}
+
+#[test]
+fn a_good_signature_from_an_unpinned_key_is_rejected() {
+    // The vault is perfectly valid and opens with the right passphrase. It was
+    // simply published by a machine this remote does not trust, which is
+    // exactly the case pinning exists for.
+    let home = Home::new("pullunpinned");
+    let local = store(&home, "shared");
+    let (fetched, signer) = published_signed("shared", &Config::default(), &[]);
+    let (_, someone_else) = published_signed("a different master", &Config::default(), &[]);
+    assert_ne!(signer, someone_else);
+
+    let err = verify_pull(
+        &fetched,
+        local.config(),
+        local.vault(),
+        &remote_source(vec![someone_else]),
+        &Secret::from_str("shared"),
+    )
+    .expect_err("an unpinned signer must be rejected");
+    assert!(format!("{err}").contains("trusted signer list"), "{err}");
+}
+
+#[test]
+fn a_signature_over_a_tampered_payload_is_rejected() {
+    let home = Home::new("pullforged");
+    let local = store(&home, "shared");
+    let (mut fetched, signer) =
+        published_signed("shared", &Config::default(), &[("a:1", "value")]);
+
+    // Flip a bit in the ciphertext, leaving the signature and its fingerprint
+    // untouched. The signature covers the ciphertext, so it must stop
+    // verifying — and this is caught before the passphrase is even used.
+    let mut document: serde_json::Value = serde_json::from_slice(&fetched.bytes).expect("json");
+    let ciphertext = document["ciphertext"].as_str().expect("ciphertext").to_string();
+    let mut chars: Vec<char> = ciphertext.chars().collect();
+    let middle = chars.len() / 2;
+    chars[middle] = if chars[middle] == 'A' { 'B' } else { 'A' };
+    document["ciphertext"] = serde_json::json!(chars.into_iter().collect::<String>());
+    fetched.bytes = serde_json::to_vec(&document).expect("serialise");
+
+    let err = verify_pull(
+        &fetched,
+        local.config(),
+        local.vault(),
+        &remote_source(vec![signer]),
+        &Secret::from_str("shared"),
+    )
+    .expect_err("a tampered payload must not verify");
+    assert!(format!("{err}").contains("did not verify"), "{err}");
+}
+
+#[test]
+fn a_signature_whose_key_does_not_match_its_fingerprint_is_rejected() {
+    // The attacker re-signs with their own key but keeps the pinned
+    // fingerprint in the `signer` field, so that the "is this signer pinned?"
+    // check passes. The key-to-fingerprint binding is what stops the two
+    // checks from passing against two different keys.
+    let home = Home::new("pullswapped");
+    let local = store(&home, "shared");
+    let (victim, pinned) = published_signed("shared", &Config::default(), &[]);
+    let (attacker, _) = published_signed("attacker master", &Config::default(), &[]);
+
+    let mut document: serde_json::Value = serde_json::from_slice(&victim.bytes).expect("json");
+    let forged: serde_json::Value = serde_json::from_slice(&attacker.bytes).expect("json");
+    // The attacker's key and the attacker's signature, but the pinned
+    // fingerprint and the original ciphertext.
+    document["signature"]["public_key"] = forged["signature"]["public_key"].clone();
+    document["signature"]["signature"] = forged["signature"]["signature"].clone();
+    let fetched = FetchedVault {
+        bytes: serde_json::to_vec(&document).expect("serialise"),
+        source_url: victim.source_url.clone(),
+        sha: None,
+    };
+
+    let err = verify_pull(
+        &fetched,
+        local.config(),
+        local.vault(),
+        &remote_source(vec![pinned]),
+        &Secret::from_str("shared"),
+    )
+    .expect_err("a substituted key must be rejected");
+    assert!(format!("{err}").contains("tampered"), "{err}");
+}
+
+#[test]
+fn an_absent_signature_with_pinning_enabled_is_rejected() {
+    // Fail closed: stripping the signature must not be a way to downgrade to
+    // "no pinning configured".
+    let home = Home::new("pullunsigned");
     let local = store(&home, "shared");
     let fetched = published("shared", &Config::default(), &[]);
 
@@ -301,7 +438,7 @@ fn pinning_a_signer_fails_closed_in_a_build_that_cannot_verify() {
     .expect_err("an unsigned vault must not satisfy a pinned signer list");
     assert!(format!("{err}").contains("not signed"), "{err}");
 
-    // With no pinning configured, the same vault is accepted.
+    // With no pinning configured, the same unsigned vault is accepted.
     assert!(verify_pull(
         &fetched,
         local.config(),

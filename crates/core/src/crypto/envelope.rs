@@ -121,12 +121,28 @@ pub enum SignatureAlgorithm {
 /// shared Git repository.
 ///
 /// `signer` is the fingerprint that [`crate::model::RemoteConfigSource::trusted_signers`]
-/// pins.
+/// pins; `public_key` is the key that fingerprint names.
+///
+/// # Why the public key is in the file
+///
+/// Pinning a fingerprint only works if a verifier can *recompute* it, and a
+/// 128-bit hash cannot be inverted back into a 256-bit key. So the key travels
+/// with the signature and [`crate::crypto::signing::verify`] checks that it
+/// hashes to `signer` before checking the signature. Publishing the key costs
+/// nothing — it is public by definition — and it is what turns `signer` from a
+/// label anyone could copy into a binding commitment.
+///
+/// The signature is *not* part of [`Envelope::signing_payload`]; it cannot
+/// sign itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultSignature {
     pub algorithm: SignatureAlgorithm,
-    /// Lowercase hex fingerprint of the signing identity.
+    /// Lowercase hex fingerprint of `public_key`.
     pub signer: String,
+    /// The 32-byte Ed25519 public key.
+    #[serde(with = "crate::crypto::b64")]
+    pub public_key: Vec<u8>,
+    /// The 64-byte detached signature.
     #[serde(with = "crate::crypto::b64")]
     pub signature: Vec<u8>,
 }
@@ -432,6 +448,7 @@ mod tests {
         signed.signature = Some(VaultSignature {
             algorithm: SignatureAlgorithm::Ed25519,
             signer: "abc".into(),
+            public_key: vec![0; 32],
             signature: vec![0; 64],
         });
         assert_eq!(a.signing_payload().expect("a"), signed.signing_payload().expect("signed"));

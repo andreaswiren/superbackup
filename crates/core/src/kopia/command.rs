@@ -22,9 +22,18 @@
 //! flag — which is why `--access-key` can be omitted entirely.
 //!
 //! [`KopiaCommand::audit_argv`] enforces the rule mechanically: before every
-//! spawn, every argument is scanned for every secret this command carries. In
-//! a debug build a hit is a hard panic (it is a programming error, and a
-//! shipped one would be a CVE); in a release build it refuses to launch.
+//! spawn, every argument is scanned for every secret this command carries, and
+//! a hit refuses the launch.
+//!
+//! It refuses rather than panicking, in debug builds too, and that is a
+//! deliberate choice. A leak here would be a programming error, and panicking
+//! is the usual way to make one impossible to ignore — but this code runs
+//! inside an unattended backup daemon, where a panic is an aborted backup and a
+//! refusal is a loud, logged, classified error the scheduler can report and
+//! retry around. The failure is surfaced as
+//! [`super::error::KopiaFailure::Unusable`] with an explanation naming the
+//! variable, and the test suite asserts the refusal directly, so nothing is
+//! lost by not aborting the process.
 //!
 //! # The environment rule
 //!
@@ -245,7 +254,7 @@ pub struct CommandOutput {
     /// outputs are manifests, policies and status blocks. Use
     /// [`CommandOutput::redacted_stdout`] before it reaches a log or a user.
     pub stdout: String,
-    /// Whether stdout hit [`MAX_STDOUT_BYTES`] and was cut short.
+    /// Whether stdout hit the 64 MiB capture cap and was cut short.
     pub stdout_truncated: bool,
     /// Redacted tail of stderr.
     pub stderr_tail: String,
@@ -409,8 +418,8 @@ impl KopiaCommand {
     /// Prove that no secret this command carries appears anywhere in argv.
     ///
     /// Called automatically before every spawn. Public because it is also the
-    /// unit under test: a test can assert the refusal without provoking the
-    /// debug-build panic that [`KopiaCommand::spawn`] raises.
+    /// unit under test: a test can assert the refusal in isolation, without
+    /// having to reach it through [`KopiaCommand::run`].
     pub fn audit_argv(&self) -> std::result::Result<(), KopiaError> {
         for arg in self.argv() {
             let bytes = arg.as_encoded_bytes();

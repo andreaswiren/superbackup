@@ -26,6 +26,8 @@
 //! | Key reuse across purposes | HKDF-SHA256 with versioned `info` strings ([`keys`]) |
 //! | Losing the file | Timestamped backups + atomic replace ([`self::file`]) |
 //! | Reading from a locked vault | Type-gated accessors ([`vault::OpenVault`]) |
+//! | Publishing under a forged identity | Ed25519 detached signatures ([`signing`]) |
+//! | Rotation silently orphaning repositories | A required acknowledgement ([`rekey`]) |
 //! | Hostile file causing a crash or OOM | Bounds checked before any allocation |
 //!
 //! # What it does not protect against
@@ -61,6 +63,7 @@ pub mod envelope;
 pub mod file;
 pub mod kdf;
 pub mod keys;
+pub mod rekey;
 pub mod signing;
 pub mod vault;
 
@@ -68,6 +71,10 @@ pub use envelope::{AeadAlgorithm, Envelope, SignatureAlgorithm, VaultHeader, Vau
 pub use file::{BackupReason, VaultFile, BACKUP_KEEP};
 pub use kdf::{calibrate, KdfAlgorithm, KdfParams, CALIBRATION_TARGET};
 pub use keys::{encode_passphrase, generate_passphrase, MasterKeys};
+pub use rekey::{
+    derived_repositories, DerivedRepository, MigrationReport, MigrationState, Rekey,
+    RekeyAcknowledgement, RepositoryCredentials, RepositoryMigration,
+};
 pub use vault::{OpenVault, Vault, VaultEntry};
 
 use crate::error::{Error, Result};

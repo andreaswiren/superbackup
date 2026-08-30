@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use superbackup_core::crypto::{BackupReason, KdfParams, Vault, VaultFile, BACKUP_KEEP};
+use superbackup_core::crypto::{
+    BackupReason, KdfParams, RekeyAcknowledgement, Vault, VaultFile, BACKUP_KEEP,
+};
 use superbackup_core::error::Error;
 use superbackup_core::model::SecretRef;
 use superbackup_core::paths::Paths;
@@ -17,6 +19,11 @@ fn kdf() -> KdfParams {
 fn pass(s: &str) -> Secret {
     Secret::from_str(s)
 }
+
+/// Every rotation in this file is of a vault with no derived-passphrase
+/// repositories, which is the only situation in which this acknowledgement is
+/// honest. The dangerous case lives in `vault_rekey.rs`.
+const NOTHING_TO_MIGRATE: RekeyAcknowledgement = RekeyAcknowledgement::NoDerivedRepositories;
 
 fn vault(passphrase: &str) -> Vault {
     Vault::create_unchecked(&pass(passphrase), kdf()).expect("create")
@@ -167,7 +174,7 @@ fn rotating_the_passphrase_changes_every_derived_repository_key() {
     let mut v = vault("first");
     let destination = Uuid::from_u128(7);
     let before = v.derive_repo_passphrase(&destination).expect("before");
-    v.change_passphrase(&pass("first"), &pass("second")).expect("rotate");
+    v.change_passphrase(&pass("first"), &pass("second"), &NOTHING_TO_MIGRATE).expect("rotate");
     let after = v.derive_repo_passphrase(&destination).expect("after");
     assert!(!before.ct_eq(&after));
 }
@@ -190,8 +197,16 @@ fn rotation_preserves_contents_and_identity() {
     let created = v.header().created_at;
     let old_salt = v.header().kdf.salt.clone();
 
-    let bytes = v.change_passphrase(&pass("old"), &pass("new")).expect("rotate");
+    let rekey =
+        v.change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE).expect("rotate");
+    let bytes = rekey.sealed_bytes().to_vec();
 
+    assert_eq!(rekey.vault_id(), id);
+    assert_ne!(
+        rekey.old_signer_fingerprint(),
+        rekey.new_signer_fingerprint(),
+        "the signing identity is derived from the master key, so a rotation moves it"
+    );
     assert_eq!(v.id(), id, "rotation must not change the vault's identity");
     assert_eq!(v.header().created_at, created, "creation time survives rotation");
     assert_ne!(v.header().kdf.salt, old_salt, "a new passphrase must get a new salt");
@@ -215,7 +230,9 @@ fn a_rotation_with_the_wrong_old_passphrase_changes_nothing() {
     let before = v.seal().expect("seal");
     let salt_before = v.header().kdf.salt.clone();
 
-    let err = v.change_passphrase(&pass("guess"), &pass("attacker")).expect_err("must fail");
+    let err = v
+        .change_passphrase(&pass("guess"), &pass("attacker"), &NOTHING_TO_MIGRATE)
+        .expect_err("must fail");
     assert!(matches!(err, Error::BadPassphrase));
 
     assert_eq!(v.sealed_bytes(), before.as_slice(), "the sealed bytes must be untouched");
@@ -236,8 +253,9 @@ fn rotation_carries_unsaved_edits_rather_than_dropping_them() {
     // An edit that has not been sealed yet.
     v.put(SecretRef("unsaved:1".into()), Secret::from_str("keep me")).expect("put");
 
-    let bytes = v.change_passphrase(&pass("old"), &pass("new")).expect("rotate");
-    let reopened = Vault::unlock(&bytes, &pass("new")).expect("unlock");
+    let rekey =
+        v.change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE).expect("rotate");
+    let reopened = Vault::unlock(rekey.sealed_bytes(), &pass("new")).expect("unlock");
     assert_eq!(
         reopened.get(&SecretRef("unsaved:1".into())).expect("get").expect("present").expose(),
         b"keep me",
@@ -252,10 +270,12 @@ fn a_locked_vault_can_still_be_rotated_and_stays_locked() {
     let bytes = v.seal().expect("seal");
 
     let mut locked = Vault::open_locked(&bytes).expect("parse");
-    let rotated = locked.change_passphrase(&pass("old"), &pass("new")).expect("rotate");
+    let rotated = locked
+        .change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE)
+        .expect("rotate");
     assert!(locked.is_locked(), "rotating must not open a vault the caller kept closed");
 
-    let reopened = Vault::unlock(&rotated, &pass("new")).expect("unlock");
+    let reopened = Vault::unlock(rotated.sealed_bytes(), &pass("new")).expect("unlock");
     assert_eq!(
         reopened.get(&SecretRef("a:1".into())).expect("get").expect("present").expose(),
         b"value"
@@ -269,7 +289,9 @@ fn rotation_can_raise_the_kdf_parameters_at_the_same_time() {
 
     // Below the floor: refused, and the vault is left exactly as it was.
     let too_weak = KdfParams { memory_kib: 1024, ..kdf() };
-    assert!(v.change_passphrase_and_params(&pass("old"), &pass("new"), too_weak).is_err());
+    assert!(v
+        .change_passphrase_and_params(&pass("old"), &pass("new"), too_weak, &NOTHING_TO_MIGRATE)
+        .is_err());
     assert_eq!(v.header().kdf.memory_kib, weak, "a refused rotation must not edit the header");
     assert!(Vault::unlock(v.sealed_bytes(), &pass("old")).is_ok());
 
@@ -278,7 +300,7 @@ fn rotation_can_raise_the_kdf_parameters_at_the_same_time() {
     // one cheap derivation rather than one at the new cost.
     let strong = KdfParams { memory_kib: 64 * 1024, iterations: 3, ..kdf() };
     assert!(matches!(
-        v.change_passphrase_and_params(&pass("wrong"), &pass("new"), strong),
+        v.change_passphrase_and_params(&pass("wrong"), &pass("new"), strong, &NOTHING_TO_MIGRATE),
         Err(Error::BadPassphrase)
     ));
     assert_eq!(v.header().kdf.memory_kib, weak, "a failed rotation must not touch the header");
@@ -299,7 +321,10 @@ fn rotation_on_disk_backs_up_first_and_the_backup_still_opens() {
         .expect("put");
     file.save().expect("save");
 
-    file.change_passphrase(&pass("old"), &pass("new")).expect("rotate");
+    let rekey = file
+        .change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE)
+        .expect("rotate");
+    assert!(rekey.recovery_backup().is_some(), "the recovery anchor must be recorded");
 
     let live = std::fs::read(file.path()).expect("read live");
     assert!(Vault::unlock(&live, &pass("new")).is_ok());
@@ -372,23 +397,94 @@ fn a_corrupt_file_on_disk_is_an_error_not_a_panic() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn signing_is_unavailable_but_fails_loudly_and_leaves_the_vault_intact() {
+fn a_signed_vault_carries_a_verifiable_signature_and_still_opens() {
     let mut v = vault("pass");
     v.put(SecretRef("a:1".into()), Secret::from_str("value")).expect("put");
     let unsigned = v.seal().expect("seal");
-
-    let err = v.seal_signed().expect_err("this build cannot sign");
-    assert!(format!("{err}").contains("unavailable"), "{err}");
-    assert_eq!(v.sealed_bytes(), unsigned.as_slice(), "a failed signing must change nothing");
     assert!(v.signature().is_none());
-    assert!(Vault::unlock(v.sealed_bytes(), &pass("pass")).is_ok());
 
-    // The fingerprint, which needs only a hash, is available and stable.
-    let a = v.signer_fingerprint().expect("fingerprint");
-    let b = v.signer_fingerprint().expect("fingerprint");
-    assert_eq!(a, b);
-    assert_eq!(a.len(), 32);
-    assert_ne!(a, vault("pass").signer_fingerprint().expect("other"));
+    let signed = v.seal_signed().expect("sign");
+    assert_ne!(signed, unsigned, "signing must actually change the file");
+
+    // Signing does not disturb the ciphertext, so the vault still opens and
+    // still holds everything it held.
+    let reopened = Vault::unlock(&signed, &pass("pass")).expect("unlock");
+    assert_eq!(
+        reopened.get(&SecretRef("a:1".into())).expect("get").expect("present").expose(),
+        b"value"
+    );
+
+    let signature = reopened.signature().expect("the signature must survive a round trip");
+    assert_eq!(signature.public_key.len(), 32);
+    assert_eq!(signature.signature.len(), 64);
+
+    // The fingerprint the vault reports is the fingerprint of the key that
+    // actually signed, which is the whole basis of pinning.
+    let fingerprint = v.signer_fingerprint().expect("fingerprint");
+    assert_eq!(signature.signer, fingerprint);
+    assert_eq!(fingerprint, superbackup_core::crypto::signing::fingerprint(&signature.public_key));
+    assert_eq!(fingerprint.len(), 32);
+
+    // And it verifies against the payload the envelope defines.
+    let payload = reopened.envelope().signing_payload().expect("payload");
+    superbackup_core::crypto::signing::verify(
+        &fingerprint,
+        &signature.public_key,
+        &payload,
+        &signature.signature,
+    )
+    .expect("the vault must verify against its own signature");
+
+    // A different vault is a different identity.
+    assert_ne!(fingerprint, vault("pass").signer_fingerprint().expect("other"));
+}
+
+#[test]
+fn a_signature_does_not_survive_the_vault_being_modified() {
+    let mut v = vault("pass");
+    v.put(SecretRef("a:1".into()), Secret::from_str("value")).expect("put");
+    let signed = v.seal_signed().expect("sign");
+
+    // Tamper with the ciphertext, leaving the signature in place. The
+    // signature covers nonce and ciphertext, so it must stop verifying.
+    let mut document: serde_json::Value = serde_json::from_slice(&signed).expect("json");
+    let ciphertext = document["ciphertext"].as_str().expect("ciphertext").to_string();
+    let mut chars: Vec<char> = ciphertext.chars().collect();
+    let middle = chars.len() / 2;
+    chars[middle] = if chars[middle] == 'A' { 'B' } else { 'A' };
+    document["ciphertext"] = serde_json::json!(chars.into_iter().collect::<String>());
+    let tampered = serde_json::to_vec(&document).expect("serialise");
+
+    let parsed = Vault::open_locked(&tampered).expect("a tampered file still parses");
+    let signature = parsed.signature().expect("signature");
+    let payload = parsed.envelope().signing_payload().expect("payload");
+    assert!(
+        superbackup_core::crypto::signing::verify(
+            &signature.signer,
+            &signature.public_key,
+            &payload,
+            &signature.signature,
+        )
+        .is_err(),
+        "the signature must cover the ciphertext"
+    );
+}
+
+#[test]
+fn rotation_moves_the_signing_identity_and_says_so() {
+    // Anybody pinning this machine has to re-pin after a rotation. The value
+    // they need is handed over at the moment of the rotation rather than left
+    // to be discovered when their next pull is rejected.
+    let mut v = vault("old");
+    let before = v.signer_fingerprint().expect("before");
+    let rekey =
+        v.change_passphrase(&pass("old"), &pass("new"), &NOTHING_TO_MIGRATE).expect("rotate");
+    let after = v.signer_fingerprint().expect("after");
+
+    assert_ne!(before, after);
+    assert_eq!(rekey.old_signer_fingerprint(), before);
+    assert_eq!(rekey.new_signer_fingerprint(), after);
+    assert_eq!(rekey.report().new_signer_fingerprint, after);
 }
 
 #[test]

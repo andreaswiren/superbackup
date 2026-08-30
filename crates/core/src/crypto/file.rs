@@ -13,6 +13,7 @@
 //! and never write the live file non-atomically. Both invariants are enforced
 //! here rather than left to callers.
 
+use super::rekey::{DerivedRepository, Rekey, RekeyAcknowledgement};
 use super::vault::Vault;
 use crate::error::{Error, IoContext, Result};
 use crate::paths::{self, Paths};
@@ -146,34 +147,95 @@ impl VaultFile {
         Ok(())
     }
 
-    /// Rotate the master passphrase: back up, re-key, write, prune.
+    /// Rotate the master passphrase: re-key, back up, write, prune.
     ///
     /// The ordering is the whole point.
     ///
     /// 1. Verify the old passphrase and produce the complete new ciphertext in
-    ///    memory ([`Vault::change_passphrase`] does both, or neither).
-    /// 2. Copy the *current* file into the backup directory.
+    ///    memory ([`Vault::change_passphrase`] does all of it, or none of it).
+    ///    Doing this first means a mistyped passphrase does not litter the
+    ///    backup directory with a copy on every attempt.
+    /// 2. Copy the *current* file into the backup directory. This is the
+    ///    recovery anchor for the repository migration that follows, and its
+    ///    path is recorded on the returned [`Rekey`].
     /// 3. Write the new bytes atomically over the live file.
     ///
     /// A crash after step 2 leaves a valid old vault plus a backup of it. A
     /// crash during step 3 leaves either the old file or the new one, because
     /// [`crate::paths::write_atomic`] renames rather than truncates. There is
     /// no interleaving that loses the keys.
-    pub fn change_passphrase(&mut self, old: &Secret, new: &Secret) -> Result<()> {
-        // Step 1 first: if the old passphrase is wrong we must not litter the
-        // backup directory with a copy on every mistyped attempt.
-        let bytes = self.vault.change_passphrase(old, new)?;
-        self.backup(BackupReason::Rekey)?;
-        paths::write_atomic(&self.path, &bytes)?;
+    ///
+    /// # Then what
+    ///
+    /// The returned [`Rekey`] is not optional bookkeeping. If it lists any
+    /// repositories, they are on the *old* password and the vault now holds
+    /// the *new* master key; until the engine migrates each one, they cannot
+    /// be opened. See [`super::rekey`] for the sequence and for why the vault
+    /// is written before the repositories are moved.
+    pub fn change_passphrase(
+        &mut self,
+        old: &Secret,
+        new: &Secret,
+        ack: &RekeyAcknowledgement,
+    ) -> Result<Rekey> {
+        let mut rekey = self.vault.change_passphrase(old, new, ack)?;
+        let backup = self.backup_without_pruning(BackupReason::Rekey)?;
+        paths::write_atomic(&self.path, rekey.sealed_bytes())?;
         paths::harden_file(&self.path)?;
+        // Prune only after the new file is safely in place, and never below
+        // the backup this rotation just took — pruning it away mid-migration
+        // would destroy the only on-disk copy of the old key hierarchy.
         self.prune_backups(BACKUP_KEEP)?;
-        Ok(())
+        rekey.set_recovery_backup(backup);
+        Ok(rekey)
+    }
+
+    /// Rebuild the plan for a rotation that was interrupted part-way through
+    /// its repository migration.
+    ///
+    /// `backup` is [`crate::crypto::MigrationReport::recovery_backup`] from the
+    /// interrupted run — or, if that was lost with the process, the newest
+    /// `*.rekey` entry in [`VaultFile::list_backups`]. Both passphrases are
+    /// needed, because both key hierarchies have to be reconstructed.
+    pub fn resume_rekey(
+        &self,
+        backup: &Path,
+        old: &Secret,
+        new: &Secret,
+        repositories: &[DerivedRepository],
+    ) -> Result<Rekey> {
+        let old_bytes = std::fs::read(backup)
+            .ctx(format!("reading the pre-rotation backup {}", backup.display()))?;
+        let new_bytes = std::fs::read(&self.path)
+            .ctx(format!("reading the vault at {}", self.path.display()))?;
+        let mut rekey = Rekey::resume(&new_bytes, new, &old_bytes, old, repositories)?;
+        rekey.set_recovery_backup(Some(backup.to_path_buf()));
+        Ok(rekey)
+    }
+
+    /// The most recent backup taken by a passphrase rotation, if any.
+    ///
+    /// The fallback for [`VaultFile::resume_rekey`] when the interrupted run's
+    /// report did not survive.
+    pub fn latest_rekey_backup(&self) -> Result<Option<PathBuf>> {
+        Ok(self
+            .list_backups()?
+            .into_iter()
+            .find(|p| p.extension().is_some_and(|e| e == "rekey")))
     }
 
     /// Copy the current on-disk vault into the backup directory.
     ///
     /// Returns `Ok(None)` when there is nothing to back up yet.
     pub fn backup(&self, reason: BackupReason) -> Result<Option<PathBuf>> {
+        let written = self.backup_without_pruning(reason)?;
+        self.prune_backups(BACKUP_KEEP)?;
+        Ok(written)
+    }
+
+    /// [`VaultFile::backup`] without the prune, for callers that must not
+    /// discard an old backup until a later step has succeeded.
+    fn backup_without_pruning(&self, reason: BackupReason) -> Result<Option<PathBuf>> {
         if !self.path.exists() {
             return Ok(None);
         }
@@ -217,7 +279,6 @@ impl VaultFile {
             self.backup_dir.join(format!("{prefix}{next:03}.{}", reason.tag()));
         paths::write_atomic(&candidate, &bytes)?;
         paths::harden_file(&candidate)?;
-        self.prune_backups(BACKUP_KEEP)?;
         Ok(Some(candidate))
     }
 
@@ -331,8 +392,14 @@ mod tests {
         file.save().expect("save");
         let before = std::fs::read(file.path()).expect("read");
 
-        file.change_passphrase(&Secret::from_str("old-passphrase"), &Secret::from_str("new-one"))
+        let rekey = file
+            .change_passphrase(
+                &Secret::from_str("old-passphrase"),
+                &Secret::from_str("new-one"),
+                &RekeyAcknowledgement::NoDerivedRepositories,
+            )
             .expect("rotate");
+        assert!(rekey.repositories().is_empty());
 
         let backups = file.list_backups().expect("list");
         assert_eq!(backups.len(), 1, "exactly one backup for one rotation");
@@ -363,7 +430,11 @@ mod tests {
         let before = std::fs::read(file.path()).expect("read");
 
         let err = file
-            .change_passphrase(&Secret::from_str("wrong"), &Secret::from_str("whatever"))
+            .change_passphrase(
+                &Secret::from_str("wrong"),
+                &Secret::from_str("whatever"),
+                &RekeyAcknowledgement::NoDerivedRepositories,
+            )
             .expect_err("must fail");
         assert!(matches!(err, Error::BadPassphrase));
 

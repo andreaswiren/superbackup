@@ -94,19 +94,3 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libxdo-dev \
             libayatana-appindicator3-dev libdbus-1-dev pkg-config
       - run: cargo check --workspace --all-features
-
-  cross-compile-check:
-    name: cross-compile check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc, aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-      # Catches `#[cfg]` mistakes in the platform layer before they reach a
-      # release build on the real target.
-      - name: Check cfg gating compiles for every target
-        run: |
-          cargo check --workspace --target x86_64-pc-windows-msvc || true
-          cargo check --workspace --target aarch64-apple-darwin || true

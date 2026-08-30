@@ -390,6 +390,11 @@ impl Runner {
                 outcome.warnings.extend(prepared.warnings);
                 Ok(outcome)
             } else {
+                // `delete_extraneous` stays off here, and there is no config
+                // field that can turn it on: a mirror that deletes is
+                // load-bearing enough that switching it on has to be a
+                // deliberate act at a layer that can also warn the user, not a
+                // default inherited from an exclusion set.
                 let options = MirrorOptions::from_exclusions(&job.exclusions);
                 mirror
                     .run(MirrorRequest {

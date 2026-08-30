@@ -29,6 +29,7 @@
 use super::envelope::{AeadAlgorithm, Envelope, VaultHeader, VaultSignature, FORMAT_VERSION, MAGIC};
 use super::kdf::KdfParams;
 use super::keys::MasterKeys;
+use super::rekey::{Rekey, RekeyAcknowledgement};
 use super::signing;
 use crate::error::{Error, Result};
 use crate::model::{Config, SecretRef};
@@ -401,15 +402,16 @@ impl Vault {
     pub fn seal_signed(&mut self) -> Result<Vec<u8>> {
         self.seal()?;
         let payload = self.sealed.signing_payload()?;
-        let (signer, signature) = {
+        let (public_key, signature) = {
             let open = self.opened()?;
             let seed = open.state.keys.signing_seed();
-            (signing::fingerprint(seed), signing::sign(seed, &payload)?)
+            (signing::public_key(seed)?, signing::sign(seed, &payload)?)
         };
         let mut candidate = self.sealed.clone();
         candidate.signature = Some(VaultSignature {
             algorithm: super::envelope::SignatureAlgorithm::Ed25519,
-            signer,
+            signer: signing::fingerprint(&public_key),
+            public_key: public_key.to_vec(),
             signature,
         });
         let signed_bytes = candidate.to_bytes()?;
@@ -435,8 +437,27 @@ impl Vault {
     ///
     /// Returns the new sealed bytes. Writing them, and taking a backup first,
     /// is [`super::VaultFile::change_passphrase`]'s job.
-    pub fn change_passphrase(&mut self, old: &Secret, new: &Secret) -> Result<Vec<u8>> {
-        self.rekey(old, new, None)
+    /// # The acknowledgement is not a formality
+    ///
+    /// Every destination using
+    /// [`PassphraseSource::DerivedFromMaster`](crate::model::PassphraseSource::DerivedFromMaster)
+    /// computes its repository password from the master key, so this call
+    /// changes all of them at once — and Kopia does not find out. `ack` forces
+    /// the caller to state, in the type system, which repositories it is going
+    /// to migrate. See [`super::rekey`] for the whole mechanism and for why
+    /// the vault is written before the repositories are moved.
+    ///
+    /// This method also cross-checks `ack` against the vault's *embedded*
+    /// configuration when it has one, so a caller that asserts
+    /// [`RekeyAcknowledgement::NoDerivedRepositories`] over a vault that
+    /// plainly does have them is refused rather than believed.
+    pub fn change_passphrase(
+        &mut self,
+        old: &Secret,
+        new: &Secret,
+        ack: &RekeyAcknowledgement,
+    ) -> Result<Rekey> {
+        self.rekey(old, new, None, ack)
     }
 
     /// Re-key with different KDF parameters as well as a different passphrase
@@ -451,9 +472,10 @@ impl Vault {
         old: &Secret,
         new: &Secret,
         kdf: KdfParams,
-    ) -> Result<Vec<u8>> {
+        ack: &RekeyAcknowledgement,
+    ) -> Result<Rekey> {
         kdf.validate_for_new_vault()?;
-        self.rekey(old, new, Some(kdf))
+        self.rekey(old, new, Some(kdf), ack)
     }
 
     fn rekey(
@@ -461,7 +483,8 @@ impl Vault {
         old: &Secret,
         new: &Secret,
         new_kdf: Option<KdfParams>,
-    ) -> Result<Vec<u8>> {
+        ack: &RekeyAcknowledgement,
+    ) -> Result<Rekey> {
         if new.is_empty() {
             return Err(Error::Validation("the new master passphrase cannot be empty".into()));
         }
@@ -469,7 +492,7 @@ impl Vault {
         // in-memory state: that is the thing the user will still have to open
         // tomorrow if this goes wrong, and it is the only authority on what
         // the current passphrase actually is.
-        let (_, sealed_entries, sealed_config) = decrypt(&self.sealed, old)?;
+        let (old_keys, sealed_entries, sealed_config) = decrypt(&self.sealed, old)?;
 
         // Prefer live in-memory contents when the vault is unlocked, so an
         // unsaved edit is not silently dropped by a rotation.
@@ -477,6 +500,14 @@ impl Vault {
             Some(state) => (state.entries.clone(), state.config.clone()),
             None => (sealed_entries, sealed_config),
         };
+
+        // The acknowledgement is the caller's claim; the embedded
+        // configuration is evidence. Check the claim against the evidence
+        // where there is any, so an out-of-date or optimistic caller cannot
+        // rotate away a repository password nobody is going to migrate.
+        if let Some(config) = &config {
+            check_acknowledgement(config, ack)?;
+        }
 
         let kdf = new_kdf.unwrap_or_else(|| self.sealed.header.kdf.clone()).with_fresh_salt()?;
         let header = VaultHeader {
@@ -491,13 +522,33 @@ impl Vault {
         let next = OpenState { keys, entries, config, dirty: true };
         let (sealed, bytes) = seal_body(&header, &next)?;
 
+        // Build the migration plan before touching `self`, so that a failure
+        // to derive either key hierarchy still leaves the old vault intact.
+        let new_keys = MasterKeys::derive(master.as_ref(), &header.kdf.salt)?;
+        let plan = Rekey::new(
+            header.vault_id,
+            old_keys,
+            new_keys,
+            bytes.clone(),
+            ack.repositories(),
+        )?;
+
         // Everything succeeded; commit. Note that the signature is dropped:
-        // it was computed over the old ciphertext and is now meaningless.
+        // it was computed over the old ciphertext and is now meaningless — and
+        // in any case the rotation changed the signing identity.
         let was_locked = self.is_locked();
         self.sealed = sealed;
-        self.sealed_bytes = bytes.clone();
+        self.sealed_bytes = bytes;
         self.open = if was_locked { None } else { Some(OpenState { dirty: false, ..next }) };
-        Ok(bytes)
+        Ok(plan)
+    }
+
+    /// Consume an unlocked vault and take its key hierarchy.
+    ///
+    /// Used by [`Rekey::resume`] to rebuild both halves of an interrupted
+    /// rotation from the two vault files on disk.
+    pub(crate) fn into_keys(self) -> Result<MasterKeys> {
+        self.open.map(|state| state.keys).ok_or(Error::Locked)
     }
 }
 
@@ -564,7 +615,7 @@ impl OpenVault<'_> {
     }
 
     pub fn signer_fingerprint(&self) -> Result<String> {
-        Ok(signing::fingerprint(self.state.keys.signing_seed()))
+        signing::seed_fingerprint(self.state.keys.signing_seed())
     }
 }
 
@@ -672,6 +723,41 @@ fn decrypt(envelope: &Envelope, passphrase: &Secret) -> Result<DecryptedBody> {
         );
     }
     Ok((keys, entries, wire.config))
+}
+
+/// Check a [`RekeyAcknowledgement`] against a configuration that actually
+/// exists.
+///
+/// The acknowledgement is the caller's promise; this is the audit. Both
+/// failures matter, and the second is the subtle one:
+///
+/// * claiming there is nothing to migrate when there is;
+/// * listing *some* of the derived repositories but not all of them, which
+///   would rotate the rest into unopenability while the caller believes it has
+///   handled everything.
+fn check_acknowledgement(config: &Config, ack: &RekeyAcknowledgement) -> Result<()> {
+    let derived = super::rekey::derived_repositories(config);
+    if derived.is_empty() {
+        return Ok(());
+    }
+    let listed: std::collections::BTreeSet<Uuid> =
+        ack.repositories().iter().map(|r| r.destination_id).collect();
+    let missing: Vec<&str> = derived
+        .iter()
+        .filter(|r| !listed.contains(&r.destination_id))
+        .map(|r| r.destination_name.as_str())
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Validation(format!(
+        "refusing to rotate the master passphrase: {} repositor{} derive their password from \
+         it and were not included in the migration plan ({}). Rotating now would leave them \
+         permanently unopenable; see `superbackup_core::crypto::rekey`.",
+        missing.len(),
+        if missing.len() == 1 { "y" } else { "ies" },
+        missing.join(", ")
+    )))
 }
 
 fn cipher_for(keys: &MasterKeys, header: &VaultHeader) -> Result<XChaCha20Poly1305> {

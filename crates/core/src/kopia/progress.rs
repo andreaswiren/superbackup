@@ -578,11 +578,9 @@ mod tests {
     fn tracker_computes_a_rate_between_samples() {
         let mut t = ProgressTracker::new();
         let t0 = Instant::now();
-        let mut a = ProgressLine::default();
-        a.hashed_bytes = 0;
+        let a = ProgressLine { hashed_bytes: 0, ..ProgressLine::default() };
         t.apply(&a, t0);
-        let mut b = ProgressLine::default();
-        b.hashed_bytes = 10_000_000;
+        let b = ProgressLine { hashed_bytes: 10_000_000, ..ProgressLine::default() };
         t.apply(&b, t0 + Duration::from_secs(1));
         assert!(t.progress().bytes_per_second > 0.0, "no rate computed");
     }

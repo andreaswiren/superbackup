@@ -26,7 +26,9 @@
 //! either refuse legitimate edits or skip validation entirely, and it would
 //! pick the second.
 
-use crate::crypto::{BackupReason, Vault, VaultFile};
+use crate::crypto::{
+    self, BackupReason, DerivedRepository, Rekey, RekeyAcknowledgement, Vault, VaultFile,
+};
 use crate::error::{Error, IoContext, Result};
 use crate::model::{
     self, Config, Destination, DestinationKind, Job, ProviderKind, RemoteAuth, Schedule, SecretRef,
@@ -1040,9 +1042,71 @@ impl Store {
         self.vault.save()
     }
 
-    /// Rotate the master passphrase, backing the vault up first.
-    pub fn change_passphrase(&mut self, old: &Secret, new: &Secret) -> Result<()> {
-        self.vault.change_passphrase(old, new)
+    /// Every destination whose repository password is derived from the master
+    /// key, and which a passphrase rotation would therefore invalidate.
+    ///
+    /// The GUI must show this list *before* the user commits to a rotation.
+    /// It is cheap and needs no unlocked vault, so there is no excuse for a
+    /// confirmation dialog that does not include it.
+    pub fn derived_repositories(&self) -> Vec<DerivedRepository> {
+        crypto::derived_repositories(&self.config)
+    }
+
+    /// Rotate the master passphrase — only when nothing has to be migrated.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Validation`], naming the destinations, when any of them derive
+    /// their repository password from the master key. This is the loud failure
+    /// at the API boundary that the hazard deserves: rotating without
+    /// migrating would leave those repositories permanently unopenable, and
+    /// the user would find out at the next scheduled run. Use
+    /// [`Store::change_passphrase_migrating`] and act on the returned plan.
+    pub fn change_passphrase(&mut self, old: &Secret, new: &Secret) -> Result<Rekey> {
+        let derived = self.derived_repositories();
+        if !derived.is_empty() {
+            let names: Vec<&str> =
+                derived.iter().map(|r| r.destination_name.as_str()).collect();
+            return Err(Error::Validation(format!(
+                "{} repositor{} derive their password from the master passphrase and would \
+                 become unopenable if it changed without them ({}). Use \
+                 `change_passphrase_migrating` and re-password each one with \
+                 `kopia repository change-password`.",
+                names.len(),
+                if names.len() == 1 { "y" } else { "ies" },
+                names.join(", ")
+            )));
+        }
+        self.vault.change_passphrase(old, new, &RekeyAcknowledgement::NoDerivedRepositories)
+    }
+
+    /// Rotate the master passphrase and take responsibility for migrating the
+    /// repositories it invalidates.
+    ///
+    /// The acknowledgement is built from this store's own configuration, so it
+    /// cannot omit a destination. On return the new vault is already on disk
+    /// and the listed repositories are still on their **old** password: the
+    /// caller must now walk [`Rekey::repositories`], call
+    /// [`Rekey::credentials`] for each, run `kopia repository change-password`,
+    /// and record the outcome with [`Rekey::mark_migrated`] or
+    /// [`Rekey::mark_failed`].
+    ///
+    /// If that walk is interrupted, [`Store::resume_rekey`] picks it up. See
+    /// [`crate::crypto::rekey`] for why the vault is committed first.
+    pub fn change_passphrase_migrating(&mut self, old: &Secret, new: &Secret) -> Result<Rekey> {
+        let ack = RekeyAcknowledgement::for_config(&self.config);
+        self.vault.change_passphrase(old, new, &ack)
+    }
+
+    /// Rebuild the migration plan for an interrupted rotation.
+    ///
+    /// `backup` is [`crate::crypto::MigrationReport::recovery_backup`] from the
+    /// interrupted run, or [`VaultFile::latest_rekey_backup`] when that report
+    /// did not survive the crash. Every repository comes back as pending;
+    /// re-running a completed one is safe because
+    /// [`crate::crypto::RepositoryCredentials`] carries both passwords.
+    pub fn resume_rekey(&self, backup: &Path, old: &Secret, new: &Secret) -> Result<Rekey> {
+        self.vault.resume_rekey(backup, old, new, &self.derived_repositories())
     }
 
     /// What [`Store::collect_garbage`] would delete. Never mutates anything.

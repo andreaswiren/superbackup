@@ -28,10 +28,10 @@
 //!
 //! 1. **No secret ever appears in a command line.** Passphrases and object-store
 //!    keys travel in the child's environment; [`KopiaCommand::audit_argv`]
-//!    mechanically proves it before every spawn. See [`command`].
+//!    mechanically proves it before every spawn. See `command.rs`.
 //! 2. **No interference with the user's own kopia.** Every invocation is pinned
 //!    to `--config-file <data>/kopia/<destination-id>.config` and its own cache
-//!    directory. See [`driver`].
+//!    directory. See `driver.rs`.
 //! 3. **Nothing reaches a log, an event, or an error without redaction.** Every
 //!    captured stderr line goes through [`crate::redact::scrub`] before it can
 //!    be stored or forwarded.
@@ -69,11 +69,12 @@
 //!
 //! # Which kopia this was written against
 //!
-//! Every flag used here was read from kopia's own source on `master` (the 0.21
-//! line) rather than from its website, and the file it came from is named in the
-//! doc comment of the method that uses it. [`MINIMUM_KOPIA_VERSION`] is the
-//! oldest release the driver will drive; [`KopiaBinary`] refuses anything older
-//! with a message that says so.
+//! Every flag used here was read from kopia's own source on `master` rather
+//! than from its website, and the file it came from is named in the doc comment
+//! of the method that uses it. The release-asset and checksum formats in
+//! [`install`] were verified against the real `kopia/kopia` v0.23.1 release.
+//! [`MINIMUM_KOPIA_VERSION`] is the oldest release the driver will drive;
+//! [`KopiaBinary`] refuses anything older with a message that says so.
 
 mod binary;
 mod command;

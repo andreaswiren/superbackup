@@ -163,7 +163,7 @@ pub fn window_contains(window: &BandwidthWindow, local: NaiveDateTime) -> bool {
     }
     let minute = local.hour() * 60 + local.minute();
     let today = local.date().weekday().num_days_from_monday() as u8;
-    let yesterday = ((today + 6) % 7) as u8;
+    let yesterday = (today + 6) % 7;
 
     if start < end {
         minute >= start && minute < end && weekday_allowed(window, today)

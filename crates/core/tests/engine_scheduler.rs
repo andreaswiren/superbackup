@@ -430,16 +430,19 @@ async fn catch_up_is_off_when_the_setting_is_off() {
 
 #[tokio::test]
 async fn replacing_the_config_does_not_disturb_an_in_flight_run() {
-    let destination = test_repository("local", "/repos/local");
-    let job = job_with("long", &destination, Schedule::Manual);
+    // Two destinations so the two jobs can be scripted independently: one
+    // blocks forever, the other completes.
+    let blocking = test_repository("blocking", "/repos/blocking");
+    let quick = test_repository("quick", "/repos/quick");
+    let job = job_with("long", &blocking, Schedule::Manual);
     let job_id = job.id;
     // Two slots, so the newly added job is not merely queued behind the one
     // that is deliberately blocked.
-    let mut config = config_with(vec![job.clone()], vec![destination.clone()]);
+    let mut config = config_with(vec![job.clone()], vec![blocking.clone(), quick.clone()]);
     config.settings.max_parallel_jobs = 2;
 
     let h = build(config, PersistedState::default());
-    h.executor.set_default(MockBehaviour::BlockUntilCancelled);
+    h.executor.set_for(blocking.id, MockBehaviour::BlockUntilCancelled);
     let mut events = h.handle.subscribe();
     h.handle.run_now(job_id, Trigger::Manual).await.expect("accepted");
     poll_status(&h.handle, "the run to be active", |s| {
@@ -447,36 +450,40 @@ async fn replacing_the_config_does_not_disturb_an_in_flight_run() {
     })
     .await;
 
-    // The user edits the job — renames it, adds a second job — while it runs.
+    // The user edits the job — renames it, changes its schedule — and adds a
+    // second one, all while the first is still running.
     let mut edited = job.clone();
     edited.name = "renamed".into();
     edited.schedule = Schedule::Daily { times: vec![TimeOfDay { hour: 3, minute: 0 }] };
-    let extra = job_with("second", &destination, Schedule::Manual);
+    let extra = job_with("second", &quick, Schedule::Manual);
     let extra_id = extra.id;
-    let mut replacement = config_with(vec![edited, extra], vec![destination]);
+    let mut replacement = config_with(vec![edited, extra], vec![blocking, quick]);
     replacement.settings.max_parallel_jobs = 2;
     h.handle.replace_config(Arc::new(replacement)).expect("replaced");
 
-    // The in-flight run is untouched: still running, still under its old name.
+    // The in-flight run is untouched: still running, under its original job.
     let status = h.handle.status().await.expect("status");
     assert!(status.running.contains_key(&job_id), "a config swap must not drop a running job");
 
-    // And the new job is schedulable.
+    // The new job is immediately schedulable.
     h.handle.run_now(extra_id, Trigger::Manual).await.expect("the new job is known");
-    let (id, run_status, _) = wait_for(&mut events, "the new job", |e| {
+    let (_, run_status, _) = wait_for(&mut events, "the new job", |e| {
         finished_run(e).filter(|(id, _, _)| *id == extra_id)
     })
     .await;
-    assert_eq!(id, extra_id);
     assert_eq!(run_status, RunStatus::Succeeded);
 
-    // The running job still finishes cleanly on its own terms.
+    // The edited job picked up its new schedule without disturbing the run.
+    poll_status(&h.handle, "the edited schedule", |s| s.next_runs.contains_key(&job_id).then_some(()))
+        .await;
+    assert!(h.handle.status().await.expect("status").running.contains_key(&job_id));
+
+    // And the original run still ends on its own terms.
     h.handle.cancel_job(job_id).expect("cancel");
-    let (id, run_status, _) = wait_for(&mut events, "the original job", |e| {
+    let (_, run_status, _) = wait_for(&mut events, "the original job", |e| {
         finished_run(e).filter(|(id, _, _)| *id == job_id)
     })
     .await;
-    assert_eq!(id, job_id);
     assert_eq!(run_status, RunStatus::Cancelled);
 }
 

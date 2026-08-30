@@ -467,7 +467,7 @@ impl KopiaDriver {
         ctx: &RunContext,
     ) -> KopiaResult<Vec<SnapshotManifest>> {
         let mut all = self.list_snapshots(None, true, ctx).await?;
-        all.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        all.sort_by_key(|m| std::cmp::Reverse(m.start_time));
         Ok(all)
     }
 }

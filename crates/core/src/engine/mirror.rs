@@ -231,6 +231,7 @@ impl MirrorEngine {
     /// keeps a ten-million-file tree from being materialised in memory, and
     /// dropping the receiver (on cancellation) makes the walker's next send
     /// fail, which unwinds it without a second signalling mechanism.
+    #[allow(clippy::too_many_arguments)]
     async fn mirror_one(
         &self,
         src_root: &Path,
@@ -481,7 +482,7 @@ fn scan(
         .min_depth(1)
         .into_iter();
 
-    let mut it = walker.filter_entry(|entry| {
+    let it = walker.filter_entry(|entry| {
         if entry.file_type().is_dir() {
             let Ok(rel) = entry.path().strip_prefix(root) else { return false };
             if matcher.matches_dir(rel) {
@@ -494,7 +495,7 @@ fn scan(
         true
     });
 
-    while let Some(next) = it.next() {
+    for next in it {
         if cancel.is_cancelled() {
             return;
         }

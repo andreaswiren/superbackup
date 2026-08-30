@@ -35,6 +35,26 @@
 //! FIFO order; they are never dropped. A dropped run is a backup that silently
 //! did not happen, which is the one outcome this application exists to
 //! prevent.
+//!
+//! A skipped run does **not** consume a slot: it is reported and discarded
+//! immediately, so a paused or locked machine drains its queue rather than
+//! filling it with runs that can never start.
+//!
+//! # Where skips are recorded
+//!
+//! A skip produces an [`EngineEvent::RunSkipped`] and an activity-log
+//! [`Event`], both carrying a [`SkipReason`] with user-facing text. It is
+//! deliberately **not** written into
+//! [`crate::state::PersistedState::history`], and it does not touch the job's
+//! [`crate::state::JobSummary`].
+//!
+//! The reason is arithmetic: a job on a fifteen-minute schedule that is paused
+//! over a long weekend generates roughly 300 skips. `history` holds
+//! [`crate::state::MAX_HISTORY`] = 200 entries, so recording them would evict
+//! every real run — including the failure the user needs to see — and would
+//! inflate `total_runs` with runs that never ran. The skips are still fully
+//! visible in the activity log and in the live event stream, which is where
+//! "why didn't it run at 3am?" is actually answered.
 
 use crate::engine::cancel::{CancelReason, CancelToken};
 use crate::engine::clock::Clock;
@@ -214,7 +234,14 @@ impl SchedulerHandle {
         self.events.subscribe()
     }
 
-    /// Start a job now, bypassing the policy gates. Returns the new run id.
+    /// Start a job now, bypassing the *policy* gates (pause, metered, battery,
+    /// disabled). Returns the new run id.
+    ///
+    /// `Ok` means the run was queued, not that it will execute: the physical
+    /// gates still apply, so a locked vault or a vanished destination turns it
+    /// into a [`EngineEvent::RunSkipped`] when it reaches the front of the
+    /// queue. Callers that need the outcome should watch the event stream for
+    /// the returned run id.
     pub async fn run_now(&self, job: Uuid, trigger: Trigger) -> Result<Uuid> {
         let (reply, response) = tokio::sync::oneshot::channel();
         self.commands

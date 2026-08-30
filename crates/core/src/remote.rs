@@ -701,8 +701,12 @@ pub fn verify_signature(envelope: &Envelope, trusted_signers: &[String]) -> Resu
             signature.signer
         )));
     }
+    // `signing::verify` re-derives the fingerprint from the embedded public key
+    // and refuses if it does not match `signer`, so passing the pinning check
+    // above and passing this check cannot happen under two different keys.
     let payload = envelope.signing_payload()?;
-    signing::verify(&signature.signer, &payload, &signature.signature)
+    signing::verify(&signature.signer, &signature.public_key, &payload, &signature.signature)
+        .map_err(|e| Error::Remote(format!("the vault's signature did not verify: {e}")))
 }
 
 /// Apply a verified plan: back up the local vault, then replace it.
@@ -885,10 +889,11 @@ mod tests {
         let mut envelope = Envelope::parse(&bytes).expect("parse");
         envelope.signature = Some(crate::crypto::VaultSignature {
             algorithm: crate::crypto::SignatureAlgorithm::Ed25519,
-            signer: "0000000000000000".into(),
+            signer: "00000000000000000000000000000000".into(),
+            public_key: vec![0u8; 32],
             signature: vec![0u8; 64],
         });
-        let err = verify_signature(&envelope, &["1111111111111111".to_string()])
+        let err = verify_signature(&envelope, &["11111111111111111111111111111111".to_string()])
             .expect_err("must reject");
         assert!(format!("{err}").contains("trusted signer list"), "{err}");
     }

@@ -24,7 +24,7 @@ use std::time::Duration;
 /// Chosen as the first release in which everything the driver depends on is
 /// present and stable together: ECC at repository-create time (0.13),
 /// `repository throttle set` (0.10), `repository validate-provider` (0.9), and
-/// the `snapshot create --json` manifest shape used by [`super::manifest`].
+/// the `snapshot create --json` manifest shape used by the manifest parser.
 /// 0.17 is a comfortable margin above all of them and is what the pinned
 /// bundled build tracks. Development and the recorded test fixtures target the
 /// 0.21 line.

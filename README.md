@@ -97,10 +97,10 @@ cargo build --release
 The binary lands in `target/release/`. It is self-contained — no runtime, no
 webview, no Node.
 
-On Linux you will need the GUI and secret-service headers first:
+On Linux you will need the GUI and tray headers first:
 
 ```bash
-sudo apt-get install libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libdbus-1-dev pkg-config
+sudo apt-get install libgtk-3-dev libxdo-dev libayatana-appindicator3-dev pkg-config
 ```
 
 ### Kopia

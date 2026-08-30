@@ -31,7 +31,7 @@ rejected regardless of how good the rest of it is.
 Rust 1.82 or newer (the CI pins the floor). On Linux you will also need:
 
 ```bash
-sudo apt-get install libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libdbus-1-dev pkg-config
+sudo apt-get install libgtk-3-dev libxdo-dev libayatana-appindicator3-dev pkg-config
 ```
 
 Then:

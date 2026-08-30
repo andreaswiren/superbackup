@@ -1,0 +1,226 @@
+name: SBOM
+
+# The bill of materials is generated, never hand-written, and it is checked
+# against Cargo.lock on every push. An SBOM that has quietly drifted from the
+# lockfile is worse than no SBOM, because a vulnerability scanner will trust it
+# and report a clean bill of health for a dependency set that no longer exists.
+#
+# CRA Annex I, Part II, point (1) requires a machine-readable SBOM covering "at
+# the very least the top-level dependencies". This covers the full transitive
+# graph. See docs/compliance/SBOM.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/*/Cargo.toml"
+      - "sbom/**"
+      - ".github/workflows/sbom.yml"
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/*/Cargo.toml"
+      - "sbom/**"
+      - ".github/workflows/sbom.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned so a new cargo-cyclonedx release cannot silently change the shape of
+  # the committed SBOM and turn every subsequent push red.
+  CARGO_CYCLONEDX_VERSION: 0.5.9
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Is the committed SBOM still true?
+  # ---------------------------------------------------------------------
+  freshness:
+    name: SBOM matches Cargo.lock
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # generate.py takes its timestamp from the commit date of HEAD, so it
+          # needs the commit metadata, not just a tree.
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --version ${{ env.CARGO_CYCLONEDX_VERSION }} --locked
+
+      - name: Read workspace version
+        id: version
+        run: |
+          v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # Fails, with a list of the components that were added or removed, if the
+      # committed SBOM no longer describes the current dependency graph.
+      - name: Check the committed SBOM is not stale
+        run: python sbom/generate.py --check
+
+      - name: Regenerate and validate against the published CycloneDX schemas
+        run: |
+          python -m pip install --quiet jsonschema referencing lxml
+          python sbom/generate.py --validate
+
+      # The regenerated files must be identical to the committed ones. --check
+      # compares content; this compares bytes, and catches a generator change
+      # that alters formatting without altering the component set.
+      - name: Fail if regeneration changed the committed files
+        run: |
+          if ! git diff --quiet -- sbom/; then
+            echo "::error::sbom/ is out of date. Run 'python sbom/generate.py' and commit the result."
+            git --no-pager diff --stat -- sbom/
+            exit 1
+          fi
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ steps.version.outputs.version }}
+          path: |
+            sbom/superbackup-*.cdx.json
+            sbom/superbackup-*.cdx.xml
+          if-no-files-found: error
+          retention-days: 90
+
+  # ---------------------------------------------------------------------
+  # Does anything in it have a known vulnerability?
+  #
+  # This is deliberately a second opinion, not a replacement for the
+  # `cargo-deny` advisory check in ci.yml. cargo-deny reads the RustSec
+  # advisory database directly from Cargo.lock; Grype reads the SBOM. If the
+  # two ever disagree, the SBOM is wrong and that is exactly what needs to be
+  # known.
+  # ---------------------------------------------------------------------
+  scan:
+    name: vulnerability scan of the SBOM
+    runs-on: ubuntu-latest
+    needs: freshness
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the SBOM built by the freshness job
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-${{ needs.freshness.outputs.version }}
+          path: sbom-artifact
+
+      - name: Scan the SBOM
+        id: grype
+        uses: anchore/scan-action@v6
+        with:
+          sbom: sbom-artifact/superbackup-${{ needs.freshness.outputs.version }}.cdx.json
+          # A finding fails the build. The policy for what happens next is in
+          # docs/compliance/cra/ANNEX_I_PART_II.md; the short version is that a
+          # high or critical advisory in a reachable dependency blocks a
+          # release, and a suppression has to be written down in deny.toml with
+          # a reason.
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-vulnerability-scan-${{ needs.freshness.outputs.version }}
+          path: ${{ steps.grype.outputs.sarif }}
+          if-no-files-found: warn
+          retention-days: 90
+
+  # ---------------------------------------------------------------------
+  # Ship it with the release.
+  # ---------------------------------------------------------------------
+  release:
+    name: attach the SBOM to the release
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    needs: [freshness, scan]
+    permissions:
+      contents: write # upload release assets
+      id-token: write # sign the attestation
+      attestations: write # record it in the transparency log
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-${{ needs.freshness.outputs.version }}
+          path: sbom-artifact
+
+      # Produces a signed, verifiable statement that these exact files were
+      # produced by this workflow, at this commit, in this repository. Verify
+      # with:
+      #   gh attestation verify superbackup-<version>.cdx.json \
+      #     --repo andreaswiren/superbackup
+      - name: Attest the SBOM as a build artefact
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            sbom-artifact/superbackup-*.cdx.json
+            sbom-artifact/superbackup-*.cdx.xml
+
+      # Bind the SBOM to the binaries it describes, so that `gh attestation
+      # verify` on a downloaded superbackup executable returns this exact
+      # bill of materials.
+      #
+      # This depends on the release carrying binary assets. There is no release
+      # build workflow in this repository yet — ci.yml uploads build artefacts
+      # but does not publish them — so the step reports rather than fails when
+      # there is nothing to bind to. See the gap list in
+      # docs/compliance/cra/CONFORMITY_CHECKLIST.md.
+      - name: Download release binaries, if any
+        id: binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release-binaries
+          gh release download "${{ github.event.release.tag_name }}" \
+            --dir release-binaries \
+            --pattern 'superbackup*' --pattern '*.exe' || true
+          # Do not try to bind the SBOM to itself.
+          rm -f release-binaries/*.cdx.json release-binaries/*.cdx.xml
+          if [ -n "$(ls -A release-binaries 2>/dev/null)" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No binary assets on this release; the SBOM is attested on its own but is not bound to an executable."
+          fi
+
+      - name: Bind the SBOM to the released binaries
+        if: steps.binaries.outputs.found == 'true'
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: release-binaries/*
+          sbom-path: sbom-artifact/superbackup-${{ needs.freshness.outputs.version }}.cdx.json
+
+      - name: Upload the SBOM as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            sbom-artifact/superbackup-*.cdx.json \
+            sbom-artifact/superbackup-*.cdx.xml \
+            --clobber
