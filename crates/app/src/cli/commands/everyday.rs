@@ -164,8 +164,8 @@ fn headline(ctx: &mut Ctx, snapshot: &StatusSnapshot, now: DateTime<Utc>) {
     let mut because: Vec<String> = Vec::new();
     if snapshot.paused {
         match snapshot.paused_until {
-            Some(until) => because.push(format!("until {}", format::relative(until, now))),
-            None => because.push("until you resume".to_string()),
+            Some(until) => because.push(format!("resuming {}", format::relative(until, now))),
+            None => because.push("until you run `superbackup resume`".to_string()),
         }
     }
     if !snapshot.unlocked {
@@ -355,7 +355,15 @@ fn events_table(snapshot: &StatusSnapshot, limit: usize) -> Table {
         Column::new("message").flex(),
     ])
     .empty_note("No recent activity.");
-    for event in snapshot.recent_events.iter().take(limit) {
+
+    // The most recent `limit` lines, oldest first — a log tail, where the
+    // newest line is the one nearest the prompt. Sorting rather than trusting
+    // the snapshot's order means this reads correctly whichever way round the
+    // daemon happens to send them.
+    let mut recent: Vec<&superbackup_core::state::Event> = snapshot.recent_events.iter().collect();
+    recent.sort_by_key(|e| e.at);
+    let start = recent.len().saturating_sub(limit);
+    for event in &recent[start..] {
         table.push(vec![
             Cell::new(format::timestamp_local(event.at)),
             Cell::coloured(severity_text(event.severity), severity_colour(event.severity)),
@@ -660,19 +668,20 @@ fn find_run(daemon: &Daemon, run_id: Uuid) -> CliResult<Option<JobRun>> {
 
 fn report_run(ctx: &mut Ctx, run: &JobRun) {
     let colour = run_colour(run.status);
-    let took = run
-        .duration_seconds()
-        .map(|s| format!(" in {}", format::duration_secs(s)))
-        .unwrap_or_default();
+    let took = match run.duration_seconds() {
+        Some(0) => " in under a second".to_string(),
+        Some(seconds) => format!(" in {}", format::duration_secs(seconds)),
+        None => String::new(),
+    };
     let uploaded: u64 = run.destinations.iter().map(|d| d.progress.bytes_uploaded).sum();
     let files: u64 = run.destinations.iter().map(|d| d.progress.files_processed).sum();
     ctx.ui.coloured(
         colour,
         &format!(
-            "{}: {}{took} - {} files, {} uploaded",
+            "{}: {}{took} - {}, {} uploaded",
             run.job_name,
             run.status.title(),
-            files,
+            format::plural(files as usize, "file", "files"),
             format::bytes(uploaded)
         ),
     );
@@ -703,9 +712,9 @@ fn progress_text(
             format::rate(progress.bytes_per_second),
         ),
         None => format!(
-            "{job_name}  {}  {} files, {}",
+            "{job_name}  {}  {}, {}",
             status.title(),
-            progress.files_processed,
+            format::plural(progress.files_processed as usize, "file", "files"),
             format::bytes(progress.bytes_processed)
         ),
     }
@@ -827,10 +836,16 @@ pub fn watch(ctx: &mut Ctx, args: WatchArgs) -> CliResult<Outcome> {
     }
     let mut subscription = daemon.subscribe(topics)?;
 
-    ctx.ui.note(match &job {
-        Some(j) => format!("Watching {}. Press Ctrl-C to stop.", j.name),
-        None => "Watching everything. Press Ctrl-C to stop.".to_string(),
-    });
+    // Say exactly what is being watched: a filter that quietly matched
+    // nothing looks identical to a daemon that has gone quiet.
+    let subject = match (&job, args.kinds.is_empty()) {
+        (Some(j), true) => format!("events for {}", j.name),
+        (Some(j), false) => format!("{} events for {}", args.kinds.join(", "), j.name),
+        (None, true) => "every event".to_string(),
+        (None, false) => format!("{} events", args.kinds.join(", ")),
+    };
+    let also = if args.progress { " and live progress" } else { "" };
+    ctx.ui.note(format!("Watching {subject}{also}. Press Ctrl-C to stop."));
 
     let mut emitted = 0usize;
     let limit = args.limit.unwrap_or(usize::MAX);

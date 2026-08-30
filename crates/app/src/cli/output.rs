@@ -90,12 +90,32 @@ impl CliError {
 
 impl From<Error> for CliError {
     fn from(e: Error) -> CliError {
+        let code = e.code();
         CliError {
-            code: e.code(),
+            code,
             message: e.to_string(),
-            hint: e.hint().map(|h| h.to_string()),
+            hint: e.hint().map(|h| h.to_string()).or_else(|| default_hint(code)),
         }
     }
+}
+
+/// A way forward for the codes the core does not hint about, where the user
+/// would otherwise be left with a sentence and no next move.
+fn default_hint(code: ErrorCode) -> Option<String> {
+    let hint = match code {
+        ErrorCode::Kopia | ErrorCode::Internal => {
+            "Run `superbackup doctor`; it checks the things that cause this."
+        }
+        ErrorCode::RepoNotConnected => {
+            "Connect to it with `superbackup destination connect NAME`."
+        }
+        ErrorCode::RepoExists => {
+            "Add the destination with --connect-existing to use the repository that is there."
+        }
+        ErrorCode::JobRunning => "Watch it with `superbackup status`, or stop it with `superbackup stop`.",
+        _ => return None,
+    };
+    Some(hint.to_string())
 }
 
 impl std::fmt::Display for CliError {
@@ -123,25 +143,29 @@ pub struct Outcome {
     /// `exit::FAILED` while still emitting `"ok":true`, because the command
     /// itself did what was asked.
     pub exit: i32,
+    /// The command already wrote its own stream to stdout, so no envelope
+    /// follows. `watch` is a stream of NDJSON objects, and appending a
+    /// document to it would give `| jq` one line it could not parse.
+    pub streamed: bool,
 }
 
 impl Outcome {
     pub fn ok() -> Outcome {
-        Outcome { value: None, exit: exit::OK }
+        Outcome { value: None, exit: exit::OK, streamed: false }
     }
 
     pub fn data(value: impl Serialize) -> CliResult<Outcome> {
-        Ok(Outcome { value: Some(to_value(value)?), exit: exit::OK })
+        Ok(Outcome { value: Some(to_value(value)?), exit: exit::OK, streamed: false })
     }
 
     pub fn negative(value: impl Serialize) -> CliResult<Outcome> {
-        Ok(Outcome { value: Some(to_value(value)?), exit: exit::FAILED })
+        Ok(Outcome { value: Some(to_value(value)?), exit: exit::FAILED, streamed: false })
     }
 
     /// The command already wrote its own stream to stdout (`watch`). No
     /// envelope follows.
     pub fn streamed() -> Outcome {
-        Outcome { value: None, exit: exit::OK }
+        Outcome { value: None, exit: exit::OK, streamed: true }
     }
 }
 
@@ -160,7 +184,6 @@ pub struct Ui {
     err: Box<dyn Write + Send>,
     pub json: bool,
     pub quiet: bool,
-    pub no_input: bool,
     /// True when stdout is a terminal: the gate on animation, on colour, and
     /// on truncating to the terminal width.
     pub out_is_tty: bool,
@@ -172,6 +195,8 @@ pub struct Ui {
     pub width: usize,
     /// Set once the envelope has been written, so it cannot be written twice.
     finished: bool,
+    /// Columns the last transient line occupied, so the next one can blank it.
+    transient_width: usize,
 }
 
 /// What a pipe gets: effectively unlimited, so redirecting to a file never
@@ -191,13 +216,13 @@ impl Ui {
             err: Box::new(std::io::stderr()),
             json: global.json,
             quiet: global.quiet,
-            no_input: global.no_input,
             out_is_tty: out_tty,
             stdin_is_tty: stdin_tty,
             out_style: Style { colour: !global.json && colour_allowed(global.color, out_tty) },
             err_style: Style { colour: colour_allowed(global.color, err_tty) },
             width: if out_tty { terminal_width() } else { PIPE_WIDTH },
             finished: false,
+            transient_width: 0,
         }
     }
 
@@ -210,13 +235,13 @@ impl Ui {
             err: Box::new(captured.err()),
             json,
             quiet: false,
-            no_input: true,
             out_is_tty: false,
             stdin_is_tty: false,
-            out_style: Style::PLAIN,
-            err_style: Style::PLAIN,
+            out_style: Style { colour: false },
+            err_style: Style { colour: false },
             width: 100,
             finished: false,
+            transient_width: 0,
         };
         (ui, captured)
     }
@@ -313,17 +338,28 @@ impl Ui {
         if self.json || self.quiet || !self.out_is_tty {
             return;
         }
-        let trimmed = super::format::truncate(text, self.width.saturating_sub(1));
-        let _ = write!(self.out, "\r\u{1b}[K{trimmed}");
+        let width = self.width.saturating_sub(1);
+        let trimmed = super::format::truncate(text, width);
+        // A carriage return and trailing blanks, not `ESC [ K`: this has to
+        // work on a terminal that understands no escape sequences at all, and
+        // padding out to the last drawn width is what erases the old line.
+        let drawn = super::format::width_of(&trimmed);
+        let pad = self.transient_width.saturating_sub(drawn);
+        self.transient_width = drawn;
+        let _ = write!(self.out, "
+{trimmed}{}", " ".repeat(pad));
         let _ = self.out.flush();
     }
 
     /// Erase whatever [`Ui::transient`] last drew.
     pub fn clear_transient(&mut self) {
-        if self.json || self.quiet || !self.out_is_tty {
+        if self.json || self.quiet || !self.out_is_tty || self.transient_width == 0 {
             return;
         }
-        let _ = write!(self.out, "\r\u{1b}[K");
+        let _ = write!(self.out, "
+{}
+", " ".repeat(self.transient_width));
+        self.transient_width = 0;
         let _ = self.out.flush();
     }
 
@@ -345,7 +381,7 @@ impl Ui {
 
     /// Write the single JSON document, if this is a JSON run.
     pub fn finish(&mut self, outcome: &Outcome) {
-        if !self.json || self.finished {
+        if !self.json || self.finished || outcome.streamed {
             return;
         }
         self.finished = true;
@@ -477,12 +513,23 @@ mod tests {
         ui.line("this is prose");
         ui.heading("So is this");
         ui.field("key", "value", 10);
-        ui.finish(&Outcome { value: Some(serde_json::json!({"n": 1})), exit: 0 });
+        ui.finish(&Outcome { value: Some(serde_json::json!({"n": 1})), exit: 0, streamed: false });
         let out = captured.stdout();
         assert!(!out.contains("prose"), "prose leaked into --json: {out}");
         let parsed: serde_json::Value = serde_json::from_str(&out).expect("one JSON document");
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["data"]["n"], 1);
+    }
+
+    #[test]
+    fn a_streamed_command_gets_no_trailing_envelope() {
+        // `watch` writes NDJSON. One more document after it would hand `| jq`
+        // a line it cannot parse, right at the end of the stream.
+        let (mut ui, captured) = Ui::capturing(true);
+        ui.stream_line("{\"kind\":\"event\"}");
+        ui.finish(&Outcome::streamed());
+        assert_eq!(captured.stdout(), "{\"kind\":\"event\"}
+");
     }
 
     #[test]

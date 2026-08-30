@@ -1054,6 +1054,62 @@ mod tests {
         assert_eq!(v.sealed_bytes(), bytes.as_slice());
     }
 
+    /// Regression guard for L3: the mid-loop decode failure.
+    ///
+    /// A body carrying one entry that is not valid base64 must be a clean
+    /// `VaultCorrupt`, not a panic, and the guard type must wipe every entry
+    /// on the way out — including the ones the loop never reached.
+    #[test]
+    fn a_body_with_one_bad_base64_entry_is_rejected_cleanly() {
+        use chacha20poly1305::aead::{Aead, Payload};
+
+        let v = vault();
+        let keys = &v.open.as_ref().expect("unlocked").keys;
+
+        // A body whose second entry is corrupt. Entries are a BTreeMap, so
+        // "aaa" is decoded before "bbb" and "ccc" is never reached.
+        let body = serde_json::json!({
+            "version": BODY_VERSION,
+            "entries": {
+                "aaa:1": { "value": crate::crypto::b64_encode(b"fine"),
+                           "created_at": "2026-01-01T00:00:00Z",
+                           "updated_at": "2026-01-01T00:00:00Z" },
+                "bbb:2": { "value": "!!! not base64 !!!",
+                           "created_at": "2026-01-01T00:00:00Z",
+                           "updated_at": "2026-01-01T00:00:00Z" },
+                "ccc:3": { "value": crate::crypto::b64_encode(b"never reached"),
+                           "created_at": "2026-01-01T00:00:00Z",
+                           "updated_at": "2026-01-01T00:00:00Z" },
+            }
+        });
+        let plaintext = serde_json::to_vec(&body).expect("serialise");
+
+        let header = v.sealed.header.clone();
+        let mut envelope = Envelope {
+            magic: MAGIC.to_string(),
+            format_version: FORMAT_VERSION,
+            header: header.clone(),
+            nonce: crate::crypto::random_bytes(crate::crypto::envelope::NONCE_LEN).expect("nonce"),
+            ciphertext: Vec::new(),
+            signature: None,
+        };
+        let aad = envelope.associated_data().expect("aad");
+        let cipher = cipher_for(keys, &header).expect("cipher");
+        envelope.ciphertext = cipher
+            .encrypt(XNonce::from_slice(&envelope.nonce), Payload { msg: &plaintext, aad: &aad })
+            .expect("encrypt");
+
+        // Authenticated, so this really is the "our own file went bad" path
+        // rather than a forgery, and the failure must name the entry.
+        match decrypt(&envelope, &Secret::from_str("test-passphrase")) {
+            Err(Error::VaultCorrupt(message)) => {
+                assert!(message.contains("bbb:2"), "{message}");
+                assert!(!message.contains("not base64 !!!"), "leaked the value: {message}");
+            }
+            other => panic!("expected a corruption error, got {other:?}"),
+        }
+    }
+
     #[test]
     fn debug_output_never_contains_secret_material() {
         let mut v = vault();

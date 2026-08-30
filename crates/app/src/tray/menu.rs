@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn the_idle_menu_has_the_shape_the_spec_describes() {
         let config = config(&["dev code"]);
-        let plan = plan(&snapshot(Health::Idle), &config, true);
+        let plan = super::plan(&snapshot(Health::Idle), &config, true);
         let labels = Item::labels(&plan.items);
         for expected in [
             "Back up now",
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn pausing_offers_one_two_four_eight_hours_and_indefinitely() {
-        let plan = plan(&snapshot(Health::Idle), &config(&["a"]), true);
+        let plan = super::plan(&snapshot(Health::Idle), &config(&["a"]), true);
         for choice in PAUSE_CHOICES {
             assert!(
                 Item::find(&plan.items, &Action::Pause(choice)).is_some(),
@@ -614,7 +614,7 @@ mod tests {
         let job_id = config.jobs[0].id;
         let mut snap = snapshot(Health::Running);
         snap.active_runs = vec![run("dev code", job_id, 0.42)];
-        let plan = plan(&snap, &config, true);
+        let plan = super::plan(&snap, &config, true);
 
         // Present, disabled, and it says why — the spec's central rule.
         let back_up_now =
@@ -642,10 +642,10 @@ mod tests {
         let config = config(&["a", "b"]);
         let mut snap = snapshot(Health::Running);
         snap.active_runs = vec![run("a", config.jobs[0].id, 0.1)];
-        assert!(Item::find(&plan(&snap, &config, true).items, &Action::StopAll).is_none());
+        assert!(Item::find(&super::plan(&snap, &config, true).items, &Action::StopAll).is_none());
 
         snap.active_runs.push(run("b", config.jobs[1].id, 0.9));
-        let two = plan(&snap, &config, true);
+        let two = super::plan(&snap, &config, true);
         assert!(Item::find(&two.items, &Action::StopAll).is_some());
         // With several runs the per-run items carry their own percentage.
         assert!(Item::labels(&two.items).iter().any(|l| l.contains("Stop “b” (90%)")), "{:?}", Item::labels(&two.items));
@@ -656,7 +656,7 @@ mod tests {
         let config = config(&["dev code"]);
         let mut snap = snapshot(Health::Running);
         snap.active_runs = vec![run("dev code", config.jobs[0].id, 0.42)];
-        let plan = plan(&snap, &config, true);
+        let plan = super::plan(&snap, &config, true);
         assert!(plan.tooltip_detail.contains("dev code"));
         assert!(plan.tooltip_detail.contains("42%"));
         assert!(plan.tooltip_detail.contains("/s"));
@@ -668,7 +668,7 @@ mod tests {
         let config = config(&["dev code"]);
         let mut snap = snapshot(Health::Attention);
         snap.unlocked = false;
-        let plan = plan(&snap, &config, true);
+        let plan = super::plan(&snap, &config, true);
         assert!(Item::find(&plan.items, &Action::Unlock).is_some_and(|i| i.is_enabled()));
         let run_all = Item::find(&plan.items, &Action::RunAll).expect("still visible");
         assert!(!run_all.is_enabled());
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn a_missing_kopia_disables_runs_and_offers_the_settings_page() {
-        let plan = plan(&snapshot(Health::Idle), &config(&["a"]), false);
+        let plan = super::plan(&snapshot(Health::Idle), &config(&["a"]), false);
         assert!(Item::find(&plan.items, &Action::FixKopia).is_some());
         assert!(!Item::find(&plan.items, &Action::RunAll).expect("visible").is_enabled());
         assert_eq!(plan.tooltip_detail, "Kopia was not found");
@@ -691,7 +691,7 @@ mod tests {
         let config = config(&["a"]);
         let mut snap = snapshot(Health::Paused);
         snap.paused = true;
-        let plan = plan(&snap, &config, true);
+        let plan = super::plan(&snap, &config, true);
         assert!(Item::find(&plan.items, &Action::Resume).is_some());
         assert!(Item::labels(&plan.items).iter().any(|l| l == "Extend"));
         // A manual run stays enabled while paused: pause is about schedules.
@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn disable_all_is_a_checkbox_that_reflects_every_job() {
         let mut config = config(&["a", "b"]);
-        let plan = plan(&snapshot(Health::Idle), &config, true);
+        let plan = super::plan(&snapshot(Health::Idle), &config, true);
         match Item::find(&plan.items, &Action::DisableAll(true)).expect("checkbox") {
             Item::Check { checked, .. } => assert!(!checked),
             other => panic!("expected a checkbox, got {other:?}"),
@@ -709,7 +709,7 @@ mod tests {
         for job in &mut config.jobs {
             job.enabled = false;
         }
-        let plan = plan(&snapshot(Health::Idle), &config, true);
+        let plan = super::plan(&snapshot(Health::Idle), &config, true);
         match Item::find(&plan.items, &Action::DisableAll(false)).expect("checkbox") {
             Item::Check { checked, .. } => assert!(checked),
             other => panic!("expected a checkbox, got {other:?}"),
@@ -720,7 +720,7 @@ mod tests {
     fn more_than_twelve_jobs_collapse_to_a_more_item() {
         let names: Vec<String> = (0..20).map(|i| format!("job {i}")).collect();
         let config = config(&names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-        let plan = plan(&snapshot(Health::Idle), &config, true);
+        let plan = super::plan(&snapshot(Health::Idle), &config, true);
         let labels = Item::labels(&plan.items);
         assert!(labels.iter().any(|l| l == "More…"));
         assert_eq!(labels.iter().filter(|l| l.starts_with("job ")).count(), MAX_JOB_ITEMS);
@@ -735,7 +735,7 @@ mod tests {
             job_id,
             JobSummary { last_status: Some(RunStatus::Failed), ..Default::default() },
         );
-        let plan = plan(&snap, &config, true);
+        let plan = super::plan(&snap, &config, true);
         assert!(Item::find(&plan.items, &Action::OpenJob(job_id)).is_some());
         let _ = &mut config;
     }

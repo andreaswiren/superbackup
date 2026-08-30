@@ -633,6 +633,356 @@ async fn a_passphrase_survives_the_wire_and_unlocks() {
 }
 
 // ---------------------------------------------------------------------------
+// Regression guards for the adversarial review
+//
+// Each of these fails on the code as it was before the review, and each names
+// the finding it guards so a future change that reopens the hole says so.
+// ---------------------------------------------------------------------------
+
+/// H2. `max_inflight` (16) x `max_connections` (32) is 512 concurrent
+/// `vault.unlock` calls, and Argon2id is configured for 256 MiB each: 128 GiB,
+/// reachable by any local user, on a daemon that may be running as SYSTEM.
+///
+/// The gate is process-wide and deliberately not configurable, because a
+/// limit that exists to stop the machine falling over must not be tunable into
+/// an out-of-memory kill.
+#[tokio::test]
+async fn concurrent_unlocks_never_exceed_the_process_wide_kdf_gate() {
+    let h = Harness::start("kdf-gate");
+
+    // Every handler sleeps, so a call that got through the gate is observably
+    // still inside it while the others pile up behind.
+    h.handler.stall(Some(Duration::from_millis(120)));
+
+    // Eight connections, several unlocks each: far more than the gate allows,
+    // and more than one connection may run at once either.
+    let mut tasks = Vec::new();
+    for _ in 0..8 {
+        let endpoint = h.endpoint.clone();
+        tasks.push(tokio::spawn(async move {
+            let client = Client::connect(&endpoint).await.expect("connect");
+            let mut inner = Vec::new();
+            for _ in 0..4 {
+                let client = client.clone();
+                inner.push(tokio::spawn(async move {
+                    client.unlock(SecretString::from_string("open sesame".into())).await
+                }));
+            }
+            for t in inner {
+                t.await.expect("join").expect("unlock");
+            }
+        }));
+    }
+    for t in tasks {
+        t.await.expect("client task");
+    }
+
+    h.handler.stall(None);
+    let peak = h.handler.peak_concurrency("vault.unlock");
+    assert_eq!(h.handler.calls("vault.unlock"), 32, "every unlock must be served");
+    assert!(
+        peak as usize <= superbackup_core::ipc::MAX_CONCURRENT_KDF,
+        "{peak} key derivations ran at once against a gate of {}; \
+         `max_inflight` x `max_connections` Argon2id allocations is an \
+         out-of-memory kill of the daemon",
+        superbackup_core::ipc::MAX_CONCURRENT_KDF
+    );
+    h.stop().await;
+}
+
+/// H2, second half. One connection may have only one key derivation in flight,
+/// so a client cannot fill `max_inflight` with guesses and pipeline its way
+/// past the failure delay.
+#[tokio::test]
+async fn one_connection_runs_only_one_key_derivation_at_a_time() {
+    let h = Harness::start("kdf-serial");
+    let client = h.client().await;
+    h.handler.stall(Some(Duration::from_millis(100)));
+
+    let mut tasks = Vec::new();
+    for _ in 0..6 {
+        let client = client.clone();
+        tasks.push(tokio::spawn(async move {
+            client.unlock(SecretString::from_string("open sesame".into())).await
+        }));
+    }
+    for t in tasks {
+        t.await.expect("join").expect("unlock");
+    }
+
+    h.handler.stall(None);
+    assert_eq!(
+        h.handler.peak_concurrency("vault.unlock"),
+        1,
+        "one connection ran more than one key derivation at a time"
+    );
+
+    // Non-KDF requests are not caught in that queue: the gate must not turn
+    // the whole connection into a serial channel.
+    h.handler.stall(Some(Duration::from_millis(100)));
+    let started = std::time::Instant::now();
+    let mut pings = Vec::new();
+    for _ in 0..6 {
+        let client = client.clone();
+        pings.push(tokio::spawn(async move { client.ping().await }));
+    }
+    for t in pings {
+        t.await.expect("join").expect("ping");
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(450),
+        "the key-derivation gate serialised ordinary requests too: six 100ms \
+         pings took {:?}",
+        started.elapsed()
+    );
+    h.handler.stall(None);
+    h.stop().await;
+}
+
+/// H2, third half. A failed key derivation is held before it is answered, so a
+/// local socket gives an online guesser no rate advantage. A *successful* one
+/// is not delayed, which is why this costs a legitimate user nothing.
+#[tokio::test]
+async fn a_failed_key_derivation_is_delayed_and_a_successful_one_is_not() {
+    let h = Harness::start("kdf-delay");
+    let client = h.client().await;
+
+    let started = std::time::Instant::now();
+    client.unlock(SecretString::from_string("open sesame".into())).await.expect("unlock");
+    let good = started.elapsed();
+    assert!(
+        good < Duration::from_millis(500),
+        "a correct passphrase must not be delayed: {good:?}"
+    );
+
+    h.handler.fail_with(Some(ErrorCode::BadPassphrase));
+    let started = std::time::Instant::now();
+    let error = client
+        .unlock(SecretString::from_string("wrong".into()))
+        .await
+        .expect_err("the handler rejected it");
+    let bad = started.elapsed();
+    assert_eq!(error.code(), ErrorCode::BadPassphrase);
+    assert!(
+        bad >= superbackup_core::ipc::KDF_FAILURE_DELAY,
+        "a rejected passphrase came back in {bad:?}, faster than the {:?} \
+         failure delay; an online guesser keeps the local socket's rate advantage",
+        superbackup_core::ipc::KDF_FAILURE_DELAY
+    );
+
+    h.handler.fail_with(None);
+    h.stop().await;
+}
+
+/// H3. `subscribe` is answered by the transport, so `max_inflight` never
+/// bounds it. Without a cap of its own, one connection can spawn a pump task
+/// and a `broadcast::Receiver` per request id, and every published event is
+/// then fanned out once more — which degrades the engine, not just this
+/// connection.
+#[tokio::test]
+async fn subscriptions_are_capped_per_connection_and_freed_on_cancel() {
+    let limits = Limits { max_subscriptions: 3, ..Limits::default() };
+    let h = Harness::start_with("sub-cap", limits, Arc::new(MockHandler::new()));
+    let client = h.client().await;
+
+    let mut live = Vec::new();
+    for _ in 0..3 {
+        live.push(client.subscribe(vec![Topic::Status]).await.expect("within the cap"));
+    }
+
+    let refused = client.subscribe(vec![Topic::Status]).await.expect_err("beyond the cap");
+    assert_eq!(refused.code(), ErrorCode::Ipc);
+    assert!(
+        refused.to_string().contains("subscriptions"),
+        "the refusal must say what was exhausted: {refused}"
+    );
+    assert_eq!(h.handler.subscriber_count(), 3, "no fourth receiver may exist");
+
+    // The connection is not poisoned by the refusal.
+    client.ping().await.expect("still usable");
+
+    // Cancelling one frees exactly one slot.
+    drop(live.pop());
+    let mut freed = None;
+    for _ in 0..40 {
+        match client.subscribe(vec![Topic::Status]).await {
+            Ok(sub) => {
+                freed = Some(sub);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(25)).await,
+        }
+    }
+    assert!(freed.is_some(), "cancelling a subscription must return its slot");
+
+    h.stop().await;
+}
+
+/// L1. `max_connections` permits are held for the whole life of a connection,
+/// so without a deadline a client that connects and says nothing locks the
+/// tray, the GUI and the CLI out of their own daemon until it restarts.
+#[tokio::test]
+async fn a_silent_connection_is_reclaimed_but_a_keepalive_holds_it() {
+    let limits = Limits {
+        handshake_timeout: Duration::from_millis(300),
+        idle_timeout: Duration::from_millis(300),
+        ..Limits::default()
+    };
+    let h = Harness::start_with("idle", limits, Arc::new(MockHandler::new()));
+
+    // Silent: greeted, then nothing.
+    let mut silent = RawClient::connect(&h.endpoint).await;
+    silent.expect_hello().await;
+    match silent.read_frame().await {
+        Some(superbackup_core::ipc::ServerFrame::Bye { reason }) => {
+            assert!(reason.contains("idle"), "the reason must say why: {reason}");
+        }
+        other => panic!("a silent connection must be told goodbye, got {other:?}"),
+    }
+
+    // A blank line is a keep-alive, so a client with nothing to say can still
+    // hold its slot honestly.
+    let mut polite = RawClient::connect(&h.endpoint).await;
+    polite.expect_hello().await;
+    for _ in 0..6 {
+        assert!(polite.write_raw("").await, "keep-alive write");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    polite
+        .write_frame(&ClientFrame::Request {
+            id: RequestId(1),
+            protocol: superbackup_core::ipc::PROTOCOL_VERSION,
+            body: Request::Ping {},
+        })
+        .await;
+    match polite.read_frame().await.expect("a reply") {
+        superbackup_core::ipc::ServerFrame::Ok { .. } => {}
+        other => panic!("a connection kept alive by blank lines must still work, got {other:?}"),
+    }
+
+    h.stop().await;
+}
+
+/// L1, and the reason the idle deadline is safe: the client in this crate
+/// keeps itself alive without being asked, including while its caller is doing
+/// something else entirely.
+#[tokio::test]
+async fn the_client_keeps_itself_alive_across_a_long_idle_gap() {
+    let limits = Limits {
+        handshake_timeout: Duration::from_millis(400),
+        idle_timeout: Duration::from_millis(400),
+        ..Limits::default()
+    };
+    let h = Harness::start_with("keepalive", limits, Arc::new(MockHandler::new()));
+    let client = h.client().await;
+    client.ping().await.expect("first");
+
+    // Far longer than the daemon's idle window. A client that did not send
+    // keep-alives would be gone by now.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    client.ping().await.expect("the connection must survive an idle gap");
+    h.stop().await;
+}
+
+/// L2. `tokio::time::timeout` drops the `JoinHandle`, which *detaches* the
+/// task rather than stopping it: the abandoned handler would keep running, and
+/// keep holding whatever it holds, for the life of the daemon.
+#[tokio::test]
+async fn a_timed_out_handler_is_actually_aborted_not_merely_abandoned() {
+    let limits = Limits { handler_timeout: Duration::from_millis(100), ..Limits::default() };
+    let h = Harness::start_with("abort", limits, Arc::new(MockHandler::new()));
+    let client = h.client().await;
+
+    assert_eq!(h.handler.aborted_handlers(), 0);
+    h.handler.stall(Some(Duration::from_secs(30)));
+    let error = client.status().await.expect_err("the handler must time out");
+    assert_eq!(error.code(), ErrorCode::Ipc);
+
+    // The abort is observed by the handler's own drop, not inferred from the
+    // error: a detached task would still be sleeping and would never count.
+    let mut aborted = 0;
+    for _ in 0..40 {
+        aborted = h.handler.aborted_handlers();
+        if aborted > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        aborted, 1,
+        "the timed-out handler was detached rather than aborted; it is still \
+         running and will hold whatever it holds for the daemon's lifetime"
+    );
+
+    h.handler.stall(None);
+    h.stop().await;
+}
+
+/// L6. The accept loop is `biased` with `accept` ahead of the reaper, so under
+/// a connect flood finished connections were never collected and the `JoinSet`
+/// grew for as long as the flood lasted.
+///
+/// The growth itself is internal, so what is asserted here is the observable
+/// consequence: many times `max_connections` short-lived connections in a row,
+/// with the daemon still healthy at the end and no slot leaked.
+#[tokio::test]
+async fn a_flood_of_short_lived_connections_does_not_leak_slots() {
+    let limits = Limits { max_connections: 4, ..Limits::default() };
+    let h = Harness::start_with("flood", limits, Arc::new(MockHandler::new()));
+
+    for _ in 0..60 {
+        let client = h.client().await;
+        client.ping().await.expect("ping");
+        drop(client);
+    }
+
+    // If permits had leaked, or the reaper had starved, this would be refused.
+    let survivor = h.client().await;
+    survivor.ping().await.expect("the daemon is still healthy after the flood");
+    assert_eq!(h.handler.calls("ping"), 61);
+
+    h.stop().await;
+}
+
+/// M1. `THREAT_MODEL.md` §A2 promises peer-UID verification on unix without
+/// qualification, so the check fails closed. This guards the other direction:
+/// that failing closed does not reject the daemon's own user.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_same_user_connection_is_accepted_and_identified_on_unix() {
+    let h = Harness::start("peer-uid");
+    let client = h.client().await;
+    client.ping().await.expect("a connection from our own uid must be served");
+    h.stop().await;
+}
+
+/// M6. `interprocess` cannot `fchmod` a socket on macOS and turns that into an
+/// `Unsupported` error from the *create* call, so the daemon did not bind at
+/// all there. Binding must succeed on every unix, and the endpoint must end up
+/// owner-only whichever path got it there.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_unix_endpoint_is_owner_only_however_it_was_bound() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = Harness::start("mode");
+    let path = std::path::Path::new(&h.endpoint);
+    let mode = std::fs::metadata(path).expect("the socket exists").permissions().mode() & 0o777;
+    assert_eq!(
+        mode & 0o077,
+        0,
+        "the IPC socket is mode {mode:04o}; another user can connect to it"
+    );
+    let dir = path.parent().expect("the socket has a parent directory");
+    let dir_mode =
+        std::fs::metadata(dir).expect("the directory exists").permissions().mode() & 0o777;
+    assert_eq!(dir_mode & 0o077, 0, "the IPC directory is mode {dir_mode:04o}");
+
+    h.stop().await;
+}
+
+// ---------------------------------------------------------------------------
 // A raw client, for the things the typed client will not do
 // ---------------------------------------------------------------------------
 

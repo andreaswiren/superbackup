@@ -200,6 +200,7 @@ fn not_found<T: Entity>(needle: &str, items: &[T], kind: Kind) -> CliError {
 mod tests {
     use super::*;
 
+    #[derive(Debug)]
     struct Thing {
         id: Uuid,
         name: String,
@@ -228,7 +229,7 @@ mod tests {
     #[test]
     fn an_ambiguous_prefix_is_an_error_that_lists_the_candidates() {
         let items = things(&["docs", "documents", "photos"]);
-        let error = one("doc", &items, Kind::Job).err().expect("must refuse to guess");
+        let error = one("doc", &items, Kind::Job).expect_err("must refuse to guess");
         assert_eq!(error.code, ErrorCode::Validation);
         assert_eq!(error.exit_code(), crate::cli::exit::USAGE);
         assert!(error.message.contains("docs"), "{}", error.message);
@@ -255,7 +256,7 @@ mod tests {
     #[test]
     fn an_unknown_name_reports_job_not_found_and_suggests_the_known_ones() {
         let items = things(&["docs", "photos"]);
-        let error = one("nope", &items, Kind::Job).err().expect("must fail");
+        let error = one("nope", &items, Kind::Job).expect_err("must fail");
         assert_eq!(error.code, ErrorCode::JobNotFound);
         let hint = error.hint.unwrap_or_default();
         assert!(hint.contains("docs") && hint.contains("photos"), "{hint}");
@@ -264,7 +265,7 @@ mod tests {
     #[test]
     fn an_empty_configuration_says_so_rather_than_listing_nothing() {
         let items: Vec<Thing> = Vec::new();
-        let error = one("docs", &items, Kind::Destination).err().expect("must fail");
+        let error = one("docs", &items, Kind::Destination).expect_err("must fail");
         assert_eq!(error.code, ErrorCode::Validation);
         assert!(error.hint.unwrap_or_default().contains("Nothing is configured"));
     }

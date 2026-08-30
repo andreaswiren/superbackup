@@ -75,12 +75,92 @@ pub fn report_path(paths: &superbackup_core::paths::Paths) -> std::path::PathBuf
     paths.data_dir.join("rekey-migration.json")
 }
 
+/// The on-disk form of a [`MigrationReport`].
+///
+/// A local mirror rather than the core type, because
+/// [`MigrationReport`] derives `Serialize` but not `Deserialize` — a
+/// defensible choice for a type whose secret-free half exists to be *sent*
+/// over IPC, and one that means the daemon has to own its own persisted
+/// shape. Every field carried here is non-secret: identities, states, and the
+/// path of the recovery backup.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredReport {
+    pub vault_id: Uuid,
+    pub repositories: Vec<StoredRepository>,
+    /// The vault backup taken immediately before the rotation. This file plus
+    /// the old passphrase is the recovery anchor, so it is recorded here and
+    /// not pruned until the migration completes.
+    #[serde(default)]
+    pub recovery_backup: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub old_signer_fingerprint: String,
+    #[serde(default)]
+    pub new_signer_fingerprint: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredRepository {
+    pub destination_id: Uuid,
+    pub destination_name: String,
+    #[serde(default)]
+    pub location: String,
+    pub state: MigrationState,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+impl StoredReport {
+    pub fn from_report(report: &MigrationReport) -> StoredReport {
+        StoredReport {
+            vault_id: report.vault_id,
+            repositories: report
+                .repositories
+                .iter()
+                .map(|r| StoredRepository {
+                    destination_id: r.destination_id,
+                    destination_name: r.destination_name.clone(),
+                    location: r.location.clone(),
+                    state: r.state,
+                    last_error: r.last_error.clone(),
+                })
+                .collect(),
+            recovery_backup: report.recovery_backup.clone(),
+            old_signer_fingerprint: report.old_signer_fingerprint.clone(),
+            new_signer_fingerprint: report.new_signer_fingerprint.clone(),
+        }
+    }
+
+    pub fn total(&self) -> usize {
+        self.repositories.len()
+    }
+
+    pub fn pending(&self) -> BTreeSet<Uuid> {
+        self.repositories
+            .iter()
+            .filter(|r| r.state != MigrationState::Migrated)
+            .map(|r| r.destination_id)
+            .collect()
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.pending().is_empty()
+    }
+}
+
 /// Persist the report atomically. Failing to write it aborts the rotation
 /// *before* any repository is touched, which is the only point at which
 /// aborting is free.
 pub fn write_report(
     paths: &superbackup_core::paths::Paths,
     report: &MigrationReport,
+) -> Result<()> {
+    write_stored(paths, &StoredReport::from_report(report))
+}
+
+/// [`write_report`] for a report that is already in its persisted shape.
+pub fn write_stored(
+    paths: &superbackup_core::paths::Paths,
+    report: &StoredReport,
 ) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(report)
         .map_err(|e| Error::Internal(format!("the migration report could not be written: {e}")))?;
@@ -89,7 +169,7 @@ pub fn write_report(
 }
 
 /// Read a report left behind by an interrupted rotation.
-pub fn read_report(paths: &superbackup_core::paths::Paths) -> Option<MigrationReport> {
+pub fn read_report(paths: &superbackup_core::paths::Paths) -> Option<StoredReport> {
     let bytes = std::fs::read(report_path(paths)).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
@@ -104,16 +184,6 @@ pub fn clear_report(paths: &superbackup_core::paths::Paths) {
     }
 }
 
-/// Destinations in a report that are not yet on the new password.
-fn still_pending(report: &MigrationReport) -> BTreeSet<Uuid> {
-    report
-        .repositories
-        .iter()
-        .filter(|r| r.state != MigrationState::Migrated)
-        .map(|r| r.destination_id)
-        .collect()
-}
-
 /// Rebuild the scheduler suppression from a report left by a previous run.
 ///
 /// Called at startup. A machine that was switched off halfway through a
@@ -122,7 +192,7 @@ fn still_pending(report: &MigrationReport) -> BTreeSet<Uuid> {
 /// full of password failures.
 pub async fn restore_after_restart(runtime: &Arc<Runtime>) {
     let Some(report) = read_report(&runtime.paths) else { return };
-    let pending = still_pending(&report);
+    let pending = report.pending();
     if pending.is_empty() {
         clear_report(&runtime.paths);
         return;
@@ -210,14 +280,14 @@ pub async fn change_passphrase(
         tracing::debug!(error = %e, "could not clear the cached passphrase after a rotation");
     }
 
-    let report = rekey.report();
-    let pending = still_pending(&report);
+    let report = StoredReport::from_report(&rekey.report());
+    let pending = report.pending();
 
     // Rule 1: the report reaches disk BEFORE the first repository is touched.
     // If this write fails the rotation is still complete and recoverable — the
     // vault and its backup are both on disk — but the walk must not start
     // blind, so it is reported as an error the user has to act on.
-    if let Err(e) = write_report(&runtime.paths, &report) {
+    if let Err(e) = write_stored(&runtime.paths, &report) {
         runtime.record_event(Event::new(
             Severity::Error,
             "vault.rekey_report_failed",
@@ -321,17 +391,17 @@ pub async fn migrate_all(runtime: &Arc<Runtime>, rekey: &mut Rekey) {
         // Rewritten after every repository, so a crash costs at most one
         // repository's worth of re-work — and re-work is free, because each
         // step tries the new password first.
-        let report = rekey.report();
-        if let Err(e) = write_report(&runtime.paths, &report) {
+        let report = StoredReport::from_report(&rekey.report());
+        if let Err(e) = write_stored(&runtime.paths, &report) {
             tracing::error!(error = %e, "could not update the migration report");
         }
-        let pending = still_pending(&report);
+        let pending = report.pending();
         runtime.set_migration(Some(PendingMigration { destinations: pending, report }));
         let config = { runtime.store.lock().await.config().clone() };
         runtime.push_config(&config);
     }
 
-    let report = rekey.report();
+    let report = StoredReport::from_report(&rekey.report());
     if rekey.is_complete() {
         // Rule 3, the other end of it: the recovery backup has been load
         // bearing until exactly now, and only now is it safe to stop caring
@@ -350,8 +420,8 @@ pub async fn migrate_all(runtime: &Arc<Runtime>, rekey: &mut Rekey) {
             format!(
                 "{} of {} repositories still use the old passphrase and stay paused. Fix the \
                  problem and change the passphrase again with both passphrases to retry.",
-                report.pending + report.failed,
-                report.total
+                report.pending().len(),
+                report.total()
             ),
         ));
     }
@@ -440,18 +510,12 @@ fn driver_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use superbackup_core::crypto::rekey::RepositoryMigration;
-
-    fn report(states: &[MigrationState]) -> MigrationReport {
-        MigrationReport {
+    fn report(states: &[MigrationState]) -> StoredReport {
+        StoredReport {
             vault_id: Uuid::new_v4(),
-            total: states.len(),
-            migrated: states.iter().filter(|s| **s == MigrationState::Migrated).count(),
-            failed: states.iter().filter(|s| **s == MigrationState::Failed).count(),
-            pending: states.iter().filter(|s| **s == MigrationState::Pending).count(),
             repositories: states
                 .iter()
-                .map(|state| RepositoryMigration {
+                .map(|state| StoredRepository {
                     destination_id: Uuid::new_v4(),
                     destination_name: "d".into(),
                     location: "/tmp".into(),
@@ -459,7 +523,7 @@ mod tests {
                     last_error: None,
                 })
                 .collect(),
-            recovery_backup: None,
+            recovery_backup: Some("/tmp/vault-backups/before.sbvault".into()),
             old_signer_fingerprint: "old".into(),
             new_signer_fingerprint: "new".into(),
         }
@@ -467,28 +531,47 @@ mod tests {
 
     #[test]
     fn a_failed_repository_still_counts_as_pending() {
+        // A failure is not a reason to stop trying, and it is certainly not a
+        // reason to let the scheduler loose on a repository whose password is
+        // still the old one.
         let r = report(&[MigrationState::Migrated, MigrationState::Failed]);
-        assert_eq!(still_pending(&r).len(), 1);
+        assert_eq!(r.pending().len(), 1);
+        assert!(!r.is_complete());
     }
 
     #[test]
     fn a_fully_migrated_report_suppresses_nothing() {
         let r = report(&[MigrationState::Migrated, MigrationState::Migrated]);
-        assert!(still_pending(&r).is_empty());
+        assert!(r.pending().is_empty());
+        assert!(r.is_complete());
     }
 
     #[test]
-    fn the_report_round_trips_through_disk() {
+    fn the_report_round_trips_through_disk_with_its_recovery_backup() {
         let root = std::env::temp_dir().join(format!("sb-rekey-{}", uuid::Uuid::new_v4()));
         let paths = superbackup_core::paths::Paths::rooted_at(&root, false);
         paths.ensure().expect("dirs");
         let written = report(&[MigrationState::Pending]);
-        write_report(&paths, &written).expect("write");
+        write_stored(&paths, &written).expect("write");
+
         let read = read_report(&paths).expect("read back");
-        assert_eq!(read.total, 1);
+        assert_eq!(read.total(), 1);
         assert_eq!(read.repositories[0].state, MigrationState::Pending);
+        // The recovery backup is the only place the old key hierarchy still
+        // exists; losing its path across a restart would strand the migration.
+        assert_eq!(read.recovery_backup, written.recovery_backup);
+
         clear_report(&paths);
         assert!(read_report(&paths).is_none());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_report_is_written_where_a_config_pull_cannot_reach_it() {
+        // Progress is local state, not user intent: putting it in the config
+        // directory would publish it to every machine sharing the vault.
+        let paths = superbackup_core::paths::Paths::rooted_at("/tmp/sb", false);
+        assert!(report_path(&paths).starts_with(&paths.data_dir));
+        assert!(!report_path(&paths).starts_with(&paths.config_dir));
     }
 }

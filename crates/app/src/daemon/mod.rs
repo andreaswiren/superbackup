@@ -136,6 +136,15 @@ pub struct Hooks {
     pub ready: Option<tokio::sync::oneshot::Sender<Arc<Runtime>>>,
     /// An extra reason to stop, alongside Ctrl-C and `control.shutdown`.
     pub external_stop: Option<tokio::sync::oneshot::Receiver<()>>,
+    /// Listen here instead of at [`Paths::ipc_endpoint`].
+    ///
+    /// Exists for the integration tests, and it is not a convenience: on
+    /// Windows `ipc_endpoint()` is the fixed pipe name `\\.\pipe\superbackup`
+    /// **whatever `--home` says**, so two daemons under two private roots
+    /// still collide. Without an override, an end-to-end test would either
+    /// fight the developer's own running instance or have to be run one at a
+    /// time. Production never sets it.
+    pub endpoint: Option<String>,
 }
 
 impl std::fmt::Debug for Hooks {
@@ -143,6 +152,7 @@ impl std::fmt::Debug for Hooks {
         f.debug_struct("Hooks")
             .field("ready", &self.ready.is_some())
             .field("external_stop", &self.external_stop.is_some())
+            .field("endpoint", &self.endpoint)
             .finish()
     }
 }
@@ -240,7 +250,8 @@ pub async fn run(
 
     // 8. IPC. Clients may connect from this line onwards.
     let handler = Arc::new(handler::DaemonHandler::new(Arc::clone(&runtime)));
-    let server = Server::bind(&paths.ipc_endpoint(), handler, ServerOptions::default())?;
+    let endpoint = hooks.endpoint.take().unwrap_or_else(|| paths.ipc_endpoint());
+    let server = Server::bind(&endpoint, handler, ServerOptions::default())?;
     let server_handle = server.handle();
     let serving = tokio::spawn(server.serve());
 

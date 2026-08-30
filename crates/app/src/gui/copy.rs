@@ -77,6 +77,16 @@ pub mod badge {
     pub const DISABLED: &str = "Disabled";
 }
 
+/// The four destination kinds. These mirror `DestinationKind::label()`; the
+/// interface reads the model where it has one to hand, and these where it is
+/// naming a kind that does not exist yet.
+pub mod kind {
+    pub const LOCAL_REPOSITORY: &str = "Local repository";
+    pub const ONEDRIVE: &str = "OneDrive repository";
+    pub const S3: &str = "S3 bucket";
+    pub const MIRROR: &str = "Folder mirror";
+}
+
 /// `Trigger` as a word. The core has no `title()` for triggers, so the mapping
 /// lives here and is the only place it exists.
 pub fn trigger(t: superbackup_core::state::Trigger) -> &'static str {

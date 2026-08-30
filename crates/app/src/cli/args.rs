@@ -1123,27 +1123,60 @@ mod tests {
         // A passphrase in argv is readable by every other process on the
         // machine and is written to shell history. If this test ever fails,
         // someone has added a flag that must not exist.
-        fn walk(cmd: &clap::Command, path: &mut Vec<String>) {
+        //
+        // This test was previously VACUOUS and passed without checking
+        // anything. `Cli::command()` returns an *unbuilt* command, where
+        // `get_num_args()` is `None` for every derive-generated argument — so
+        // `takes_value` was always false and the assertion body never ran. The
+        // exact same `.build()` omission was found and fixed in `schema.rs`,
+        // and not carried across to here. A security test that cannot fail is
+        // worse than no test, because it reads as coverage.
+        //
+        // Assert the precondition explicitly so it can never silently regress
+        // into doing nothing again.
+        fn walk(cmd: &clap::Command, path: &mut Vec<String>, checked: &mut usize) {
             for arg in cmd.get_arguments() {
                 let id = arg.get_id().as_str();
                 let takes_value = arg.get_num_args().map(|r| r.takes_values()).unwrap_or(false);
-                let is_file_ref = id.ends_with("_file");
-                if takes_value && !is_file_ref {
-                    assert!(
-                        !(id.contains("passphrase") || id.contains("password")),
-                        "`{}` in `{}` accepts a secret on the command line",
-                        id,
-                        path.join(" ")
-                    );
+                if !takes_value {
+                    continue;
                 }
+                *checked += 1;
+                // `--passphrase-file` names a file, not a secret.
+                if id.ends_with("_file") {
+                    continue;
+                }
+                // A closed set of choices cannot smuggle a secret:
+                // `destination add --passphrase generated|prompt|derived`.
+                if !arg.get_possible_values().is_empty() {
+                    continue;
+                }
+                assert!(
+                    !(id.contains("passphrase")
+                        || id.contains("password")
+                        || id.contains("secret")
+                        || id.contains("token")),
+                    "`{}` in `{}` accepts a secret on the command line",
+                    id,
+                    path.join(" ")
+                );
             }
             for sub in cmd.get_subcommands() {
                 path.push(sub.get_name().to_string());
-                walk(sub, path);
+                walk(sub, path, checked);
                 path.pop();
             }
         }
-        walk(&Cli::command(), &mut vec!["superbackup".into()]);
+
+        let mut cmd = Cli::command();
+        cmd.build();
+        let mut checked = 0usize;
+        walk(&cmd, &mut vec!["superbackup".into()], &mut checked);
+        assert!(
+            checked > 30,
+            "only {checked} value-taking arguments were examined — the command \
+             was probably not built, and this test is passing vacuously again"
+        );
     }
 
     #[test]

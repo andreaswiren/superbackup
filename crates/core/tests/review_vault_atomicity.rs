@@ -269,13 +269,13 @@ fn the_temp_file_name_is_fully_predictable() {
 /// refuses anything above what this machine can hold.
 #[test]
 fn a_hostile_header_cannot_demand_more_memory_than_the_ceiling_allows() {
-    const ONE_GIB_KIB: u32 = 1024 * 1024;
     const OLD_CEILING_KIB: u32 = 2 * 1024 * 1024;
 
-    assert!(
-        MAX_MEMORY_KIB <= ONE_GIB_KIB,
-        "the absolute ceiling has crept back up to {} KiB",
-        MAX_MEMORY_KIB
+    // Checked at compile time, so the constant cannot creep back up even in a
+    // build where this test is never run.
+    const _: () = assert!(
+        MAX_MEMORY_KIB <= 1024 * 1024,
+        "the absolute Argon2 memory ceiling has crept back above 1 GiB"
     );
 
     let base = KdfParams::insecure_for_tests().expect("base");

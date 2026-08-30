@@ -409,9 +409,12 @@ impl KopiaExecutor {
             };
 
             let result = driver.create_snapshot(source, &options, &ctx).await;
-            // The pump ends when the driver drops its sender, which has
-            // happened by now; joining it guarantees no late frame arrives
-            // after the terminal update below.
+            // The pump ends when the *last* `EventSink` is dropped, and `ctx`
+            // still holds one — so it has to go before the join, or this
+            // awaits a sender it is itself keeping alive. Joining afterwards
+            // is what guarantees no late progress frame arrives after the
+            // terminal update below and leaves a bar stuck at 97%.
+            drop(ctx);
             let pumped = pump.await.unwrap_or_default();
             warnings.extend(pumped);
 
@@ -447,6 +450,7 @@ impl KopiaExecutor {
 
     /// The mirror branch: no repository, no kopia, no secrets.
     async fn snapshot_mirror(&self, request: SnapshotRequest) -> ExecutorResult<SnapshotOutcome> {
+        tracing::info!(dry_run = self.dry_run, "XDEBUG snapshot_mirror");
         if self.dry_run {
             // A mirror's dry run is honest about doing nothing rather than
             // copying and calling it a rehearsal.
@@ -725,9 +729,9 @@ mod tests {
 
     #[test]
     fn a_network_failure_is_transient_and_a_bad_password_is_not() {
-        let network = map_kopia_error(KopiaError::local("x", KopiaFailure::Network, None));
+        let network = map_kopia_error(KopiaError::local("x", KopiaFailure::StorageUnreachable, None));
         assert_eq!(network.retryable, Retryable::Transient);
-        let password = map_kopia_error(KopiaError::local("x", KopiaFailure::BadPassword, None));
+        let password = map_kopia_error(KopiaError::local("x", KopiaFailure::WrongPassword, None));
         assert_eq!(password.retryable, Retryable::Permanent);
     }
 

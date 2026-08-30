@@ -734,7 +734,7 @@ pub fn repository_passphrase(passphrase: &str, confirm: &str) -> Report {
 // Wizard gating (UX_SPEC §7)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WizardStep {
     Template,
     Sources,
@@ -818,7 +818,7 @@ pub fn wizard_blocked(step: WizardStep, draft: &Job, destinations: &[Destination
 
 /// The onboarding flow's own gating. Steps 1–3 are mandatory; the rest are
 /// skippable, and the vault is created when O-3 is confirmed, not before.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OnboardingStep {
     Welcome,
     Passphrase,

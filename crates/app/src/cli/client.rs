@@ -15,7 +15,6 @@ use std::future::Future;
 use std::time::Duration;
 
 use superbackup_core::error::{Error, ErrorCode};
-use superbackup_core::ipc::client::Hello;
 use superbackup_core::ipc::protocol::{Reply, Request};
 use superbackup_core::ipc::{AutoStart, Client, Subscription, Topic};
 
@@ -35,6 +34,7 @@ pub enum Start {
 }
 
 /// A connection to the running instance, plus the runtime driving it.
+#[derive(Debug)]
 pub struct Daemon {
     runtime: tokio::runtime::Runtime,
     client: Client,
@@ -95,10 +95,6 @@ impl Daemon {
 
     pub fn client(&self) -> &Client {
         &self.client
-    }
-
-    pub fn hello(&self) -> &Hello {
-        self.client.hello()
     }
 }
 
@@ -163,7 +159,7 @@ mod tests {
     #[test]
     fn nothing_listening_is_exit_three_with_an_action() {
         let (mut ctx, _captured) = testing::unreachable_ctx(false);
-        let error = Daemon::connect(&mut ctx, Start::Never).err().expect("must fail");
+        let error = Daemon::connect(&mut ctx, Start::Never).expect_err("must fail");
         assert_eq!(error.code, ErrorCode::DaemonUnreachable);
         assert_eq!(error.exit_code(), crate::cli::exit::DAEMON_UNREACHABLE);
         assert!(error.hint.is_some(), "the user must be told what to do");
@@ -194,7 +190,7 @@ mod tests {
         let daemon = Daemon::connect(&mut ctx, Start::Never).expect("connect");
         // `ping` answers `ack`; ask for it as `jobs`.
         let outcome = reply!(daemon, Request::Ping {}, Jobs);
-        let error = outcome.err().expect("a shape mismatch must be an error");
+        let error = outcome.expect_err("a shape mismatch must be an error");
         assert_eq!(error.code, ErrorCode::Ipc);
         assert!(error.message.contains("ack"), "{}", error.message);
     }

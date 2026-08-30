@@ -125,8 +125,15 @@ impl Harness {
             .build()
             .unwrap_or_else(|e| panic!("test runtime: {e}"));
         let options = ServerOptions { limits: Limits::default(), replace_existing: true };
-        let server = Server::bind(&endpoint, Arc::clone(&handler), options)
-            .unwrap_or_else(|e| panic!("binding {endpoint}: {e}"));
+        // Binding registers the listener with the reactor, so it has to happen
+        // inside the runtime. The guard is dropped immediately afterwards:
+        // `Daemon::connect` drives a runtime of its own with `block_on`, which
+        // panics if this thread is still inside one.
+        let server = {
+            let _guard = runtime.enter();
+            Server::bind(&endpoint, Arc::clone(&handler), options)
+                .unwrap_or_else(|e| panic!("binding {endpoint}: {e}"))
+        };
         let handle = server.handle();
         let task = runtime.spawn(server.serve());
         Harness { endpoint, handler, handle, runtime: Some(runtime), task: Some(task) }
@@ -149,7 +156,8 @@ impl Harness {
             color: ColorChoice::Never,
         };
         tweak(&mut global);
-        let (ui, captured) = Ui::capturing(json);
+        let (mut ui, captured) = Ui::capturing(json);
+        ui.quiet = global.quiet;
         let paths = superbackup_core::paths::Paths::rooted_at(
             std::env::temp_dir().join(format!("sb-cli-home-{}", uuid::Uuid::new_v4().simple())),
             false,

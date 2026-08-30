@@ -61,8 +61,6 @@ pub struct Style {
 }
 
 impl Style {
-    pub const PLAIN: Style = Style { colour: false };
-
     pub fn paint(&self, colour: Colour, text: &str) -> String {
         if self.colour && !text.is_empty() {
             format!("\u{1b}[{}m{}\u{1b}[0m", colour.sgr(), text)
@@ -370,14 +368,6 @@ impl Table {
         self.rows.push(cells);
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.rows.len()
-    }
-
     /// Render to lines. `width` is the usable terminal width; pass a large
     /// number for a pipe, where nothing should be truncated at all.
     pub fn render(&self, width: usize, style: Style) -> Vec<String> {
@@ -537,7 +527,7 @@ mod tests {
         let mut t = Table::new(vec![Column::new("name").flex(), Column::new("size").right()]);
         t.push(vec![Cell::new("alpha"), Cell::new(bytes(1_200_000_000))]);
         t.push(vec![Cell::new("b"), Cell::new(MISSING)]);
-        let lines = t.render(80, Style::PLAIN);
+        let lines = t.render(80, Style { colour: false });
         assert_eq!(lines[0], "NAME     SIZE");
         assert_eq!(lines[1], "alpha  1.2 GB");
         assert_eq!(lines[2], "b           -");
@@ -555,7 +545,7 @@ mod tests {
             Cell::new("Succeeded"),
             Cell::new("1.2 GB"),
         ]);
-        let lines = t.render(34, Style::PLAIN);
+        let lines = t.render(34, Style { colour: false });
         for line in &lines {
             assert!(width_of(line) <= 34, "line overflows: {line:?}");
         }
@@ -582,8 +572,8 @@ mod tests {
         a.push(vec![plain, Cell::new("z")]);
         let mut b = Table::new(vec![Column::new("x"), Column::new("y")]);
         b.push(vec![painted, Cell::new("z")]);
-        let no_colour = b.render(80, Style::PLAIN);
-        assert_eq!(a.render(80, Style::PLAIN), no_colour);
+        let no_colour = b.render(80, Style { colour: false });
+        assert_eq!(a.render(80, Style { colour: false }), no_colour);
         let with_colour = b.render(80, Style { colour: true });
         assert!(with_colour[1].contains("\u{1b}[32m"));
         assert!(with_colour[1].ends_with('z'));
@@ -592,6 +582,6 @@ mod tests {
     #[test]
     fn an_empty_table_says_so_instead_of_printing_a_bare_header() {
         let t = Table::new(vec![Column::new("name")]).empty_note("No jobs yet.");
-        assert_eq!(t.render(80, Style::PLAIN), vec!["No jobs yet.".to_string()]);
+        assert_eq!(t.render(80, Style { colour: false }), vec!["No jobs yet.".to_string()]);
     }
 }

@@ -10,14 +10,17 @@
 //! * every command answers with a plausible, well-formed reply, so a test can
 //!   exercise the transport without a working engine behind it;
 //! * a counter of every command received, so a test can assert dispatch
-//!   actually reached the handler it expected;
+//!   actually reached the handler it expected, and the *peak* number that ran
+//!   at once, which is how the key-derivation gate is tested;
+//! * a count of stalled handlers that were dropped before finishing, which is
+//!   how "a timed-out handler is aborted rather than detached" is tested;
 //! * a [`MockHandler::publish`] hook for driving the event stream;
 //! * switches for the failure modes the transport has to survive —
 //!   [`MockHandler::fail_with`], [`MockHandler::stall`] and
 //!   [`MockHandler::panic_on`].
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -49,12 +52,20 @@ pub struct MockHandler {
     panic_on: Mutex<Option<String>>,
     /// Refuse to open new subscriptions.
     refuse_subscriptions: AtomicBool,
+    /// Stalled handlers that were dropped before their sleep finished — i.e.
+    /// tasks the transport actually aborted rather than merely stopped waiting
+    /// for.
+    aborted: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Default)]
 struct MockState {
     /// How many times each command was dispatched, keyed by wire name.
     calls: BTreeMap<String, u32>,
+    /// How many calls to each command are running right now.
+    inflight: BTreeMap<String, u32>,
+    /// The largest value `inflight` ever reached for each command.
+    peak: BTreeMap<String, u32>,
     jobs: Vec<Job>,
     destinations: Vec<Destination>,
     providers: Vec<StorageProvider>,
@@ -90,6 +101,7 @@ impl MockHandler {
             stall: Mutex::new(None),
             panic_on: Mutex::new(None),
             refuse_subscriptions: AtomicBool::new(false),
+            aborted: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -109,6 +121,20 @@ impl MockHandler {
     /// Every command that has been dispatched, with counts.
     pub fn all_calls(&self) -> BTreeMap<String, u32> {
         self.state.lock().map(|s| s.calls.clone()).unwrap_or_default()
+    }
+
+    /// The largest number of calls to `command` that were running at the same
+    /// time. This is what proves a concurrency gate actually gates.
+    pub fn peak_concurrency(&self, command: &str) -> u32 {
+        self.state.lock().map(|s| s.peak.get(command).copied().unwrap_or(0)).unwrap_or(0)
+    }
+
+    /// How many stalled handlers were dropped before their sleep finished.
+    ///
+    /// A handler that the transport merely stopped *waiting* for keeps running
+    /// and never increments this; one that was aborted does.
+    pub fn aborted_handlers(&self) -> u64 {
+        self.aborted.load(Ordering::Relaxed)
     }
 
     /// Make every subsequent command fail with `code`, or clear the failure.
@@ -150,21 +176,38 @@ impl MockHandler {
     }
 
     /// Record a call and apply whichever failure mode is armed.
-    async fn enter(&self, command: &str) -> Result<()> {
+    ///
+    /// Returns a guard that must be held for the body of the handler: it is
+    /// what makes [`MockHandler::peak_concurrency`] measure the handler's
+    /// lifetime rather than a single instant. Every handler below therefore
+    /// binds it rather than discarding it.
+    async fn enter<'a>(&'a self, command: &str) -> Result<CallGuard<'a>> {
         if let Ok(mut s) = self.state.lock() {
             *s.calls.entry(command.to_string()).or_insert(0) += 1;
+            let live = s.inflight.entry(command.to_string()).or_insert(0);
+            *live += 1;
+            let live = *live;
+            let peak = s.peak.entry(command.to_string()).or_insert(0);
+            *peak = (*peak).max(live);
         }
+        // Created before anything that can panic or return, so the in-flight
+        // count is decremented on every path out.
+        let guard = CallGuard { state: &self.state, command: command.to_string() };
+
         let panic_on = self.panic_on.lock().ok().and_then(|p| p.clone());
         if panic_on.as_deref() == Some(command) {
             panic!("MockHandler was asked to panic on `{command}`");
         }
         let stall = self.stall.lock().ok().and_then(|s| *s);
         if let Some(delay) = stall {
+            // If this future is dropped mid-sleep, the transport aborted us.
+            let mut witness = AbortWitness { finished: false, counter: Arc::clone(&self.aborted) };
             tokio::time::sleep(delay).await;
+            witness.finished = true;
         }
         let failure = self.failure.lock().ok().and_then(|f| *f);
         match failure {
-            None => Ok(()),
+            None => Ok(guard),
             Some(ErrorCode::Locked) => Err(Error::Locked),
             Some(ErrorCode::BadPassphrase) => Err(Error::BadPassphrase),
             Some(ErrorCode::JobNotFound) => Err(Error::JobNotFound(command.into())),
@@ -254,17 +297,17 @@ impl MockHandler {
 /// exercise the transport.
 impl Handler for MockHandler {
     async fn ping(&self, _ctx: &RequestContext) -> Result<AckReply> {
-        self.enter("ping").await?;
+        let _guard = self.enter("ping").await?;
         Ok(AckReply {})
     }
 
     async fn status(&self, _ctx: &RequestContext) -> Result<StatusReply> {
-        self.enter("status").await?;
+        let _guard = self.enter("status").await?;
         Ok(StatusReply { snapshot: Box::new(self.snapshot()) })
     }
 
     async fn version(&self, _ctx: &RequestContext) -> Result<VersionReply> {
-        self.enter("version").await?;
+        let _guard = self.enter("version").await?;
         Ok(VersionReply {
             version: crate::VERSION.to_string(),
             protocol: super::PROTOCOL_VERSION,
@@ -277,12 +320,12 @@ impl Handler for MockHandler {
     }
 
     async fn health(&self, _ctx: &RequestContext) -> Result<HealthReply> {
-        self.enter("health").await?;
+        let _guard = self.enter("health").await?;
         Ok(HealthReply { health: Health::Idle, summary: "Up to date".into(), reasons: vec![] })
     }
 
     async fn doctor(&self, _ctx: &RequestContext, fix: bool) -> Result<DoctorReply> {
-        self.enter("doctor").await?;
+        let _guard = self.enter("doctor").await?;
         Ok(DoctorReply {
             ok: true,
             checks: vec![DoctorCheck {
@@ -298,18 +341,18 @@ impl Handler for MockHandler {
     }
 
     async fn list_jobs(&self, _ctx: &RequestContext, _include_disabled: bool) -> Result<JobsReply> {
-        self.enter("job.list").await?;
+        let _guard = self.enter("job.list").await?;
         let jobs = self.state.lock().map(|s| s.jobs.clone()).unwrap_or_default();
         Ok(JobsReply { jobs })
     }
 
     async fn get_job(&self, _ctx: &RequestContext, job: String) -> Result<JobReply> {
-        self.enter("job.get").await?;
+        let _guard = self.enter("job.get").await?;
         Ok(JobReply { job: Box::new(self.find_job(&job)?) })
     }
 
     async fn create_job(&self, _ctx: &RequestContext, job: Box<Job>) -> Result<JobReply> {
-        self.enter("job.create").await?;
+        let _guard = self.enter("job.create").await?;
         let mut job = *job;
         job.id = Uuid::new_v4();
         if let Ok(mut s) = self.state.lock() {
@@ -319,12 +362,12 @@ impl Handler for MockHandler {
     }
 
     async fn update_job(&self, _ctx: &RequestContext, job: Box<Job>) -> Result<JobReply> {
-        self.enter("job.update").await?;
+        let _guard = self.enter("job.update").await?;
         Ok(JobReply { job })
     }
 
     async fn delete_job(&self, _ctx: &RequestContext, job: String) -> Result<AckReply> {
-        self.enter("job.delete").await?;
+        let _guard = self.enter("job.delete").await?;
         if let Ok(mut s) = self.state.lock() {
             s.jobs.retain(|j| j.id.to_string() != job && j.name != job);
         }
@@ -337,7 +380,7 @@ impl Handler for MockHandler {
         job: String,
         enabled: bool,
     ) -> Result<JobReply> {
-        self.enter("job.set_enabled").await?;
+        let _guard = self.enter("job.set_enabled").await?;
         let mut found = self.find_job(&job)?;
         found.enabled = enabled;
         Ok(JobReply { job: Box::new(found) })
@@ -349,7 +392,7 @@ impl Handler for MockHandler {
         _job: String,
         dry_run: bool,
     ) -> Result<StartedReply> {
-        self.enter("job.run").await?;
+        let _guard = self.enter("job.run").await?;
         Ok(StartedReply {
             run_id: Uuid::new_v4(),
             started: true,
@@ -358,12 +401,12 @@ impl Handler for MockHandler {
     }
 
     async fn stop_run(&self, _ctx: &RequestContext, run_id: Uuid) -> Result<StoppedReply> {
-        self.enter("job.stop").await?;
+        let _guard = self.enter("job.stop").await?;
         Ok(StoppedReply { stopped: vec![run_id] })
     }
 
     async fn stop_all_runs(&self, _ctx: &RequestContext) -> Result<StoppedReply> {
-        self.enter("job.stop_all").await?;
+        let _guard = self.enter("job.stop_all").await?;
         Ok(StoppedReply { stopped: vec![] })
     }
 
@@ -373,12 +416,12 @@ impl Handler for MockHandler {
         _job: Option<String>,
         _limit: u32,
     ) -> Result<RunsReply> {
-        self.enter("job.history").await?;
+        let _guard = self.enter("job.history").await?;
         Ok(RunsReply { runs: vec![] })
     }
 
     async fn list_destinations(&self, _ctx: &RequestContext) -> Result<DestinationsReply> {
-        self.enter("dest.list").await?;
+        let _guard = self.enter("dest.list").await?;
         let destinations = self.state.lock().map(|s| s.destinations.clone()).unwrap_or_default();
         Ok(DestinationsReply { destinations })
     }
@@ -388,7 +431,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         destination: String,
     ) -> Result<DestinationReply> {
-        self.enter("dest.get").await?;
+        let _guard = self.enter("dest.get").await?;
         self.state
             .lock()
             .ok()
@@ -407,7 +450,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         destination: Box<Destination>,
     ) -> Result<DestinationReply> {
-        self.enter("dest.create").await?;
+        let _guard = self.enter("dest.create").await?;
         let mut destination = *destination;
         destination.id = Uuid::new_v4();
         if let Ok(mut s) = self.state.lock() {
@@ -421,7 +464,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         destination: Box<Destination>,
     ) -> Result<DestinationReply> {
-        self.enter("dest.update").await?;
+        let _guard = self.enter("dest.update").await?;
         Ok(DestinationReply { destination })
     }
 
@@ -431,7 +474,7 @@ impl Handler for MockHandler {
         _destination: String,
         _force: bool,
     ) -> Result<AckReply> {
-        self.enter("dest.delete").await?;
+        let _guard = self.enter("dest.delete").await?;
         Ok(AckReply {})
     }
 
@@ -440,7 +483,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         _destination: String,
     ) -> Result<ProbeReply> {
-        self.enter("dest.test").await?;
+        let _guard = self.enter("dest.test").await?;
         Ok(Self::probe())
     }
 
@@ -450,7 +493,7 @@ impl Handler for MockHandler {
         _destination: String,
         _encryption: Option<EncryptionSettings>,
     ) -> Result<RepositoryReply> {
-        self.enter("dest.repo_create").await?;
+        let _guard = self.enter("dest.repo_create").await?;
         Ok(RepositoryReply {
             destination_id: Uuid::new_v4(),
             connected: true,
@@ -464,7 +507,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         _destination: String,
     ) -> Result<RepositoryReply> {
-        self.enter("dest.repo_connect").await?;
+        let _guard = self.enter("dest.repo_connect").await?;
         Ok(RepositoryReply {
             destination_id: Uuid::new_v4(),
             connected: true,
@@ -478,7 +521,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         _destination: String,
     ) -> Result<RepositoryReply> {
-        self.enter("dest.repo_disconnect").await?;
+        let _guard = self.enter("dest.repo_disconnect").await?;
         Ok(RepositoryReply {
             destination_id: Uuid::new_v4(),
             connected: false,
@@ -493,7 +536,7 @@ impl Handler for MockHandler {
         _destination: String,
         _refresh: bool,
     ) -> Result<StorageStatsReply> {
-        self.enter("dest.stats").await?;
+        let _guard = self.enter("dest.stats").await?;
         Ok(StorageStatsReply {
             destination_id: Uuid::new_v4(),
             snapshot_count: 0,
@@ -505,13 +548,13 @@ impl Handler for MockHandler {
     }
 
     async fn list_providers(&self, _ctx: &RequestContext) -> Result<ProvidersReply> {
-        self.enter("provider.list").await?;
+        let _guard = self.enter("provider.list").await?;
         let providers = self.state.lock().map(|s| s.providers.clone()).unwrap_or_default();
         Ok(ProvidersReply { providers })
     }
 
     async fn get_provider(&self, _ctx: &RequestContext, provider: String) -> Result<ProviderReply> {
-        self.enter("provider.get").await?;
+        let _guard = self.enter("provider.get").await?;
         self.state
             .lock()
             .ok()
@@ -530,7 +573,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         provider: Box<StorageProvider>,
     ) -> Result<ProviderReply> {
-        self.enter("provider.create").await?;
+        let _guard = self.enter("provider.create").await?;
         let mut provider = *provider;
         provider.id = Uuid::new_v4();
         if let Ok(mut s) = self.state.lock() {
@@ -544,7 +587,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         provider: Box<StorageProvider>,
     ) -> Result<ProviderReply> {
-        self.enter("provider.update").await?;
+        let _guard = self.enter("provider.update").await?;
         Ok(ProviderReply { provider })
     }
 
@@ -554,12 +597,12 @@ impl Handler for MockHandler {
         _provider: String,
         _force: bool,
     ) -> Result<AckReply> {
-        self.enter("provider.delete").await?;
+        let _guard = self.enter("provider.delete").await?;
         Ok(AckReply {})
     }
 
     async fn test_provider(&self, _ctx: &RequestContext, _provider: String) -> Result<ProbeReply> {
-        self.enter("provider.test").await?;
+        let _guard = self.enter("provider.test").await?;
         Ok(Self::probe())
     }
 
@@ -568,7 +611,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         _provider: String,
     ) -> Result<UsedByReply> {
-        self.enter("provider.used_by").await?;
+        let _guard = self.enter("provider.used_by").await?;
         Ok(UsedByReply { destinations: vec![], jobs: vec![] })
     }
 
@@ -580,7 +623,7 @@ impl Handler for MockHandler {
         secret_access_key: SecretString,
         session_token: Option<SecretString>,
     ) -> Result<ProviderReply> {
-        self.enter("provider.rotate_credentials").await?;
+        let _guard = self.enter("provider.rotate_credentials").await?;
         // Prove the secrets arrived without ever copying them anywhere: only
         // their lengths are observed, and the values are dropped (and zeroed)
         // at the end of this scope.
@@ -597,7 +640,7 @@ impl Handler for MockHandler {
         _job: Option<String>,
         _limit: u32,
     ) -> Result<SnapshotsReply> {
-        self.enter("snapshot.list").await?;
+        let _guard = self.enter("snapshot.list").await?;
         Ok(SnapshotsReply { snapshots: vec![] })
     }
 
@@ -608,7 +651,7 @@ impl Handler for MockHandler {
         _snapshot: String,
         path: String,
     ) -> Result<ListingReply> {
-        self.enter("snapshot.browse").await?;
+        let _guard = self.enter("snapshot.browse").await?;
         Ok(ListingReply { path, entries: vec![], truncated: false })
     }
 
@@ -622,7 +665,7 @@ impl Handler for MockHandler {
         _conflict: ConflictPolicy,
         _dry_run: bool,
     ) -> Result<StartedReply> {
-        self.enter("snapshot.restore").await?;
+        let _guard = self.enter("snapshot.restore").await?;
         Ok(Self::started())
     }
 
@@ -632,7 +675,7 @@ impl Handler for MockHandler {
         _destination: String,
         _snapshot: String,
     ) -> Result<AckReply> {
-        self.enter("snapshot.delete").await?;
+        let _guard = self.enter("snapshot.delete").await?;
         Ok(AckReply {})
     }
 
@@ -641,7 +684,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         passphrase: SecretString,
     ) -> Result<UnlockedReply> {
-        self.enter("vault.unlock").await?;
+        let _guard = self.enter("vault.unlock").await?;
         // The mock vault opens for any non-empty passphrase. Note what it does
         // not do: store it, log it, or return it.
         let ok = !passphrase.expose().is_empty();
@@ -655,7 +698,7 @@ impl Handler for MockHandler {
     }
 
     async fn lock_vault(&self, _ctx: &RequestContext) -> Result<UnlockedReply> {
-        self.enter("vault.lock").await?;
+        let _guard = self.enter("vault.lock").await?;
         if let Ok(mut s) = self.state.lock() {
             s.unlocked = false;
         }
@@ -663,7 +706,7 @@ impl Handler for MockHandler {
     }
 
     async fn vault_is_unlocked(&self, _ctx: &RequestContext) -> Result<UnlockedReply> {
-        self.enter("vault.is_unlocked").await?;
+        let _guard = self.enter("vault.is_unlocked").await?;
         Ok(self.unlocked_reply())
     }
 
@@ -673,7 +716,7 @@ impl Handler for MockHandler {
         current: SecretString,
         replacement: SecretString,
     ) -> Result<AckReply> {
-        self.enter("vault.change_passphrase").await?;
+        let _guard = self.enter("vault.change_passphrase").await?;
         if current.expose().is_empty() || replacement.expose().is_empty() {
             return Err(Error::BadPassphrase);
         }
@@ -686,7 +729,7 @@ impl Handler for MockHandler {
         secret_ref: SecretRef,
         value: SecretString,
     ) -> Result<AckReply> {
-        self.enter("vault.set_secret").await?;
+        let _guard = self.enter("vault.set_secret").await?;
         if value.expose().is_empty() {
             return Err(Error::Validation("refusing to store an empty secret".into()));
         }
@@ -699,7 +742,7 @@ impl Handler for MockHandler {
     }
 
     async fn list_secret_refs(&self, _ctx: &RequestContext) -> Result<SecretRefsReply> {
-        self.enter("vault.list_refs").await?;
+        let _guard = self.enter("vault.list_refs").await?;
         let refs = self.state.lock().map(|s| s.secret_refs.clone()).unwrap_or_default();
         Ok(SecretRefsReply { refs })
     }
@@ -710,7 +753,7 @@ impl Handler for MockHandler {
         seconds: Option<u64>,
         reason: Option<String>,
     ) -> Result<PauseReply> {
-        self.enter("control.pause").await?;
+        let _guard = self.enter("control.pause").await?;
         if let Ok(mut s) = self.state.lock() {
             s.paused = PauseState {
                 paused: true,
@@ -722,7 +765,7 @@ impl Handler for MockHandler {
     }
 
     async fn resume(&self, _ctx: &RequestContext) -> Result<PauseReply> {
-        self.enter("control.resume").await?;
+        let _guard = self.enter("control.resume").await?;
         if let Ok(mut s) = self.state.lock() {
             s.paused = PauseState::default();
         }
@@ -730,7 +773,7 @@ impl Handler for MockHandler {
     }
 
     async fn pause_state(&self, _ctx: &RequestContext) -> Result<PauseReply> {
-        self.enter("control.pause_state").await?;
+        let _guard = self.enter("control.pause_state").await?;
         Ok(self.pause_reply())
     }
 
@@ -739,22 +782,22 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         bandwidth: BandwidthSettings,
     ) -> Result<BandwidthReply> {
-        self.enter("control.set_bandwidth").await?;
+        let _guard = self.enter("control.set_bandwidth").await?;
         Ok(BandwidthReply { bandwidth })
     }
 
     async fn reload_config(&self, _ctx: &RequestContext) -> Result<AckReply> {
-        self.enter("control.reload_config").await?;
+        let _guard = self.enter("control.reload_config").await?;
         Ok(AckReply {})
     }
 
     async fn shutdown(&self, _ctx: &RequestContext, _stop_runs: bool) -> Result<AckReply> {
-        self.enter("control.shutdown").await?;
+        let _guard = self.enter("control.shutdown").await?;
         Ok(AckReply {})
     }
 
     async fn get_settings(&self, _ctx: &RequestContext) -> Result<SettingsReply> {
-        self.enter("settings.get").await?;
+        let _guard = self.enter("settings.get").await?;
         let settings = self.state.lock().map(|s| s.settings.clone()).unwrap_or_default();
         Ok(SettingsReply { settings: Box::new(settings) })
     }
@@ -764,7 +807,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         settings: Box<Settings>,
     ) -> Result<SettingsReply> {
-        self.enter("settings.update").await?;
+        let _guard = self.enter("settings.update").await?;
         if let Ok(mut s) = self.state.lock() {
             s.settings = (*settings).clone();
         }
@@ -772,17 +815,17 @@ impl Handler for MockHandler {
     }
 
     async fn remote_pull(&self, _ctx: &RequestContext) -> Result<RemoteStatusReply> {
-        self.enter("remote.pull").await?;
+        let _guard = self.enter("remote.pull").await?;
         Ok(Self::remote_status())
     }
 
     async fn remote_diff(&self, _ctx: &RequestContext) -> Result<RemoteDiffReply> {
-        self.enter("remote.diff").await?;
+        let _guard = self.enter("remote.diff").await?;
         Ok(RemoteDiffReply { changes: vec![], remote_commit: None })
     }
 
     async fn remote_apply(&self, _ctx: &RequestContext) -> Result<RemoteStatusReply> {
-        self.enter("remote.apply").await?;
+        let _guard = self.enter("remote.apply").await?;
         Ok(Self::remote_status())
     }
 
@@ -791,27 +834,27 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         _message: Option<String>,
     ) -> Result<RemoteStatusReply> {
-        self.enter("remote.push").await?;
+        let _guard = self.enter("remote.push").await?;
         Ok(Self::remote_status())
     }
 
     async fn service_status(&self, _ctx: &RequestContext) -> Result<ServiceReply> {
-        self.enter("service.status").await?;
+        let _guard = self.enter("service.status").await?;
         Ok(Self::service())
     }
 
     async fn install_service(&self, _ctx: &RequestContext) -> Result<ServiceReply> {
-        self.enter("service.install").await?;
+        let _guard = self.enter("service.install").await?;
         Ok(Self::service())
     }
 
     async fn uninstall_service(&self, _ctx: &RequestContext) -> Result<ServiceReply> {
-        self.enter("service.uninstall").await?;
+        let _guard = self.enter("service.uninstall").await?;
         Ok(Self::service())
     }
 
     async fn set_autostart(&self, _ctx: &RequestContext, enabled: bool) -> Result<ServiceReply> {
-        self.enter("service.set_autostart").await?;
+        let _guard = self.enter("service.set_autostart").await?;
         Ok(ServiceReply { autostart: enabled, ..Self::service() })
     }
 
@@ -827,6 +870,38 @@ impl Handler for MockHandler {
             *s.calls.entry("subscribe".to_string()).or_insert(0) += 1;
         }
         Ok(self.events.subscribe())
+    }
+}
+
+/// Decrements the in-flight count for one command however the handler leaves.
+#[derive(Debug)]
+struct CallGuard<'a> {
+    state: &'a Mutex<MockState>,
+    command: String,
+}
+
+impl Drop for CallGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut s) = self.state.lock() {
+            if let Some(live) = s.inflight.get_mut(&self.command) {
+                *live = live.saturating_sub(1);
+            }
+        }
+    }
+}
+
+/// Counts a stalled handler that was dropped before it finished sleeping.
+#[derive(Debug)]
+struct AbortWitness {
+    finished: bool,
+    counter: Arc<AtomicU64>,
+}
+
+impl Drop for AbortWitness {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.counter.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

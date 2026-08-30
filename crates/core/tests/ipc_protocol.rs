@@ -400,6 +400,8 @@ fn frames_round_trip_through_json() {
             min_protocol: MIN_PROTOCOL_VERSION,
             version: "0.1.0".into(),
             service_scope: false,
+            handshake_timeout_ms: 1_000,
+            idle_timeout_ms: 300_000,
         },
         ServerFrame::Ok { id: RequestId(1), body: Box::new(Reply::Ack(AckReply {})) },
         ServerFrame::Error {
@@ -636,18 +638,66 @@ fn a_passphrase_never_appears_in_debug_output() {
 }
 
 #[test]
-fn a_passphrase_deserialises_into_a_secret_and_still_serialises_for_the_client() {
+fn a_passphrase_deserialises_into_a_secret_and_serialises_only_outbound() {
+    // Off the wire: the daemon's view. The value must be usable...
     let json = r#"{"cmd":"vault.unlock","passphrase":"hunter2"}"#;
-    let request: Request = serde_json::from_str(json).expect("deserialise");
-    match &request {
+    let received: Request = serde_json::from_str(json).expect("deserialise");
+    match &received {
         Request::VaultUnlock { passphrase } => {
             assert_eq!(passphrase.expose().expose_str(), Some("hunter2"));
+            assert!(!passphrase.is_outbound(), "a received secret is not outbound");
         }
         other => panic!("wrong variant: {other:?}"),
     }
-    // A client must be able to send it, or unlocking would be impossible.
-    let round = serde_json::to_string(&request).expect("serialise");
+
+    // ...but writing it back out is refused, so the one path that would turn
+    // a received passphrase into a log line — someone reaching for
+    // `Serialize` because `Debug` was redacted — fails loudly instead.
+    let refused =
+        serde_json::to_string(&received).expect_err("a received passphrase must not serialise");
+    assert!(
+        !refused.to_string().contains("hunter2"),
+        "even the refusal must not quote the secret: {refused}"
+    );
+
+    // Built locally to send: this must work, or unlocking would be impossible.
+    let outgoing = Request::VaultUnlock { passphrase: secret("hunter2") };
+    let round = serde_json::to_string(&outgoing).expect("a client must be able to send this");
     assert!(round.contains("hunter2"));
+}
+
+/// The same boundary for the other two secret-carrying commands, so a future
+/// command that forgets it is not the first place anyone notices.
+#[test]
+fn no_received_secret_in_any_request_can_be_written_back_out() {
+    let received = [
+        r#"{"cmd":"vault.unlock","passphrase":"s3cret-one"}"#,
+        r#"{"cmd":"vault.change_passphrase","current":"s3cret-two","replacement":"s3cret-three"}"#,
+        r#"{"cmd":"vault.set_secret","secret_ref":"k:1","value":"s3cret-four"}"#,
+        r#"{"cmd":"provider.rotate_credentials","provider":"storj","access_key_id":"s3cret-five","secret_access_key":"s3cret-six","session_token":"s3cret-seven"}"#,
+    ];
+    for json in received {
+        let request: Request = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("{json} did not deserialise: {e}"));
+        assert!(
+            serde_json::to_string(&request).is_err(),
+            "`{}` re-serialised a secret it received",
+            request.command()
+        );
+        // And `Debug` stays clean regardless of direction.
+        let debugged = format!("{request:?}");
+        for needle in [
+            "s3cret-one",
+            "s3cret-two",
+            "s3cret-three",
+            "s3cret-four",
+            "s3cret-five",
+            "s3cret-six",
+            "s3cret-seven",
+        ] {
+            assert!(!debugged.contains(needle), "Debug leaked {needle}: {debugged}");
+        }
+    }
 }
 
 #[test]
@@ -773,5 +823,60 @@ fn error_payloads_preserve_their_code_across_the_wire() {
                 "code changed on the way back: {json}"
             );
         }
+    }
+}
+
+/// Regression guard: an error code must survive the round trip to the client.
+///
+/// `ErrorPayload::into_error` used to collapse every code it could not
+/// reconstruct into `Error::Internal`, which rewrote the code itself. A daemon
+/// reporting `kopia` reached the CLI as `internal`, so `--json` published the
+/// wrong value for the one field the schema tells callers to branch on.
+#[test]
+fn every_error_code_survives_the_round_trip_to_a_client() {
+    use superbackup_core::error::ErrorCode;
+    use superbackup_core::ipc::protocol::ErrorPayload;
+
+    // Deliberately includes the four that carry structured fields and must
+    // therefore take the `Transported` path: Io, VaultVersion, Kopia, Internal.
+    let codes = [
+        ErrorCode::Config,
+        ErrorCode::Io,
+        ErrorCode::Locked,
+        ErrorCode::BadPassphrase,
+        ErrorCode::VaultCorrupt,
+        ErrorCode::VaultVersion,
+        ErrorCode::Crypto,
+        ErrorCode::Kopia,
+        ErrorCode::KopiaMissing,
+        ErrorCode::RepoNotConnected,
+        ErrorCode::RepoExists,
+        ErrorCode::Schedule,
+        ErrorCode::JobNotFound,
+        ErrorCode::JobRunning,
+        ErrorCode::JobCancelled,
+        ErrorCode::Ipc,
+        ErrorCode::DaemonUnreachable,
+        ErrorCode::Service,
+        ErrorCode::Platform,
+        ErrorCode::Remote,
+        ErrorCode::Validation,
+        ErrorCode::Internal,
+    ];
+
+    for code in codes {
+        let payload = ErrorPayload {
+            code,
+            message: "something went wrong".into(),
+            hint: Some("try the other thing".into()),
+            detail: None,
+        };
+        let rebuilt = payload.into_error();
+        assert_eq!(
+            rebuilt.code(),
+            code,
+            "code {code:?} was rewritten as {:?} on the way to the client",
+            rebuilt.code()
+        );
     }
 }

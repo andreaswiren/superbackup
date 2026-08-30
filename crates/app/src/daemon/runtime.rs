@@ -34,7 +34,6 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use superbackup_core::config::Store;
-use superbackup_core::crypto::rekey::MigrationReport;
 use superbackup_core::engine::{SchedulerHandle, SchedulerStatus};
 use superbackup_core::ipc::{StreamItem, Topic};
 use superbackup_core::kopia::KopiaBinary;
@@ -97,7 +96,7 @@ pub struct PendingMigration {
     pub destinations: BTreeSet<Uuid>,
     /// The last report written to disk, for the status line and for a resume
     /// after a restart.
-    pub report: MigrationReport,
+    pub report: super::rekey::StoredReport,
 }
 
 impl PendingMigration {

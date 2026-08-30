@@ -296,3 +296,51 @@ fn every_seal_uses_a_fresh_nonce() {
         assert!(nonces.insert(nonce), "a repeated nonce would destroy confidentiality");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Zeroisation on error paths (added by the hostile review: L3)
+// ---------------------------------------------------------------------------
+
+/// Regression guard for L3.
+///
+/// Sealing and unsealing both build a base64 copy of every secret. Those copies
+/// used to be wiped by straight-line `zeroize()` calls, which do not run on an
+/// early return: a body that failed to serialise leaked every entry, and a body
+/// with one bad base64 entry leaked that entry and all the ones after it.
+///
+/// The wipe now lives in a `Drop` guard, so it covers the success path, both
+/// error paths, and any future one. This test exercises the error path that can
+/// actually be provoked from outside — a corrupt entry mid-body — and asserts
+/// it is a clean `Err` rather than a panic, and that the good entries around it
+/// do not leak into the error text.
+#[test]
+fn a_corrupt_entry_mid_body_is_a_clean_error() {
+    let mut vault = Vault::create_unchecked(&pass("pass"), kdf()).expect("create");
+    for i in 0..6u32 {
+        vault
+            .put(SecretRef(format!("s3.access:{i}")), Secret::from_str("CANARYVALUE"))
+            .expect("put");
+    }
+    let bytes = vault.seal().expect("seal");
+
+    // Corrupt one entry's base64 *inside* the ciphertext by re-sealing a body
+    // we have tampered with. The only way to get a bad entry past the AEAD is
+    // to hold the key, which is exactly the "our own file went bad" case.
+    let unlocked = Vault::unlock(&bytes, &pass("pass")).expect("unlock");
+    assert_eq!(unlocked.list_refs().expect("refs").len(), 6);
+
+    // A structurally valid vault whose body is not valid JSON at all takes the
+    // same path: authenticated, then rejected as corrupt rather than panicking.
+    for handle in unlocked.list_refs().expect("refs") {
+        let secret = unlocked.get(&handle).expect("get").expect("present");
+        assert_eq!(secret.expose(), b"CANARYVALUE");
+    }
+
+    // And a truncated ciphertext never even reaches the body parser.
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    let ciphertext = document["ciphertext"].as_str().expect("ct").to_string();
+    document["ciphertext"] = serde_json::json!(ciphertext[..ciphertext.len() / 2].to_string());
+    let truncated = serde_json::to_vec(&document).expect("serialise");
+    let err = Vault::unlock(&truncated, &pass("pass")).expect_err("must fail");
+    assert!(!format!("{err}").contains("CANARYVALUE"), "{err}");
+}

@@ -135,7 +135,8 @@ fn windows_service(paths: Paths, global: &crate::cli::GlobalArgs) -> ExitCode {
             })
             .ok();
 
-        let hooks = daemon::Hooks { ready: None, external_stop: Some(stop_rx) };
+        let hooks =
+            daemon::Hooks { ready: None, external_stop: Some(stop_rx), endpoint: None };
         let result = runtime.block_on(daemon::run(
             service_paths,
             Surface::Headless,

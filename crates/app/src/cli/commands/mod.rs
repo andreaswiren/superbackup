@@ -7,6 +7,9 @@ pub mod objects;
 pub mod setup;
 pub mod vault;
 
+#[cfg(test)]
+mod tests;
+
 use superbackup_core::ipc::protocol::Request;
 use superbackup_core::model::{Destination, Job, StorageProvider};
 

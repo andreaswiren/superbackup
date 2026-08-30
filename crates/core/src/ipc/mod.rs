@@ -181,7 +181,7 @@ pub struct Limits {
     /// say says it in microseconds.
     ///
     /// A blank line counts, so any client that cannot speak yet can still
-    /// prove it is alive. [`Client`](crate::ipc::Client) sends one the instant
+    /// prove it is alive. [`Client`] sends one the instant
     /// it connects.
     ///
     /// [`max_connections`]: Limits::max_connections
@@ -195,7 +195,7 @@ pub struct Limits {
     /// never held forever by something that has gone away without closing its
     /// socket — a half-open TCP-style hang that the OS will not report.
     ///
-    /// [`Client`](crate::ipc::Client) keeps itself alive automatically.
+    /// [`Client`] keeps itself alive automatically.
     pub idle_timeout: std::time::Duration,
 
     /// Frames queued for one connection before producers are made to wait.

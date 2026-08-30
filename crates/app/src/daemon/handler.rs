@@ -33,7 +33,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use superbackup_core::config::destination_passphrase;
 use superbackup_core::engine::CancelToken;
 use superbackup_core::ipc::protocol::*;
 use superbackup_core::ipc::{Handler, RequestContext, StreamItem, Topic};
@@ -51,7 +50,7 @@ use superbackup_core::{Error, ErrorCode, Result};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use super::executor::{build_driver, map_kopia_error};
+use super::executor::build_driver;
 use super::runtime::{
     health_summary, resolve_destination, resolve_job, resolve_provider, settings_changed_event,
     Runtime,
@@ -1072,9 +1071,13 @@ impl Handler for DaemonHandler {
         created.id = Uuid::new_v4();
         created.created_at = Utc::now();
         // Credential handles name the provider that owns them, so they can
-        // only be minted once the id is known.
-        if let ProviderKind::S3 { credentials, .. } = &mut created.kind {
-            *credentials = superbackup_core::model::S3Credentials::for_provider(&created.id);
+        // only be minted once the id is known. `ProviderKind` has one variant
+        // today; the match keeps this correct when a second one arrives.
+        match &mut created.kind {
+            ProviderKind::S3 { credentials, .. } => {
+                *credentials =
+                    superbackup_core::model::S3Credentials::for_provider(&created.id);
+            }
         }
         let id = created.id;
         let stored = created.clone();
@@ -1393,6 +1396,7 @@ impl Handler for DaemonHandler {
         let destination_id = dest.id;
         let destination_name = dest.name.clone();
         let target_display = target.display().to_string();
+        let restore_into = target.clone();
         tokio::spawn(async move {
             let (events, rx) = EventSink::channel(64);
             let (handle, token) = cancellation();
@@ -1422,7 +1426,10 @@ impl Handler for DaemonHandler {
             });
 
             let ctx = RunContext::new().with_cancel(token).with_events(events);
-            let outcome = driver.restore(&source, &target, &options, &ctx).await;
+            let outcome = driver.restore(&source, &restore_into, &options, &ctx).await;
+            // `ctx` owns an `EventSink`; the pump ends only when the last one
+            // is dropped, so joining before this would wait for ever.
+            drop(ctx);
             let _ = pump.await;
 
             let event = match &outcome {

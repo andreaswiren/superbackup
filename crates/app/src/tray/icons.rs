@@ -172,11 +172,23 @@ pub fn system_uses_light_theme() -> bool {
 }
 
 /// One mark: a state, a variant, and (for `Running`) an animation frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IconKey {
     pub health: Health,
     pub variant: Variant,
     pub frame: usize,
+}
+
+/// Hashed by the health's *stem* rather than by the enum, because
+/// [`Health`] deliberately derives `Ord` (so `max()` picks the icon to show)
+/// but not `Hash`. Hashing the stem keeps this key usable as a map key without
+/// asking the core crate to grow a derive it does not need.
+impl std::hash::Hash for IconKey {
+    fn hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
+        self.health.icon_stem().hash(hasher);
+        self.variant.hash(hasher);
+        self.frame.hash(hasher);
+    }
 }
 
 impl IconKey {
@@ -341,31 +353,31 @@ pub fn svg(key: IconKey) -> String {
 /// — hence the explicit `demultiply`.
 pub fn rasterise(key: IconKey, size: u32) -> Result<Vec<u8>, String> {
     let document = svg(key);
-    let options = usvg::Options::default();
-    let tree = usvg::Tree::from_str(&document, &options)
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_str(&document, &options)
         .map_err(|e| format!("the generated tray SVG did not parse: {e}"))?;
-    let mut pixmap = tiny_skia::Pixmap::new(size, size)
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
         .ok_or_else(|| format!("{size}x{size} is not a usable icon size"))?;
     let scale = size as f32 / CANVAS;
     resvg::render(
         &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
     pixmap.take_pixmap_mut_demultiply();
     Ok(pixmap.take())
 }
 
-/// Trait-free helper: `tiny_skia::Pixmap` has no `demultiply` on the owned
+/// Trait-free helper: `resvg::tiny_skia::Pixmap` has no `demultiply` on the owned
 /// type in 0.12, only on `PixmapMut`.
 trait Demultiply {
     fn take_pixmap_mut_demultiply(&mut self);
 }
 
-impl Demultiply for tiny_skia::Pixmap {
+impl Demultiply for resvg::tiny_skia::Pixmap {
     fn take_pixmap_mut_demultiply(&mut self) {
         self.as_mut().pixels_mut().iter_mut().for_each(|pixel| {
-            *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
+            *pixel = resvg::tiny_skia::PremultipliedColorU8::from_rgba(
                 demul(pixel.red(), pixel.alpha()),
                 demul(pixel.green(), pixel.alpha()),
                 demul(pixel.blue(), pixel.alpha()),
@@ -448,7 +460,7 @@ mod tests {
                 let key = IconKey::new(health, variant, 0);
                 let document = svg(key);
                 assert!(document.starts_with("<svg"), "{health:?}/{variant:?}");
-                usvg::Tree::from_str(&document, &usvg::Options::default())
+                resvg::usvg::Tree::from_str(&document, &resvg::usvg::Options::default())
                     .unwrap_or_else(|e| panic!("{health:?}/{variant:?} did not parse: {e}"));
             }
         }

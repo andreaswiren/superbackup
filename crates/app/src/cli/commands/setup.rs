@@ -45,29 +45,24 @@ pub fn init(ctx: &mut Ctx, args: InitArgs) -> CliResult<Outcome> {
     ctx.paths.ensure().map_err(CliError::from)?;
     ctx.ui.line(format!("Configuration lives in {}.", ctx.paths.config_dir.display()));
 
-    let daemon = Daemon::connect(ctx, Start::IfNeeded)?;
-    let version = reply!(daemon, Request::Version {}, Version)?;
-    ctx.ui.line(format!(
-        "Talking to superbackup {} (protocol {}).",
-        version.version, version.protocol
-    ));
-    match &version.kopia_version {
-        Some(v) => ctx.ui.line(format!("Kopia {v} is available.")),
-        None => ctx.ui.warn(
-            "kopia was not found. Repository destinations will not work until it is. Run \
-             `superbackup doctor --fix`.",
-        ),
-    }
-
-    // -- the vault -------------------------------------------------------
-    let state = reply!(daemon, Request::VaultIsUnlocked {}, Unlocked)?;
-    let vault_exists = ctx.paths.vault_file().exists();
-    if state.unlocked {
-        ctx.ui.line("The vault is already unlocked.");
+    // -- the vault, before anything can talk to anything ------------------
+    //
+    // This is the one place in the CLI that writes vault material, and it has
+    // to be. The daemon refuses to start without a vault (`Store::open`
+    // returns "no vault at ...; run `superbackup init` to create one"), so
+    // there is no running instance to ask, and there is no IPC command that
+    // creates one — there cannot be, because the process that would answer it
+    // is the process that will not start. Creating the sealed file is also not
+    // what the thin-client rule protects against: that rule exists so two
+    // processes never drive one kopia repository, and no repository is touched
+    // here.
+    let mut passphrase = None;
+    if ctx.paths.vault_file().exists() {
+        ctx.ui.line(format!("Using the vault already at {}.", ctx.paths.vault_file().display()));
     } else {
         let secret = match args.passphrase_file.as_deref() {
             Some(path) => prompt::from_file(path)?,
-            None if !vault_exists => {
+            None => {
                 ctx.ui.blank();
                 ctx.ui.heading("Choose a master passphrase");
                 ctx.ui.line("It protects every repository key superbackup holds.");
@@ -78,7 +73,53 @@ pub fn init(ctx: &mut Ctx, args: InitArgs) -> CliResult<Outcome> {
                     "Repeat the master passphrase: ",
                 )?
             }
-            None => prompt::from_terminal(ctx, "Master passphrase: ")?,
+        };
+        if let Some(text) = secret.expose_str() {
+            let strength = superbackup_core::secret::estimate_strength(text);
+            if !strength.is_acceptable() {
+                ctx.ui.warn(format!(
+                    "that passphrase is {}. Everything superbackup stores is only as strong as \
+                     it is; change it with `superbackup change-passphrase`.",
+                    strength.title().to_lowercase()
+                ));
+            }
+        }
+        superbackup_core::config::Store::initialise(ctx.paths.clone(), &secret)
+            .map_err(CliError::from)?;
+        ctx.ui.line(format!("Created the vault at {}.", ctx.paths.vault_file().display()));
+        passphrase = Some(secret);
+    }
+
+    let daemon = Daemon::connect(ctx, Start::IfNeeded)?;
+    let version = reply!(daemon, Request::Version {}, Version)?;
+    ctx.ui.line(format!(
+        "Talking to superbackup {} (protocol {}).",
+        version.version, version.protocol
+    ));
+    match &version.kopia_version {
+        Some(v) => ctx.ui.line(format!("Kopia {v} is available.")),
+        // Not a warning: on a first run the instance that has just started is
+        // usually still fetching kopia, and telling the user it is "missing"
+        // seconds before it arrives sends them looking for a problem that is
+        // already solving itself.
+        None => ctx.ui.line(
+            "Kopia is not ready yet; superbackup fetches it in the background. \
+             `superbackup doctor` will say when it is.",
+        ),
+    }
+
+    // -- handing the keys to the running instance -------------------------
+    let state = reply!(daemon, Request::VaultIsUnlocked {}, Unlocked)?;
+    if state.unlocked {
+        ctx.ui.line("The vault is already unlocked.");
+    } else {
+        let secret = match passphrase.take() {
+            // Just created above: do not make the user type it a third time.
+            Some(secret) => secret,
+            None => match args.passphrase_file.as_deref() {
+                Some(path) => prompt::from_file(path)?,
+                None => prompt::from_terminal(ctx, "Master passphrase: ")?,
+            },
         };
         let unlocked = reply!(
             daemon,
@@ -140,11 +181,19 @@ pub fn init(ctx: &mut Ctx, args: InitArgs) -> CliResult<Outcome> {
 
     ctx.ui.blank();
     ctx.ui.heading("Next");
+    let mut next = Table::new(vec![Column::new("").flex(), Column::new("").flex()]);
     if !have_destinations {
-        ctx.ui.line("  superbackup destination add --local PATH   choose where backups go");
+        next.push(vec![
+            Cell::new("superbackup destination add --local PATH"),
+            Cell::new("choose where backups go"),
+        ]);
     }
-    ctx.ui.line("  superbackup job add --name NAME --source PATH   say what to back up");
-    ctx.ui.line("  superbackup status                             see how it is going");
+    next.push(vec![
+        Cell::new("superbackup job add --name NAME --source PATH"),
+        Cell::new("say what to back up"),
+    ]);
+    next.push(vec![Cell::new("superbackup status"), Cell::new("see how it is going")]);
+    ctx.ui.table(&next);
 
     Outcome::data(serde_json::json!({
         "config_dir": ctx.paths.config_dir,

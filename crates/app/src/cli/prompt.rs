@@ -32,14 +32,21 @@ pub fn confirm(ctx: &mut Ctx, what: &str, skip: bool) -> CliResult<()> {
     if skip {
         return Ok(());
     }
+    // The caller's phrasing is a description, not necessarily a sentence.
+    // Finishing it here keeps both messages below readable whatever it says.
+    let what = match what.trim_end() {
+        trimmed if trimmed.ends_with('.') => trimmed.to_string(),
+        trimmed => format!("{trimmed}."),
+    };
+
     if ctx.global.no_input {
         return Err(CliError::usage(format!(
-            "{what} needs confirmation, and --no-input forbids prompting"
+            "this needs confirmation and --no-input forbids prompting: {what}"
         ))
         .with_hint("Pass -y to confirm without being asked."));
     }
 
-    let question = format!("{what}. Continue? [y/N] ");
+    let question = format!("{what} Continue? [y/N] ");
     let answer = ask_line(ctx, &question)?;
     let answer = answer.trim().to_lowercase();
     if answer == "y" || answer == "yes" {
@@ -343,7 +350,7 @@ mod tests {
     #[test]
     fn no_input_refuses_to_ask_for_a_passphrase() {
         let (mut ctx, _c) = testing::unreachable_ctx(false);
-        let error = from_terminal(&mut ctx, "Passphrase: ").err().expect("must refuse");
+        let error = from_terminal(&mut ctx, "Passphrase: ").expect_err("must refuse");
         assert_eq!(error.exit_code(), crate::cli::exit::USAGE);
         assert!(error.hint.unwrap_or_default().contains("--passphrase-file"));
     }
@@ -376,14 +383,14 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("pp.txt");
         std::fs::write(&path, b"\n").expect("write");
-        let error = from_file(&path).err().expect("an empty passphrase is not a passphrase");
+        let error = from_file(&path).expect_err("an empty passphrase is not a passphrase");
         assert_eq!(error.code, ErrorCode::Validation);
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_missing_passphrase_file_says_which_file() {
-        let error = from_file(Path::new("/definitely/not/here.txt")).err().expect("must fail");
+        let error = from_file(Path::new("/definitely/not/here.txt")).expect_err("must fail");
         assert_eq!(error.code, ErrorCode::Io);
         assert!(error.message.contains("here.txt"), "{}", error.message);
     }

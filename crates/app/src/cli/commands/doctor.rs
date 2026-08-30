@@ -115,13 +115,7 @@ pub fn doctor(ctx: &mut Ctx, args: DoctorArgs) -> CliResult<Outcome> {
         match reply!(daemon, Request::Doctor { fix: args.fix }, Doctor) {
             Ok(remote) => {
                 fixed.extend(remote.fixed.iter().cloned());
-                for remote_check in remote.checks {
-                    // The local answer wins for anything both can see: this
-                    // process is the one the user is actually running.
-                    if !checks.iter().any(|c| c.id == remote_check.id) {
-                        checks.push(remote_check);
-                    }
-                }
+                merge(&mut checks, remote.checks);
             }
             Err(e) => checks.push(with_detail(
                 check("daemon.doctor", "the running instance self-checks", CheckStatus::Warn),
@@ -149,6 +143,73 @@ pub fn doctor(ctx: &mut Ctx, args: DoctorArgs) -> CliResult<Outcome> {
     } else {
         Outcome::data(value)
     }
+}
+
+/// Fold the daemon's checks into the local ones without saying the same thing
+/// twice.
+///
+/// Both sides legitimately check some of the same ground, and a report that
+/// lists "start at login" twice reads like a bug in the report. Checks are
+/// grouped by the first segment of their id — `dest`, `service`, `autostart` —
+/// and within a group:
+///
+/// * a daemon check that only reports `skipped` never displaces a local one,
+///   because the local one is at least as informative;
+/// * a daemon check that agrees with a local `pass` is dropped as duplicate
+///   good news;
+/// * a daemon check that *found something* is always kept, even when the local
+///   check passed. Two components disagreeing is itself worth seeing, and a
+///   failure must never be hidden by a tidier-looking report;
+/// * a local `skipped` placeholder gives way to real daemon results, which is
+///   what turns "destinations are reachable: skipped" into a list of
+///   destinations that were actually probed.
+fn merge(checks: &mut Vec<DoctorCheck>, remote: Vec<DoctorCheck>) {
+    fn namespace(id: &str) -> &str {
+        id.split('.').next().unwrap_or(id)
+    }
+
+    // Only the checks this process produced take part in the comparison;
+    // anything already merged in must not shadow the next daemon check.
+    let local: Vec<(String, CheckStatus)> =
+        checks.iter().map(|c| (c.id.clone(), c.status)).collect();
+    let mut superseded: Vec<String> = Vec::new();
+
+    for remote_check in remote {
+        if checks.iter().any(|c| c.id == remote_check.id) {
+            continue;
+        }
+
+        // A daemon id that extends a local one is the same question answered
+        // in more detail: `dest.reachable.<uuid>` against `dest.reachable`.
+        // The detailed answer replaces the summary.
+        let refines: Vec<&String> = local
+            .iter()
+            .map(|(id, _)| id)
+            .filter(|id| remote_check.id.starts_with(&format!("{id}.")))
+            .collect();
+        if !refines.is_empty() {
+            for id in refines {
+                if !superseded.contains(id) {
+                    superseded.push(id.clone());
+                }
+            }
+            checks.push(remote_check);
+            continue;
+        }
+
+        // Same subject, different question. Keep whichever says more, and
+        // never let a tidier report hide a problem.
+        let ns = namespace(&remote_check.id);
+        let same_subject = local.iter().any(|(id, _)| namespace(id) == ns);
+        if same_subject
+            && matches!(remote_check.status, CheckStatus::Pass | CheckStatus::Skipped)
+        {
+            continue;
+        }
+        checks.push(remote_check);
+    }
+
+    checks.retain(|c| !superseded.contains(&c.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -254,8 +315,11 @@ fn vault_checks(ctx: &mut Ctx, daemon: Option<&Daemon>) -> Vec<DoctorCheck> {
                 out.push(check("vault.unlocked", "the vault is unlocked", CheckStatus::Pass))
             }
             Ok(_) => out.push(with_hint(
-                check("vault.unlocked", "the vault is unlocked", CheckStatus::Warn),
-                "Scheduled backups cannot run while it is locked. Run `superbackup unlock`.",
+                with_detail(
+                    check("vault.unlocked", "the vault is unlocked", CheckStatus::Warn),
+                    "it is locked, so no scheduled backup can run",
+                ),
+                "Run `superbackup unlock`.",
             )),
             Err(e) => out.push(with_detail(
                 check("vault.unlocked", "the vault is unlocked", CheckStatus::Warn),
@@ -340,10 +404,11 @@ fn autostart_checks(fix: bool, fixed: &mut Vec<String>) -> Vec<DoctorCheck> {
         return vec![c];
     }
 
-    vec![with_detail(
-        check("autostart.state", "start at login", CheckStatus::Pass),
-        summary,
-    )]
+    // Not being registered is a choice, not a fault: a machine with the
+    // service installed does not want it. Reported as "not applicable" so the
+    // tick next to it never contradicts the sentence beside it.
+    let status = if status.state.is_enabled() { CheckStatus::Pass } else { CheckStatus::Skipped };
+    vec![with_detail(check("autostart.state", "start at login", status), summary)]
 }
 
 fn service_check() -> DoctorCheck {
@@ -458,11 +523,17 @@ fn destination_checks(ctx: &mut Ctx, daemon: &Daemon) -> Vec<DoctorCheck> {
                 ),
                 "Every backup to this destination will fail until it can be written to.",
             ),
-            Ok(probe) => with_detail(
-                check(&id, &title, CheckStatus::Fail),
-                probe.detail.unwrap_or_else(|| "could not be reached".to_string()),
+            Ok(probe) => with_hint(
+                with_detail(
+                    check(&id, &title, CheckStatus::Fail),
+                    probe.detail.unwrap_or_else(|| "could not be reached".to_string()),
+                ),
+                format!("Check the path or the credentials, then `superbackup destination test {}`.", destination.name),
             ),
-            Err(e) => with_detail(check(&id, &title, CheckStatus::Fail), e.message),
+            Err(e) => with_hint(
+                with_detail(check(&id, &title, CheckStatus::Fail), e.message),
+                format!("Try `superbackup destination test {}` for the full error.", destination.name),
+            ),
         });
     }
     out
@@ -511,21 +582,6 @@ fn render(ctx: &mut Ctx, checks: &[DoctorCheck], fixed: &[String], fixing: bool)
         }
     }
 
-    // Platform limitations are facts about the operating system, not faults,
-    // so they are listed rather than counted as failures. They are here
-    // because the alternative is a user meeting each one as a bug report.
-    let limitations = platform::limitations();
-    if !limitations.is_empty() {
-        ctx.ui.blank();
-        ctx.ui.heading("Worth knowing about this platform");
-        for limitation in &limitations {
-            ctx.ui.line(format!("  [{}] {}", limitation.area, squash(&limitation.message)));
-            if let Some(remedy) = &limitation.remedy {
-                ctx.ui.line(format!("      {}", squash(remedy)));
-            }
-        }
-    }
-
     let failed = checks.iter().filter(|c| c.status == CheckStatus::Fail).count();
     let warned = checks.iter().filter(|c| c.status == CheckStatus::Warn).count();
     ctx.ui.blank();
@@ -549,6 +605,23 @@ fn render(ctx: &mut Ctx, checks: &[DoctorCheck], fixed: &[String], fixing: bool)
         );
     } else {
         ctx.ui.coloured(Colour::Green, "Everything checks out.");
+    }
+
+    // Platform limitations are facts about the operating system, not faults,
+    // so they are listed rather than counted as failures — and after the
+    // verdict, so the verdict is the line next to the checks it summarises.
+    // They are here at all because the alternative is a user meeting each one
+    // as a bug report.
+    let limitations = platform::limitations();
+    if !limitations.is_empty() {
+        ctx.ui.blank();
+        ctx.ui.heading("Worth knowing about this platform (facts, not faults)");
+        for limitation in &limitations {
+            ctx.ui.line(format!("  [{}] {}", limitation.area, squash(&limitation.message)));
+            if let Some(remedy) = &limitation.remedy {
+                ctx.ui.line(format!("      {}", squash(remedy)));
+            }
+        }
     }
 }
 

@@ -1841,8 +1841,58 @@ impl ModalSize {
 /// The modal shell: header, scrolling body, footer. Never nested (L13); a flow
 /// that needs two decisions is a multi-step modal with its own step state.
 ///
-/// Returns `true` when the user asked to close it (the `x`, Escape, or a click
-/// outside), which a blocking modal ignores.
+/// The body and the footer are rendered through [`ModalShell`] rather than
+/// through two closures, so both can borrow the same draft state — they run
+/// one after the other, not at the same time.
+pub struct ModalShell<'a> {
+    ui: &'a mut Ui,
+    width: f32,
+    max_height: f32,
+    footer_drawn: bool,
+}
+
+impl ModalShell<'_> {
+    /// The scrolling body, 20px padding.
+    pub fn body<R>(&mut self, add: impl FnOnce(&mut Ui) -> R) -> R {
+        let width = self.width;
+        let max_height = self.max_height;
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(20, 20))
+            .show(self.ui, |ui| {
+                ui.set_width(width - 40.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_height - 116.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.set_width(width - 40.0);
+                        add(ui)
+                    })
+                    .inner
+            })
+            .inner
+    }
+
+    /// The 60px footer: a top rule, then buttons right-aligned, primary last.
+    pub fn footer(&mut self, add: impl FnOnce(&mut Ui)) {
+        let t = theme::tokens(self.ui.ctx());
+        let width = self.width;
+        let (line, _) = self.ui.allocate_exact_size(Vec2::new(width, 1.0), Sense::hover());
+        self.ui.painter().rect_filled(line, 0, t.border_subtle);
+        self.ui.allocate_ui_with_layout(
+            Vec2::new(width, 60.0),
+            Layout::right_to_left(Align::Center),
+            |ui| {
+                ui.add_space(space::XXL);
+                ui.spacing_mut().item_spacing.x = space::M;
+                add(ui);
+            },
+        );
+        self.footer_drawn = true;
+    }
+}
+
+/// Show a modal. Returns `true` when the user asked to close it (the `x`,
+/// Escape, or a click outside), which a blocking modal ignores.
 pub fn modal<R>(
     ctx: &egui::Context,
     id: &str,
@@ -1850,8 +1900,7 @@ pub fn modal<R>(
     title: &str,
     icon: Option<(Icon, Color32)>,
     blocking: bool,
-    body: impl FnOnce(&mut Ui) -> R,
-    footer: impl FnOnce(&mut Ui),
+    content: impl FnOnce(&mut ModalShell<'_>) -> R,
 ) -> (bool, R) {
     let t = theme::tokens(ctx);
     let screen = ctx.screen_rect();
@@ -1905,36 +1954,8 @@ pub fn modal<R>(
                 },
             );
 
-            // Body.
-            let inner = egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(20, 20))
-                .show(ui, |ui| {
-                    ui.set_width(width - 40.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(max_height - 116.0)
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            ui.set_width(width - 40.0);
-                            body(ui)
-                        })
-                        .inner
-                })
-                .inner;
-
-            // Footer, 60px, buttons right-aligned.
-            let (line, _) = ui.allocate_exact_size(Vec2::new(width, 1.0), Sense::hover());
-            ui.painter().rect_filled(line, 0, t.border_subtle);
-            ui.allocate_ui_with_layout(
-                Vec2::new(width, 60.0),
-                Layout::right_to_left(Align::Center),
-                |ui| {
-                    ui.add_space(space::XXL);
-                    ui.spacing_mut().item_spacing.x = space::M;
-                    footer(ui);
-                },
-            );
-
-            inner
+            let mut shell = ModalShell { ui, width, max_height, footer_drawn: false };
+            content(&mut shell)
         });
 
     if !blocking {

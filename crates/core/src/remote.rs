@@ -904,8 +904,26 @@ pub fn apply_pull_with(store: &mut Store, plan: &PullPlan, options: &PullOptions
 /// Write a pulled configuration without touching the vault.
 ///
 /// For the "review the diff, take the jobs, keep my own keys" flow.
-pub fn apply_config_only(paths: &crate::paths::Paths, config: &Config) -> Result<()> {
-    ConfigStore::new(paths.clone()).save(config).map(|_| ())
+///
+/// Takes the whole [`PullPlan`] rather than a bare [`Config`] on purpose: a
+/// signature that accepted any configuration would accept the publisher's
+/// *unsanitised* one, and this is exactly the path on which nobody is
+/// re-checking the remote block. The local block is re-asserted here from
+/// what is on disk, as it is in [`apply_pull`].
+pub fn apply_config_only(paths: &crate::paths::Paths, plan: &PullPlan) -> Result<()> {
+    let Some(config) = &plan.incoming_config else {
+        return Err(Error::Remote(
+            "the vault at this remote does not publish a configuration; there is nothing              to apply without also replacing the local secrets"
+                .into(),
+        ));
+    };
+    let store = ConfigStore::new(paths.clone());
+    // Lenient: a local configuration too broken to validate must not stop the
+    // user replacing it with a good one from the remote.
+    let (local, _, _) = store.load_lenient()?;
+    let mut config = config.clone();
+    config.remote = local.remote;
+    store.save(&config).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------

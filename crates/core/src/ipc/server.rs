@@ -308,6 +308,8 @@ impl<H: Handler> Server<H> {
                 // queued cannot tell a busy daemon from a hung one.
                 let limit = self.limits.max_connections;
                 let service_scope = false;
+                let handshake_ms = millis(self.limits.handshake_timeout);
+                let idle_ms = millis(self.limits.idle_timeout);
                 set.spawn(async move {
                     let mut stream = stream;
                     let hello = ServerFrame::Hello {
@@ -315,6 +317,8 @@ impl<H: Handler> Server<H> {
                         min_protocol: MIN_PROTOCOL_VERSION,
                         version: crate::VERSION.to_string(),
                         service_scope,
+                        handshake_timeout_ms: handshake_ms,
+                        idle_timeout_ms: idle_ms,
                     };
                     let _ = codec::write_line(&mut stream, &hello).await;
                     let refusal = ServerFrame::Error {
@@ -354,6 +358,11 @@ impl<H: Handler> Server<H> {
 // ---------------------------------------------------------------------------
 // One connection
 // ---------------------------------------------------------------------------
+
+/// Saturating conversion for the wire, which carries milliseconds.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
 
 /// Token bucket, one per connection.
 ///
@@ -507,6 +516,10 @@ async fn connection_loop<H: Handler>(
             min_protocol: MIN_PROTOCOL_VERSION,
             version: crate::VERSION.to_string(),
             service_scope: false,
+            // The deadlines are configurable, so the client is told them
+            // rather than left to guess and be disconnected for guessing low.
+            handshake_timeout_ms: millis(limits.handshake_timeout),
+            idle_timeout_ms: millis(limits.idle_timeout),
         })
         .await
         .is_err()

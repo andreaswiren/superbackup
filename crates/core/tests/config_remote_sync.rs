@@ -11,7 +11,9 @@ use superbackup_core::crypto::{KdfParams, Vault};
 use superbackup_core::error::Error;
 use superbackup_core::model::*;
 use superbackup_core::paths::Paths;
-use superbackup_core::remote::{apply_pull, verify_pull, FetchedVault};
+use superbackup_core::remote::{
+    apply_pull, apply_pull_with, verify_pull, FetchedVault, Freshness, PullOptions,
+};
 use superbackup_core::secret::Secret;
 use uuid::Uuid;
 
@@ -37,6 +39,13 @@ impl Drop for Home {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+/// These fixtures model a machine adopting *another installation's* vault,
+/// which is the one legitimate reason to accept a different `vault_id` — the
+/// "join an existing setup" flow. `apply_pull` refuses it by default, so the
+/// intent has to be stated. `applying_a_pull_from_a_different_vault_is_refused`
+/// below guards the default.
+const JOINING: PullOptions = PullOptions { allow_rollback: false, allow_different_vault: true };
 
 fn abs(tail: &str) -> PathBuf {
     if cfg!(windows) {
@@ -196,7 +205,7 @@ fn a_full_pull_shows_a_diff_and_then_applies_it() {
     assert_eq!(std::fs::read(home.paths().vault_file()).expect("read"), local_vault_bytes_before);
     assert_eq!(local.config().jobs.len(), 1);
 
-    apply_pull(&mut local, &plan).expect("apply");
+    apply_pull_with(&mut local, &plan, &JOINING).expect("apply");
 
     assert_eq!(local.config().jobs.len(), 2);
     assert!(local.config().jobs.iter().any(|j| j.name == "documents"));
@@ -500,7 +509,7 @@ fn a_vault_with_no_published_config_updates_only_the_secrets() {
     assert!(plan.incoming_config.is_none());
     assert!(plan.diff.is_empty());
 
-    apply_pull(&mut local, &plan).expect("apply");
+    apply_pull_with(&mut local, &plan, &JOINING).expect("apply");
     assert_eq!(local.config().jobs.len(), 1, "local job definitions must survive");
     assert_eq!(local.config().jobs[0].name, "keep-me");
 
@@ -569,11 +578,151 @@ fn a_publication_payload_round_trips_to_a_second_machine() {
     assert_eq!(plan.diff.destinations.added.len(), 1);
     assert!(plan.incoming_warnings.iter().all(|w| !w.message.is_empty()));
 
-    apply_pull(&mut b, &plan).expect("apply");
+    apply_pull_with(&mut b, &plan, &JOINING).expect("apply");
     b.unlock(&Secret::from_str("shared")).expect("unlock with the publisher passphrase");
     assert_eq!(b.config().jobs[0].name, "nightly");
     assert_eq!(
         b.secret(&SecretRef("s3.access:1".into())).expect("get").expect("present").expose(),
         b"AKIAFROMA"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Freshness and identity (added by the hostile review: H4 and M2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn applying_a_pull_from_a_different_vault_is_refused_by_default() {
+    // The same fixture as the happy path above, minus the explicit `JOINING`
+    // confirmation. `vault_id` is documented as the thing that distinguishes
+    // "a newer version of mine" from "a stranger's key material", and the
+    // refusal has to live in `apply_pull` rather than in a caller's dialog.
+    let home = Home::new("difffefault");
+    let mut local = store(&home, "shared");
+    let before = std::fs::read(home.paths().vault_file()).expect("read");
+
+    let fetched = published("shared", &Config::default(), &[("s3.access:1", "THEIRS")]);
+    let plan = verify_pull(
+        &fetched,
+        local.config(),
+        local.vault(),
+        &remote_source(vec![]),
+        &Secret::from_str("shared"),
+    )
+    .expect("verification succeeds; application is what must refuse");
+    assert!(plan.different_vault);
+    assert_eq!(plan.freshness, Freshness::Unrelated, "ages are not comparable across vaults");
+
+    let err = apply_pull(&mut local, &plan).expect_err("must refuse without confirmation");
+    assert!(format!("{err}").contains("different vault"), "{err}");
+    assert_eq!(std::fs::read(home.paths().vault_file()).expect("read"), before);
+}
+
+#[test]
+fn pulling_a_newer_version_of_the_same_vault_needs_no_confirmation() {
+    // The ordinary case must stay ordinary: the freshness check exists to stop
+    // replays, not to make routine sync require a dialog.
+    let home = Home::new("newer");
+    let mut local = store(&home, "shared");
+    local.unlock(&Secret::from_str("shared")).expect("unlock");
+
+    // Same vault, sealed again with a new secret: strictly newer.
+    local
+        .vault_file_mut()
+        .vault_mut()
+        .put(SecretRef("s3.access:1".into()), Secret::from_str("NEWER"))
+        .expect("put");
+    let bytes = local.vault_file_mut().vault_mut().seal().expect("seal");
+    let fetched =
+        FetchedVault { bytes, source_url: "https://example.com/config.sbvault".into(), sha: None };
+
+    let plan = verify_pull(
+        &fetched,
+        local.config(),
+        local.vault(),
+        &remote_source(vec![]),
+        &Secret::from_str("shared"),
+    )
+    .expect("a newer version of my own vault needs no confirmation");
+    assert!(!plan.different_vault);
+    assert!(matches!(plan.freshness, Freshness::Newer | Freshness::Same), "{:?}", plan.freshness);
+    assert!(!plan.rollback_confirmed);
+    apply_pull(&mut local, &plan).expect("apply");
+}
+
+#[test]
+fn a_pull_never_adopts_the_publishers_remote_block() {
+    // H5 at the level of this suite: whatever the publisher says about
+    // `trusted_signers`, `url` or `auth`, the local block wins.
+    let home = Home::new("remotelocal");
+    let mut local = store(&home, "shared");
+
+    let theirs = Config {
+        remote: Some({
+            let mut r = remote_source(vec![]);
+            r.url = "https://github.com/them/theirs".into();
+            r
+        }),
+        ..Config::default()
+    };
+    // Correctly signed by a publisher this machine pins, so every authenticity
+    // check passes and only the remote-block rule is under test.
+    let (fetched, signer) = published_signed("shared", &theirs, &[]);
+
+    let mut mine = remote_source(vec![signer]);
+    mine.url = "https://github.com/me/mine".into();
+    let mut config = local.config().clone();
+    config.remote = Some(mine.clone());
+    local.set_config(config).expect("set config");
+
+    let plan =
+        verify_pull(&fetched, local.config(), local.vault(), &mine, &Secret::from_str("shared"))
+            .expect("verify");
+    assert!(plan.incoming_remote_ignored);
+    let incoming = plan.incoming_config.as_ref().expect("config").remote.as_ref().expect("remote");
+    assert_eq!(incoming.trusted_signers, mine.trusted_signers);
+    assert_eq!(incoming.url, mine.url);
+
+    apply_pull_with(&mut local, &plan, &JOINING).expect("apply");
+    let after = local.config().remote.as_ref().expect("remote");
+    assert_eq!(after.trusted_signers, mine.trusted_signers);
+    assert_eq!(after.url, mine.url);
+}
+
+#[test]
+fn taking_only_the_config_also_keeps_the_local_remote_block() {
+    // `apply_config_only` is the "take their jobs, keep my keys" path. It is
+    // the one place a pulled configuration reaches disk without going through
+    // `apply_pull`, so it needs the same rule.
+    let home = Home::new("configonly");
+    let mut local = store(&home, "shared");
+
+    let mut mine = remote_source(vec!["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()]);
+    mine.url = "https://github.com/me/mine".into();
+    let mut config = local.config().clone();
+    config.destinations.push(destination("Local repo"));
+    config.remote = Some(mine.clone());
+    local.set_config(config).expect("set config");
+
+    let theirs = Config { remote: Some(remote_source(vec![])), ..Config::default() };
+    let (fetched, signer) = published_signed("shared", &theirs, &[]);
+    let mut pinned = mine.clone();
+    pinned.trusted_signers = vec![signer];
+    let mut config = local.config().clone();
+    config.remote = Some(pinned.clone());
+    local.set_config(config).expect("re-pin");
+
+    let plan =
+        verify_pull(&fetched, local.config(), local.vault(), &pinned, &Secret::from_str("shared"))
+            .expect("verify");
+
+    superbackup_core::remote::apply_config_only(&home.paths(), &plan).expect("apply config");
+
+    local.reload_config().expect("reload");
+    let after = local.config().remote.as_ref().expect("the remote block must survive");
+    assert_eq!(after.trusted_signers, pinned.trusted_signers);
+    assert_eq!(after.url, pinned.url);
+
+    // And the vault really was left alone.
+    assert!(local.vault_file().list_backups().expect("backups").is_empty());
 }

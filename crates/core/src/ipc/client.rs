@@ -80,19 +80,28 @@ const SUBSCRIPTION_DEPTH: usize = 256;
 /// destroyed by whatever is on the other end of a socket either.
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
-/// How often the client proves it is still there.
+/// The floor on how often the client proves it is still there.
 ///
-/// The daemon closes a connection that has been silent for
-/// [`Limits::idle_timeout`](crate::ipc::Limits::idle_timeout), because a
-/// connection permit held forever by something that has gone away without
-/// closing its socket locks a real client out. A blank line is a keep-alive,
-/// costs one small write, and resets that clock.
+/// The daemon closes a connection that has been silent for its idle timeout,
+/// because a connection permit held forever by something that has gone away
+/// without closing its socket locks a real client out. A blank line is a
+/// keep-alive, costs one small write, and resets that clock.
 ///
-/// A third of the window, so two lost ticks are survivable. The first tick
-/// fires immediately on connect, which is also what satisfies the daemon's
-/// much shorter handshake deadline — a client that has nothing to ask for yet
-/// (a CLI waiting for the user to type a passphrase) is still visibly alive.
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(100);
+/// The interval is *derived from what the daemon says* in its greeting — a
+/// third of its idle window, so two lost ticks are survivable — rather than
+/// hard-coded, because the deadline is configurable and a client that guessed
+/// would be disconnected by any deployment that shortened it. This floor only
+/// stops a pathologically small configured timeout from turning the keep-alive
+/// into a busy loop.
+///
+/// The first tick fires immediately on connect, which is what satisfies the
+/// daemon's much shorter handshake deadline: a client that has nothing to ask
+/// for yet — a CLI waiting for the user to type a passphrase — is still
+/// visibly alive.
+const MIN_KEEPALIVE_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Used when the daemon reports no idle deadline at all.
+const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(100);
 
 /// What the daemon said about itself when the connection opened.
 #[derive(Debug, Clone)]
@@ -102,6 +111,24 @@ pub struct Hello {
     pub version: String,
     /// True when this is the machine-wide service instance.
     pub service_scope: bool,
+    /// Milliseconds the daemon allows before the connection's first line, and
+    /// between lines thereafter. Zero means it enforces no deadline.
+    pub handshake_timeout_ms: u64,
+    pub idle_timeout_ms: u64,
+}
+
+impl Hello {
+    /// How often this client must speak to keep the connection.
+    ///
+    /// A third of the daemon's window, floored so a misconfigured daemon
+    /// cannot turn the keep-alive into a busy loop, and falling back to a
+    /// sensible period when the daemon reports no deadline.
+    fn keepalive_interval(&self) -> Duration {
+        if self.idle_timeout_ms == 0 {
+            return DEFAULT_KEEPALIVE_INTERVAL;
+        }
+        Duration::from_millis(self.idle_timeout_ms / 3).max(MIN_KEEPALIVE_INTERVAL)
+    }
 }
 
 /// Something to put on the wire.
@@ -209,9 +236,21 @@ impl Client {
         )?;
 
         let hello = match codec::parse::<ServerFrame>(&line) {
-            Ok(ServerFrame::Hello { protocol, min_protocol, version, service_scope }) => {
-                Hello { protocol, min_protocol, version, service_scope }
-            }
+            Ok(ServerFrame::Hello {
+                protocol,
+                min_protocol,
+                version,
+                service_scope,
+                handshake_timeout_ms,
+                idle_timeout_ms,
+            }) => Hello {
+                protocol,
+                min_protocol,
+                version,
+                service_scope,
+                handshake_timeout_ms,
+                idle_timeout_ms,
+            },
             Ok(ServerFrame::Error { body, .. }) => return Err(body.into_error()),
             Ok(other) => {
                 return Err(Error::Ipc(format!(
@@ -264,8 +303,9 @@ impl Client {
         // connection open. When the last `Client` and `Subscription` are gone
         // the upgrade fails and this task ends with them.
         let keepalive = outbound.downgrade();
+        let period = hello.keepalive_interval();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(KEEPALIVE_INTERVAL);
+            let mut tick = tokio::time::interval(period);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 // The first tick completes immediately, which is what proves

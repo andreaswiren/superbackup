@@ -103,11 +103,12 @@ impl KopiaDriver {
             ));
         }
         if matches!(destination.kind, DestinationKind::S3 { .. }) && provider.is_none() {
-            return Err(KopiaError::local(label, KopiaFailure::Unusable, None)
-                .with_message(format!(
+            return Err(KopiaError::local(label, KopiaFailure::Unusable, None).with_message(
+                format!(
                 "\"{}\" points at a storage provider that no longer exists in the configuration.",
                 destination.name
-            )));
+            ),
+            ));
         }
 
         Ok(KopiaDriver {

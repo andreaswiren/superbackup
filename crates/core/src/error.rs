@@ -117,6 +117,19 @@ pub enum Error {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// An error that arrived over IPC whose code has no local constructor.
+    ///
+    /// Several variants above carry structured fields (`Io` wraps a
+    /// `std::io::Error`, `Kopia` an exit status) that cannot be rebuilt from
+    /// the wire. Collapsing those into [`Error::Internal`] silently rewrote the
+    /// code as `internal` — and the machine-readable `error.code` is the one
+    /// thing the CLI schema tells callers to branch on, so a client saw
+    /// `internal` where the daemon had said `kopia`. This variant keeps the
+    /// original code and hint intact while accepting that the structured
+    /// payload does not survive the trip.
+    #[error("{message}")]
+    Transported { code: ErrorCode, message: String, hint: Option<String> },
 }
 
 impl Error {
@@ -145,6 +158,7 @@ impl Error {
             Error::Remote(_) => ErrorCode::Remote,
             Error::Validation(_) => ErrorCode::Validation,
             Error::Internal(_) => ErrorCode::Internal,
+            Error::Transported { code, .. } => *code,
         }
     }
 
@@ -166,7 +180,20 @@ impl Error {
             Error::VaultCorrupt(_) => {
                 Some("Restore config.sbvault from a backup; do not overwrite it.")
             }
+            // A transported hint is an owned String, so it cannot be returned
+            // from this `&'static str` API; `hint_owned` below serves it.
             _ => None,
+        }
+    }
+
+    /// The hint to show, including one that arrived over IPC.
+    ///
+    /// Prefer this over [`Error::hint`] anywhere a daemon reply might be the
+    /// source, otherwise a remote hint is silently dropped on the floor.
+    pub fn hint_owned(&self) -> Option<String> {
+        match self {
+            Error::Transported { hint, .. } => hint.clone(),
+            other => other.hint().map(str::to_owned),
         }
     }
 

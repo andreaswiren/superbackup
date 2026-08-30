@@ -158,18 +158,43 @@ impl Paths {
         self.cache_dir.join("remote-config")
     }
 
+    /// A short stable tag identifying *this* configuration root.
+    ///
+    /// Derived from the config directory, so two instances rooted at different
+    /// `SUPERBACKUP_HOME` values never share an endpoint or a lock. SHA-256
+    /// rather than `DefaultHasher` because the value has to be identical across
+    /// processes and across builds — the CLI computes it independently of the
+    /// daemon and the two must agree.
+    fn instance_tag(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(self.config_dir.as_os_str().as_encoded_bytes());
+        hex::encode(&h.finalize()[..4])
+    }
+
     /// IPC endpoint: a named pipe on Windows, a unix socket elsewhere.
     ///
-    /// The service instance uses a distinct name so that a user-mode tray and
-    /// a machine-wide service can coexist on one box.
+    /// The name incorporates [`Paths::instance_tag`], and that is not cosmetic.
+    /// The Windows pipe namespace is machine-global: a fixed
+    /// `\\.\pipe\superbackup` meant that a portable install, a second user's
+    /// tray, and every integration test on the box all addressed **one**
+    /// daemon, whatever `SUPERBACKUP_HOME` said. That surfaced as tests passing
+    /// against a stray daemon left running from an unrelated run — with a
+    /// different vault, already unlocked. The same collision existed on Unix
+    /// whenever `XDG_RUNTIME_DIR` was set, since the socket lived there rather
+    /// than under the root.
+    ///
+    /// The service instance additionally carries a `-service` suffix so a
+    /// user-mode tray and a machine-wide service can coexist on one box.
     pub fn ipc_endpoint(&self) -> String {
         let suffix = if self.service_scope { "-service" } else { "" };
+        let tag = self.instance_tag();
         if cfg!(windows) {
-            format!(r"\\.\pipe\superbackup{suffix}")
+            format!(r"\\.\pipe\superbackup{suffix}-{tag}")
         } else if self.service_scope {
-            format!("/run/superbackup/superbackup{suffix}.sock")
+            format!("/run/superbackup/superbackup{suffix}-{tag}.sock")
         } else {
-            self.runtime_dir().join(format!("superbackup{suffix}.sock")).display().to_string()
+            self.runtime_dir().join(format!("superbackup{suffix}-{tag}.sock")).display().to_string()
         }
     }
 
@@ -334,6 +359,30 @@ mod tests {
         let user = Paths::rooted_at("/tmp/sb-a", false);
         let svc = Paths::rooted_at("/tmp/sb-b", true);
         assert_ne!(user.ipc_endpoint(), svc.ipc_endpoint());
+    }
+
+    #[test]
+    fn different_homes_never_share_an_endpoint() {
+        // The Windows pipe namespace is machine-global, so a fixed name meant
+        // every install and every test on the box addressed one daemon
+        // regardless of SUPERBACKUP_HOME. Tests then passed against a stray
+        // daemon holding a different, already-unlocked vault.
+        let a = Paths::rooted_at("/tmp/sb-one", false);
+        let b = Paths::rooted_at("/tmp/sb-two", false);
+        assert_ne!(
+            a.ipc_endpoint(),
+            b.ipc_endpoint(),
+            "two configuration roots must not address the same daemon"
+        );
+    }
+
+    #[test]
+    fn the_endpoint_is_stable_across_processes() {
+        // The CLI derives this independently of the daemon; if it were not
+        // reproducible they would never find each other.
+        let a = Paths::rooted_at("/tmp/sb-stable", false);
+        let b = Paths::rooted_at("/tmp/sb-stable", false);
+        assert_eq!(a.ipc_endpoint(), b.ipc_endpoint());
     }
 
     #[test]

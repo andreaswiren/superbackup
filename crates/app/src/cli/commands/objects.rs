@@ -886,14 +886,25 @@ fn destination_remove(
         .map(|j| j.name)
         .collect();
 
-    let mut what = format!(
-        "Removing {} from the configuration. The repository and everything in it stay where they are",
-        dest.name
-    );
+    // A mirror has no repository, and telling somebody their repository is
+    // safe when they are deleting a folder copy would be an odd reassurance.
+    let untouched = if dest.kind.is_repository() {
+        "The repository and everything in it stay where they are"
+    } else {
+        "The copied files stay where they are"
+    };
+    let mut what =
+        format!("Removing {} from the configuration. {untouched}", dest.name);
     if !users.is_empty() {
-        what.push_str(&format!(". {} still write here: {}",
-            if users.len() == 1 { "One job" } else { "Jobs" },
-            users.join(", ")));
+        what.push_str(&format!(
+            ". {} here: {}",
+            if users.len() == 1 {
+                "One job still writes".to_string()
+            } else {
+                format!("{} jobs still write", users.len())
+            },
+            users.join(", ")
+        ));
     }
     prompt::confirm(ctx, &what, args.yes)?;
 
