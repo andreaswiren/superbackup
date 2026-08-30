@@ -1,0 +1,21 @@
+[package]
+name = "superbackup-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Core engine for superbackup: config, crypto vault, Kopia driver, scheduler, IPC."
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+directories.workspace = true
+zeroize.workspace = true
