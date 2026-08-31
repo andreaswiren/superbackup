@@ -698,8 +698,7 @@ async fn a_dry_run_writes_absolutely_nothing() {
     fs::write(source.join("a.txt"), vec![b'a'; 4096]).unwrap();
     fs::write(source.join("nested/b.bin"), vec![b'b'; 16_384]).unwrap();
 
-    let mut options = MirrorOptions::default();
-    options.dry_run = true;
+    let options = MirrorOptions { dry_run: true, ..MirrorOptions::default() };
 
     let cancel = CancelToken::new();
     let (req, _rx) =
@@ -746,9 +745,8 @@ async fn a_dry_run_never_prunes() {
     let orphan = job_dir.join("gone.txt");
     fs::write(&orphan, b"precious").unwrap();
 
-    let mut options = MirrorOptions::default();
-    options.delete_extraneous = true;
-    options.dry_run = true;
+    let options =
+        MirrorOptions { delete_extraneous: true, dry_run: true, ..MirrorOptions::default() };
 
     let cancel = CancelToken::new();
     let (req, _rx) =

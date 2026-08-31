@@ -213,14 +213,10 @@ pub fn browse_target(snapshot: &str, path: &str) -> Result<String> {
     if snapshot.contains('/') || snapshot.contains('\\') {
         return Err(Error::Validation("a snapshot id contains no path separators".into()));
     }
-    let cleaned: Vec<&str> = path
-        .split(['/', '\\'])
-        .filter(|p| !p.is_empty() && *p != ".")
-        .collect();
+    let cleaned: Vec<&str> =
+        path.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".").collect();
     if cleaned.contains(&"..") {
-        return Err(Error::Validation(
-            "a path inside a snapshot cannot contain `..`".into(),
-        ));
+        return Err(Error::Validation("a path inside a snapshot cannot contain `..`".into()));
     }
     if cleaned.is_empty() {
         return Ok(snapshot.to_string());
@@ -230,10 +226,7 @@ pub fn browse_target(snapshot: &str, path: &str) -> Result<String> {
 
 /// Normalise the `path` echoed back in a listing reply.
 pub fn normalised_path(path: &str) -> String {
-    path.split(['/', '\\'])
-        .filter(|p| !p.is_empty() && *p != ".")
-        .collect::<Vec<_>>()
-        .join("/")
+    path.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".").collect::<Vec<_>>().join("/")
 }
 
 fn entry_kind(entry: &superbackup_core::kopia::DirEntry) -> EntryKind {
@@ -254,10 +247,7 @@ fn snapshot_info(
     SnapshotInfo {
         id: manifest.id.clone(),
         destination_id,
-        job_id: manifest
-            .tags
-            .get("superbackup-job")
-            .and_then(|v| Uuid::parse_str(v).ok()),
+        job_id: manifest.tags.get("superbackup-job").and_then(|v| Uuid::parse_str(v).ok()),
         created_at: manifest.start_time.unwrap_or_else(Utc::now),
         source_path: manifest.source.path.clone(),
         file_count: totals.map(|(files, _)| files),
@@ -356,9 +346,8 @@ impl Handler for DaemonHandler {
             if report.is_ok() { CheckStatus::Pass } else { CheckStatus::Fail },
         );
         if !report.is_ok() {
-            valid.detail = Some(
-                report.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; "),
-            );
+            valid.detail =
+                Some(report.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; "));
         }
         checks.push(valid);
 
@@ -366,9 +355,7 @@ impl Handler for DaemonHandler {
         let orphaned: Vec<&str> = config
             .jobs
             .iter()
-            .filter(|j| {
-                j.destination_ids.iter().all(|id| config.destination(id).is_none())
-            })
+            .filter(|j| j.destination_ids.iter().all(|id| config.destination(id).is_none()))
             .map(|j| j.name.as_str())
             .collect();
         let mut wired = check(
@@ -477,12 +464,7 @@ impl Handler for DaemonHandler {
 
     async fn list_jobs(&self, _ctx: &RequestContext, include_disabled: bool) -> Result<JobsReply> {
         let config = self.config().await;
-        let jobs = config
-            .jobs
-            .iter()
-            .filter(|j| include_disabled || j.enabled)
-            .cloned()
-            .collect();
+        let jobs = config.jobs.iter().filter(|j| include_disabled || j.enabled).cloned().collect();
         Ok(JobsReply { jobs })
     }
 
@@ -582,15 +564,13 @@ impl Handler for DaemonHandler {
         let config = self.config().await;
         let id = resolve_job(&config, &job)?.id;
         self.commit(move |config| {
-            let slot =
-                config.job_mut(&id).ok_or_else(|| Error::JobNotFound(id.to_string()))?;
+            let slot = config.job_mut(&id).ok_or_else(|| Error::JobNotFound(id.to_string()))?;
             slot.enabled = enabled;
             Ok(())
         })
         .await?;
         let config = self.config().await;
-        let updated =
-            config.job(&id).cloned().ok_or_else(|| Error::JobNotFound(id.to_string()))?;
+        let updated = config.job(&id).cloned().ok_or_else(|| Error::JobNotFound(id.to_string()))?;
         self.runtime.record_event(
             Event::info(
                 "job.enabled",
@@ -627,10 +607,8 @@ impl Handler for DaemonHandler {
         // A queued-but-not-started run is a normal answer, not a failure: it
         // means `max_parallel_jobs` is already satisfied.
         let status = scheduler.status().await.ok();
-        let started = status
-            .as_ref()
-            .map(|s| s.running.values().any(|r| *r == run_id))
-            .unwrap_or(true);
+        let started =
+            status.as_ref().map(|s| s.running.values().any(|r| *r == run_id)).unwrap_or(true);
         let note = (!started).then(|| {
             "Queued behind another backup; it will start when a slot frees up.".to_string()
         });
@@ -725,8 +703,7 @@ impl Handler for DaemonHandler {
                 .map(|e| e.passphrase_source)
                 .unwrap_or(superbackup_core::model::PassphraseSource::Generated);
             if derived != superbackup_core::model::PassphraseSource::DerivedFromMaster {
-                created.passphrase_ref =
-                    Some(SecretRef::new("repo-passphrase", &created.id));
+                created.passphrase_ref = Some(SecretRef::new("repo-passphrase", &created.id));
             }
         }
         let id = created.id;
@@ -764,11 +741,10 @@ impl Handler for DaemonHandler {
         let id = replacement.id;
         let stored = replacement.clone();
         self.commit(move |config| {
-            let slot = config
-                .destinations
-                .iter_mut()
-                .find(|d| d.id == stored.id)
-                .ok_or_else(|| Error::Validation(format!("no destination with id {}", stored.id)))?;
+            let slot =
+                config.destinations.iter_mut().find(|d| d.id == stored.id).ok_or_else(|| {
+                    Error::Validation(format!("no destination with id {}", stored.id))
+                })?;
             let created_at = slot.created_at;
             // The passphrase handle is not the client's to change: repointing
             // it at another destination's secret would open the wrong
@@ -905,9 +881,7 @@ impl Handler for DaemonHandler {
         let ctx = RunContext::new();
         let created = match driver.connect_repository(&ctx).await {
             Ok(()) => false,
-            Err(e)
-                if e.failure == superbackup_core::kopia::KopiaFailure::RepositoryNotFound =>
-            {
+            Err(e) if e.failure == superbackup_core::kopia::KopiaFailure::RepositoryNotFound => {
                 driver.create_repository(&ctx).await.map_err(kopia_to_error)?;
                 driver.connect_repository(&ctx).await.map_err(kopia_to_error)?;
                 true
@@ -1070,8 +1044,7 @@ impl Handler for DaemonHandler {
         // today; the match keeps this correct when a second one arrives.
         match &mut created.kind {
             ProviderKind::S3 { credentials, .. } => {
-                *credentials =
-                    superbackup_core::model::S3Credentials::for_provider(&created.id);
+                *credentials = superbackup_core::model::S3Credentials::for_provider(&created.id);
             }
         }
         let id = created.id;
@@ -1104,11 +1077,10 @@ impl Handler for DaemonHandler {
         let id = replacement.id;
         let stored = replacement.clone();
         self.commit(move |config| {
-            let slot = config
-                .providers
-                .iter_mut()
-                .find(|p| p.id == stored.id)
-                .ok_or_else(|| Error::Validation(format!("no provider with id {}", stored.id)))?;
+            let slot =
+                config.providers.iter_mut().find(|p| p.id == stored.id).ok_or_else(|| {
+                    Error::Validation(format!("no provider with id {}", stored.id))
+                })?;
             let created_at = slot.created_at;
             // Credential handles are the daemon's, not the client's — see
             // `update_destination` for the same reasoning.
@@ -1241,8 +1213,7 @@ impl Handler for DaemonHandler {
 
         let mut store = self.runtime.store.lock().await;
         store.put_secret(credentials.access_key_ref.clone(), access_key_id.into_secret())?;
-        store
-            .put_secret(credentials.secret_key_ref.clone(), secret_access_key.into_secret())?;
+        store.put_secret(credentials.secret_key_ref.clone(), secret_access_key.into_secret())?;
         match (&credentials.session_token_ref, session_token) {
             (Some(handle), Some(token)) => {
                 store.put_secret(handle.clone(), token.into_secret())?;
@@ -1296,10 +1267,7 @@ impl Handler for DaemonHandler {
             None => None,
         };
         let (target, driver) = self.driver_for(&destination).await?;
-        let manifests = driver
-            .browse_roots(&RunContext::new())
-            .await
-            .map_err(kopia_to_error)?;
+        let manifests = driver.browse_roots(&RunContext::new()).await.map_err(kopia_to_error)?;
         let cap = if limit == 0 { MAX_SNAPSHOTS } else { (limit as usize).min(MAX_SNAPSHOTS) };
         let snapshots = manifests
             .iter()
@@ -1352,9 +1320,7 @@ impl Handler for DaemonHandler {
     ) -> Result<StartedReply> {
         self.require_unlocked().await?;
         if !target.is_absolute() {
-            return Err(Error::Validation(
-                "the restore target must be an absolute path".into(),
-            ));
+            return Err(Error::Validation("the restore target must be an absolute path".into()));
         }
         let options = restore_options(conflict)?;
         let source = browse_target(&snapshot, &path)?;
@@ -1364,10 +1330,7 @@ impl Handler for DaemonHandler {
             // kopia's restore has no dry run. Listing the entry is the closest
             // honest thing: it proves the snapshot and path resolve, without
             // writing anything.
-            driver
-                .list_directory(&source, &RunContext::new())
-                .await
-                .map_err(kopia_to_error)?;
+            driver.list_directory(&source, &RunContext::new()).await.map_err(kopia_to_error)?;
             return Ok(StartedReply {
                 run_id: Uuid::new_v4(),
                 started: false,
@@ -1431,7 +1394,9 @@ impl Handler for DaemonHandler {
                     });
                     Event::info(
                         "restore.finished",
-                        format!("Restore from \"{destination_name}\" to {target_display} finished."),
+                        format!(
+                            "Restore from \"{destination_name}\" to {target_display} finished."
+                        ),
                     )
                 }
                 Err(e) => Event::error(
@@ -1564,9 +1529,9 @@ impl Handler for DaemonHandler {
     ) -> Result<PauseReply> {
         // A pause longer than a year is a typo, not an intention.
         let until = match seconds {
-            Some(s) if s > 0 => Some(
-                Utc::now() + ChronoDuration::seconds(s.min(365 * 24 * 3600) as i64),
-            ),
+            Some(s) if s > 0 => {
+                Some(Utc::now() + ChronoDuration::seconds(s.min(365 * 24 * 3600) as i64))
+            }
             _ => None,
         };
         let state = PauseState { paused: true, until, reason: reason.clone() };
@@ -1591,8 +1556,7 @@ impl Handler for DaemonHandler {
             Ok(())
         })
         .await?;
-        self.runtime
-            .record_event(Event::info("control.resumed", "Backups resumed."));
+        self.runtime.record_event(Event::info("control.resumed", "Backups resumed."));
         Ok(self.pause_reply().await)
     }
 
@@ -1727,9 +1691,7 @@ impl Handler for DaemonHandler {
                 "Fetched the shared configuration: {changes} change(s) are waiting to be applied."
             ),
         ));
-        Ok(self
-            .remote_status_reply(Some(format!("{changes} change(s) available")))
-            .await)
+        Ok(self.remote_status_reply(Some(format!("{changes} change(s) available"))).await)
     }
 
     async fn remote_diff(&self, _ctx: &RequestContext) -> Result<RemoteDiffReply> {
@@ -1737,10 +1699,7 @@ impl Handler for DaemonHandler {
         let plan = self.runtime.pull().ok_or_else(|| {
             Error::Remote("nothing has been pulled yet; run `remote.pull` first".into())
         })?;
-        Ok(RemoteDiffReply {
-            changes: describe_diff(&plan.diff),
-            remote_commit: plan.sha.clone(),
-        })
+        Ok(RemoteDiffReply { changes: describe_diff(&plan.diff), remote_commit: plan.sha.clone() })
     }
 
     async fn remote_apply(&self, _ctx: &RequestContext) -> Result<RemoteStatusReply> {
@@ -2151,10 +2110,9 @@ mod tests {
     #[test]
     fn a_service_summary_names_what_local_system_cannot_reach() {
         let mut config = superbackup_core::model::Config::default();
-        config.destinations.push(superbackup_core::engine::testing::test_mirror(
-            "mapped",
-            r"H:\backups",
-        ));
+        config
+            .destinations
+            .push(superbackup_core::engine::testing::test_mirror("mapped", r"H:\backups"));
         let summary = service_reach_summary(&config);
         if cfg!(windows) {
             assert!(summary.contains("mapped"), "{summary}");

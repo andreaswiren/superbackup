@@ -9,9 +9,7 @@ use egui::{Align, Layout, Ui};
 use uuid::Uuid;
 
 use superbackup_core::ipc::protocol::{ErrorPayload, ProbeReply, Request, SecretString};
-use superbackup_core::model::{
-    ProviderKind, S3Credentials, S3Flavour, SecretRef, StorageProvider,
-};
+use superbackup_core::model::{ProviderKind, S3Credentials, S3Flavour, SecretRef, StorageProvider};
 
 use crate::gui::app::App;
 use crate::gui::copy;
@@ -282,13 +280,8 @@ impl App {
     fn provider_report(&self) -> validation::Report {
         match &self.screens.provider_editor.draft {
             Some(draft) => {
-                let others: Vec<StorageProvider> = self
-                    .data
-                    .providers
-                    .iter()
-                    .filter(|p| p.id != draft.id)
-                    .cloned()
-                    .collect();
+                let others: Vec<StorageProvider> =
+                    self.data.providers.iter().filter(|p| p.id != draft.id).cloned().collect();
                 let needs_credentials = self.screens.provider_editor.replacing_secret;
                 validation::validate_provider(
                     draft,
@@ -437,9 +430,8 @@ impl App {
             return;
         }
 
-        let stored = existing
-            .map(|p| self.screens.provider_editor.has_stored_secret(p))
-            .unwrap_or(false);
+        let stored =
+            existing.map(|p| self.screens.provider_editor.has_stored_secret(p)).unwrap_or(false);
         if stored && !self.screens.provider_editor.replacing_secret {
             widgets::kv(ui, copy::prov::SECRET_KEY, "••••••••••••", true);
             ui.add_space(space::S);

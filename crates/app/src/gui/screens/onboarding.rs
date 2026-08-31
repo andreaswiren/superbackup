@@ -105,14 +105,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     content.add_space(space::H2);
 
     widgets::scroll_area(&mut content, ("onboarding", state.step), |ui| match state.step {
-            OnboardingStep::Welcome => welcome(ui),
-            OnboardingStep::Passphrase => passphrase(ui, &mut state),
-            OnboardingStep::NoRecovery => no_recovery(ui, &mut state, app),
-            OnboardingStep::Scan => scan(ui, &mut state, app),
-            OnboardingStep::FirstJob => first_job(ui, &mut state, app),
-            OnboardingStep::KeepRunning => keep_running(ui, &mut state),
-            OnboardingStep::Done => done(ui, app),
-        });
+        OnboardingStep::Welcome => welcome(ui),
+        OnboardingStep::Passphrase => passphrase(ui, &mut state),
+        OnboardingStep::NoRecovery => no_recovery(ui, &mut state, app),
+        OnboardingStep::Scan => scan(ui, &mut state, app),
+        OnboardingStep::FirstJob => first_job(ui, &mut state, app),
+        OnboardingStep::KeepRunning => keep_running(ui, &mut state),
+        OnboardingStep::Done => done(ui, app),
+    });
 
     // The fixed 72px footer.
     let footer = egui::Rect::from_min_max(
@@ -148,12 +148,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             OnboardingStep::Done => copy::onboarding::DONE_PRIMARY,
             _ => copy::action::CONTINUE,
         };
-        if Button::primary(label)
-            .onboarding()
-            .enabled(state.can_continue())
-            .show(ui)
-            .clicked()
-        {
+        if Button::primary(label).onboarding().enabled(state.can_continue()).show(ui).clicked() {
             advance = true;
         }
         if state.step == OnboardingStep::Done
@@ -224,54 +219,38 @@ fn welcome(ui: &mut Ui) {
         Vec2::new(ui.available_width(), 0.0),
         Layout::top_down(Align::Center),
         |ui| {
-            ui.allocate_ui_with_layout(
-                Vec2::new(520.0, 0.0),
-                Layout::top_down(Align::Min),
-                |ui| {
-                    for (icon, title, body) in [
-                        (
-                            Icon::Repeat,
-                            copy::onboarding::WELCOME_F1_TITLE,
-                            copy::onboarding::WELCOME_F1_BODY,
-                        ),
-                        (
-                            Icon::FilterX,
-                            copy::onboarding::WELCOME_F2_TITLE,
-                            copy::onboarding::WELCOME_F2_BODY,
-                        ),
-                        (
-                            Icon::Lock,
-                            copy::onboarding::WELCOME_F3_TITLE,
-                            copy::onboarding::WELCOME_F3_BODY,
-                        ),
-                    ] {
-                        ui.horizontal_top(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
-                            icon.paint(ui.painter(), rect, t.accent);
-                            ui.add_space(space::L);
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = space::XXS;
-                                widgets::text(ui, title, Type::BodyStrong, t.text_primary);
-                                widgets::paragraph_at(
-                                    ui,
-                                    body,
-                                    Type::Small,
-                                    t.text_secondary,
-                                    460.0,
-                                );
-                            });
+            ui.allocate_ui_with_layout(Vec2::new(520.0, 0.0), Layout::top_down(Align::Min), |ui| {
+                for (icon, title, body) in [
+                    (
+                        Icon::Repeat,
+                        copy::onboarding::WELCOME_F1_TITLE,
+                        copy::onboarding::WELCOME_F1_BODY,
+                    ),
+                    (
+                        Icon::FilterX,
+                        copy::onboarding::WELCOME_F2_TITLE,
+                        copy::onboarding::WELCOME_F2_BODY,
+                    ),
+                    (
+                        Icon::Lock,
+                        copy::onboarding::WELCOME_F3_TITLE,
+                        copy::onboarding::WELCOME_F3_BODY,
+                    ),
+                ] {
+                    ui.horizontal_top(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                        icon.paint(ui.painter(), rect, t.accent);
+                        ui.add_space(space::L);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = space::XXS;
+                            widgets::text(ui, title, Type::BodyStrong, t.text_primary);
+                            widgets::paragraph_at(ui, body, Type::Small, t.text_secondary, 460.0);
                         });
-                        ui.add_space(space::XL);
-                    }
-                    widgets::text(
-                        ui,
-                        copy::onboarding::WELCOME_KOPIA,
-                        Type::Small,
-                        t.text_muted,
-                    );
-                },
-            );
+                    });
+                    ui.add_space(space::XL);
+                }
+                widgets::text(ui, copy::onboarding::WELCOME_KOPIA, Type::Small, t.text_muted);
+            });
         },
     );
 }
@@ -282,95 +261,87 @@ fn passphrase(ui: &mut Ui, state: &mut Onboarding) {
     let score = state.score();
 
     ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(
-            Vec2::new(360.0, 0.0),
-            Layout::top_down(Align::Min),
-            |ui| {
-                widgets::text(ui, copy::onboarding::PASS_TITLE, Type::Display, t.text_primary);
-                ui.add_space(space::XL);
-                widgets::paragraph_at(
-                    ui,
-                    copy::onboarding::PASS_LEAD,
-                    Type::Body,
-                    t.text_secondary,
-                    340.0,
-                );
-                ui.add_space(space::L);
-                widgets::paragraph_at(
-                    ui,
-                    copy::onboarding::PASS_NOT_REPO,
-                    Type::Small,
-                    t.text_muted,
-                    340.0,
-                );
-            },
-        );
+        ui.allocate_ui_with_layout(Vec2::new(360.0, 0.0), Layout::top_down(Align::Min), |ui| {
+            widgets::text(ui, copy::onboarding::PASS_TITLE, Type::Display, t.text_primary);
+            ui.add_space(space::XL);
+            widgets::paragraph_at(
+                ui,
+                copy::onboarding::PASS_LEAD,
+                Type::Body,
+                t.text_secondary,
+                340.0,
+            );
+            ui.add_space(space::L);
+            widgets::paragraph_at(
+                ui,
+                copy::onboarding::PASS_NOT_REPO,
+                Type::Small,
+                t.text_muted,
+                340.0,
+            );
+        });
         ui.add_space(space::H1);
-        ui.allocate_ui_with_layout(
-            Vec2::new(400.0, 0.0),
-            Layout::top_down(Align::Min),
-            |ui| {
-                let mut revealed = state.revealed;
-                widgets::passphrase_field(
-                    ui,
-                    &mut state.passphrase,
-                    copy::onboarding::PASS_FIELD,
-                    &mut revealed,
-                    report.for_field(validation::Field::Passphrase),
-                    400.0,
-                );
-                ui.add_space(space::M);
-                widgets::strength_meter(ui, score, 366.0);
+        ui.allocate_ui_with_layout(Vec2::new(400.0, 0.0), Layout::top_down(Align::Min), |ui| {
+            let mut revealed = state.revealed;
+            widgets::passphrase_field(
+                ui,
+                &mut state.passphrase,
+                copy::onboarding::PASS_FIELD,
+                &mut revealed,
+                report.for_field(validation::Field::Passphrase),
+                400.0,
+            );
+            ui.add_space(space::M);
+            widgets::strength_meter(ui, score, 366.0);
 
-                ui.add_space(space::XL);
-                for (met, label) in [
-                    (state.passphrase.chars().count() >= 12, copy::onboarding::PASS_REQ_LENGTH),
-                    // Unverifiable, so never a green tick.
-                    (false, copy::onboarding::PASS_REQ_UNIQUE),
-                    (false, copy::onboarding::PASS_REQ_WORDS),
-                ] {
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(20.0);
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                        if met {
-                            Icon::CheckCircle.paint(ui.painter(), rect, t.success.mark);
-                        } else {
-                            Icon::Circle.paint(ui.painter(), rect, t.text_muted);
-                        }
-                        ui.add_space(space::M);
-                        widgets::text(
-                            ui,
-                            label,
-                            Type::Small,
-                            if met { t.text_primary } else { t.text_muted },
-                        );
-                    });
-                }
+            ui.add_space(space::XL);
+            for (met, label) in [
+                (state.passphrase.chars().count() >= 12, copy::onboarding::PASS_REQ_LENGTH),
+                // Unverifiable, so never a green tick.
+                (false, copy::onboarding::PASS_REQ_UNIQUE),
+                (false, copy::onboarding::PASS_REQ_WORDS),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(20.0);
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                    if met {
+                        Icon::CheckCircle.paint(ui.painter(), rect, t.success.mark);
+                    } else {
+                        Icon::Circle.paint(ui.painter(), rect, t.text_muted);
+                    }
+                    ui.add_space(space::M);
+                    widgets::text(
+                        ui,
+                        label,
+                        Type::Small,
+                        if met { t.text_primary } else { t.text_muted },
+                    );
+                });
+            }
 
-                ui.add_space(space::XL);
-                // Mismatch is shown on blur or submit, never while typing.
-                let confirm_error = (!state.confirm.is_empty())
-                    .then(|| report.for_field(validation::Field::PassphraseConfirm))
-                    .flatten();
-                widgets::passphrase_field(
-                    ui,
-                    &mut state.confirm,
-                    copy::onboarding::PASS_CONFIRM,
-                    &mut revealed,
-                    confirm_error,
-                    400.0,
-                );
-                state.revealed = revealed;
+            ui.add_space(space::XL);
+            // Mismatch is shown on blur or submit, never while typing.
+            let confirm_error = (!state.confirm.is_empty())
+                .then(|| report.for_field(validation::Field::PassphraseConfirm))
+                .flatten();
+            widgets::passphrase_field(
+                ui,
+                &mut state.confirm,
+                copy::onboarding::PASS_CONFIRM,
+                &mut revealed,
+                confirm_error,
+                400.0,
+            );
+            state.revealed = revealed;
 
-                ui.add_space(space::XL);
-                if Button::ghost(copy::onboarding::PASS_SUGGEST).show(ui).clicked() {
-                    let suggestion = diceware();
-                    state.passphrase = suggestion.clone();
-                    state.confirm = suggestion;
-                    state.revealed = true;
-                }
-            },
-        );
+            ui.add_space(space::XL);
+            if Button::ghost(copy::onboarding::PASS_SUGGEST).show(ui).clicked() {
+                let suggestion = diceware();
+                state.passphrase = suggestion.clone();
+                state.confirm = suggestion;
+                state.revealed = true;
+            }
+        });
     });
 }
 
@@ -581,12 +552,7 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                     widgets::paragraph_at(ui, line, Type::Body, t.text_secondary, 520.0);
                 }
                 None => {
-                    widgets::text(
-                        ui,
-                        copy::state::UNKNOWN,
-                        Type::Body,
-                        t.text_muted,
-                    );
+                    widgets::text(ui, copy::state::UNKNOWN, Type::Body, t.text_muted);
                 }
             }
         });
@@ -613,21 +579,13 @@ fn first_job(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                     Layout::top_down(Align::Min),
                     |ui| {
                         let is_selected = *template == selected;
-                        let frame = widgets::card_tinted(
-                            ui,
-                            None,
-                            is_selected.then_some(t.accent),
-                            |ui| {
+                        let frame =
+                            widgets::card_tinted(ui, None, is_selected.then_some(t.accent), |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.set_height(72.0);
                                 ui.vertical(|ui| {
                                     ui.spacing_mut().item_spacing.y = space::XXS;
-                                    widgets::text(
-                                        ui,
-                                        template.title(),
-                                        Type::H2,
-                                        t.text_primary,
-                                    );
+                                    widgets::text(ui, template.title(), Type::H2, t.text_primary);
                                     widgets::paragraph_at(
                                         ui,
                                         template.body(),
@@ -643,8 +601,7 @@ fn first_job(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                                         (ui.available_width() - 8.0).max(120.0),
                                     );
                                 });
-                            },
-                        );
+                            });
                         let response = ui.interact(
                             frame.response.rect,
                             egui::Id::new("onboarding-template").with(template.title()),
@@ -757,12 +714,7 @@ fn keep_running(ui: &mut Ui, state: &mut Onboarding) {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
                 Icon::Shield.paint(ui.painter(), rect, t.text_muted);
                 ui.add_space(space::M);
-                widgets::text(
-                    ui,
-                    copy::onboarding::SERVICE_ELEVATE,
-                    Type::Small,
-                    t.text_muted,
-                );
+                widgets::text(ui, copy::onboarding::SERVICE_ELEVATE, Type::Small, t.text_muted);
             });
         }
     });
@@ -783,8 +735,7 @@ fn done(ui: &mut Ui, app: &mut App) {
     );
 
     let jobs = format::plural(app.data.jobs.len(), "job", "jobs");
-    let destinations =
-        format::plural(app.data.destinations.len(), "destination", "destinations");
+    let destinations = format::plural(app.data.destinations.len(), "destination", "destinations");
     let next = app
         .data
         .next_scheduled()

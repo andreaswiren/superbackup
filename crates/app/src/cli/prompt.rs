@@ -123,10 +123,9 @@ pub fn passphrase(ctx: &mut Ctx, file: Option<&Path>, question: &str) -> CliResu
 pub fn from_file(path: &Path) -> CliResult<Secret> {
     let raw: Vec<u8> = if path == Path::new("-") {
         let mut buffer = Vec::new();
-        std::io::stdin()
-            .lock()
-            .read_to_end(&mut buffer)
-            .map_err(|e| CliError::new(ErrorCode::Io, format!("reading the passphrase from stdin: {e}")))?;
+        std::io::stdin().lock().read_to_end(&mut buffer).map_err(|e| {
+            CliError::new(ErrorCode::Io, format!("reading the passphrase from stdin: {e}"))
+        })?;
         buffer
     } else {
         std::fs::read(path).map_err(|e| {
@@ -335,8 +334,7 @@ mod tests {
         let (mut ctx, _c) = testing::unreachable_ctx(false);
         assert!(ctx.global.no_input);
         let error = confirm(&mut ctx, "This deletes the job", false)
-            .err()
-            .expect("a prompt under --no-input must fail");
+            .expect_err("a prompt under --no-input must fail");
         assert_eq!(error.exit_code(), crate::cli::exit::USAGE);
         assert!(error.hint.unwrap_or_default().contains("-y"), "it must name the escape hatch");
     }

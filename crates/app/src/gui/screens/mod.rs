@@ -37,10 +37,7 @@ pub struct Screens {
 
 /// The six `keep_*` values plus the maintenance interval, shared by the job
 /// editor and the destination editor so one policy is never edited two ways.
-pub fn retention_editor(
-    ui: &mut egui::Ui,
-    policy: &mut superbackup_core::model::RetentionPolicy,
-) {
+pub fn retention_editor(ui: &mut egui::Ui, policy: &mut superbackup_core::model::RetentionPolicy) {
     job_editor::retention_grid(ui, policy);
 }
 

@@ -181,9 +181,15 @@ impl Toasts {
                 .body
                 .as_ref()
                 .map(|b| {
-                    widgets::galley_wrapped(ui, b.clone(), Type::Small, t.text_secondary, width - 76.0)
-                        .size()
-                        .y
+                    widgets::galley_wrapped(
+                        ui,
+                        b.clone(),
+                        Type::Small,
+                        t.text_secondary,
+                        width - 76.0,
+                    )
+                    .size()
+                    .y
                 })
                 .unwrap_or(0.0);
             let height = (52.0_f32).max(24.0 + 20.0 + body_lines);
@@ -193,11 +199,7 @@ impl Toasts {
             );
             bottom = rect.top() - 8.0;
 
-            let response = ui.interact(
-                rect,
-                egui::Id::new("sb-toast").with(index),
-                Sense::click(),
-            );
+            let response = ui.interact(rect, egui::Id::new("sb-toast").with(index), Sense::click());
             if response.hovered() {
                 hovered_index = Some(index);
             }
@@ -237,13 +239,8 @@ impl Toasts {
             child.horizontal(|ui| {
                 widgets::text(ui, toast.title.clone(), Type::BodyStrong, t.text_primary);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::icon_button_compact(
-                        ui,
-                        Icon::X,
-                        super::copy::action::CLOSE,
-                        true,
-                    )
-                    .clicked()
+                    if widgets::icon_button_compact(ui, Icon::X, super::copy::action::CLOSE, true)
+                        .clicked()
                     {
                         dismissed = Some(index);
                     }
@@ -299,9 +296,7 @@ impl Toasts {
                 egui::Id::new("sb-toast-live-region"),
                 Sense::focusable_noninteractive(),
             );
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text)
-            });
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
         }
     }
 }

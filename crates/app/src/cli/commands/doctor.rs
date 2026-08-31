@@ -101,11 +101,7 @@ pub fn doctor(ctx: &mut Ctx, args: DoctorArgs) -> CliResult<Outcome> {
             checks.extend(destination_checks(ctx, daemon));
         } else {
             checks.push(with_hint(
-                check(
-                    "dest.reachable",
-                    "destinations are reachable",
-                    CheckStatus::Skipped,
-                ),
+                check("dest.reachable", "destinations are reachable", CheckStatus::Skipped),
                 "Pass --check-destinations to try each one. It makes network requests.",
             ));
         }
@@ -201,9 +197,7 @@ fn merge(checks: &mut Vec<DoctorCheck>, remote: Vec<DoctorCheck>) {
         // never let a tidier report hide a problem.
         let ns = namespace(&remote_check.id);
         let same_subject = local.iter().any(|(id, _)| namespace(id) == ns);
-        if same_subject
-            && matches!(remote_check.status, CheckStatus::Pass | CheckStatus::Skipped)
-        {
+        if same_subject && matches!(remote_check.status, CheckStatus::Pass | CheckStatus::Skipped) {
             continue;
         }
         checks.push(remote_check);
@@ -270,14 +264,17 @@ fn kopia_check(ctx: &mut Ctx, settings: &Settings) -> DoctorCheck {
             )
         }
     };
-    let found = runtime.block_on(superbackup_core::kopia::KopiaBinary::discover(
-        settings,
-        &ctx.paths,
-    ));
+    let found =
+        runtime.block_on(superbackup_core::kopia::KopiaBinary::discover(settings, &ctx.paths));
     match found {
         Ok(binary) => with_detail(
             check("kopia.present", "kopia is installed", CheckStatus::Pass),
-            format!("{} at {} ({})", binary.version(), binary.path().display(), binary.source().title()),
+            format!(
+                "{} at {} ({})",
+                binary.version(),
+                binary.path().display(),
+                binary.source().title()
+            ),
         ),
         Err(e) => with_hint(
             fixable(with_detail(
@@ -344,10 +341,7 @@ fn disk_check(ctx: &mut Ctx) -> DoctorCheck {
                     "Backups write a cache and a temporary index here. Free some space.",
                 )
             } else {
-                with_detail(
-                    check("disk.space", "there is room to work", CheckStatus::Pass),
-                    detail,
-                )
+                with_detail(check("disk.space", "there is room to work", CheckStatus::Pass), detail)
             }
         }
         None => with_detail(
@@ -455,13 +449,17 @@ fn config_check(daemon: &Daemon) -> DoctorCheck {
             )
         }
     };
-    let config =
-        superbackup_core::model::Config { settings, providers, destinations, jobs, ..Default::default() };
+    let config = superbackup_core::model::Config {
+        settings,
+        providers,
+        destinations,
+        jobs,
+        ..Default::default()
+    };
     let report = superbackup_core::config::validate(&config);
 
     if !report.errors.is_empty() {
-        let detail =
-            report.errors.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("; ");
+        let detail = report.errors.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("; ");
         with_hint(
             with_detail(
                 check("config.valid", "the configuration is valid", CheckStatus::Fail),
@@ -470,12 +468,8 @@ fn config_check(daemon: &Daemon) -> DoctorCheck {
             "Run `superbackup config validate` for the full list.",
         )
     } else if !report.warnings.is_empty() {
-        let detail =
-            report.warnings.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("; ");
-        with_detail(
-            check("config.valid", "the configuration is valid", CheckStatus::Warn),
-            detail,
-        )
+        let detail = report.warnings.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("; ");
+        with_detail(check("config.valid", "the configuration is valid", CheckStatus::Warn), detail)
     } else {
         check("config.valid", "the configuration is valid", CheckStatus::Pass)
     }
@@ -528,11 +522,17 @@ fn destination_checks(ctx: &mut Ctx, daemon: &Daemon) -> Vec<DoctorCheck> {
                     check(&id, &title, CheckStatus::Fail),
                     probe.detail.unwrap_or_else(|| "could not be reached".to_string()),
                 ),
-                format!("Check the path or the credentials, then `superbackup destination test {}`.", destination.name),
+                format!(
+                    "Check the path or the credentials, then `superbackup destination test {}`.",
+                    destination.name
+                ),
             ),
             Err(e) => with_hint(
                 with_detail(check(&id, &title, CheckStatus::Fail), e.message),
-                format!("Try `superbackup destination test {}` for the full error.", destination.name),
+                format!(
+                    "Try `superbackup destination test {}` for the full error.",
+                    destination.name
+                ),
             ),
         });
     }
@@ -597,11 +597,14 @@ fn render(ctx: &mut Ctx, checks: &[DoctorCheck], fixed: &[String], fixing: bool)
     } else if warned > 0 {
         ctx.ui.coloured(
             Colour::Yellow,
-            &format!("Nothing is broken, but there {}.", if warned == 1 {
-                "is 1 warning".to_string()
-            } else {
-                format!("are {warned} warnings")
-            }),
+            &format!(
+                "Nothing is broken, but there {}.",
+                if warned == 1 {
+                    "is 1 warning".to_string()
+                } else {
+                    format!("are {warned} warnings")
+                }
+            ),
         );
     } else {
         ctx.ui.coloured(Colour::Green, "Everything checks out.");

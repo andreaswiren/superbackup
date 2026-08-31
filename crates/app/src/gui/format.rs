@@ -43,11 +43,8 @@ pub fn bytes(value: u64) -> String {
 /// `18.2 MB/s`. Negative and non-finite rates render as `0 B/s` rather than
 /// letting a malformed daemon reply produce `NaN B/s` on screen.
 pub fn rate(bytes_per_second: f64) -> String {
-    let v = if bytes_per_second.is_finite() && bytes_per_second > 0.0 {
-        bytes_per_second
-    } else {
-        0.0
-    };
+    let v =
+        if bytes_per_second.is_finite() && bytes_per_second > 0.0 { bytes_per_second } else { 0.0 };
     format!("{}/s", bytes(v as u64))
 }
 

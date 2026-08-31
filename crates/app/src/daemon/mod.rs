@@ -211,11 +211,7 @@ pub async fn run(
         ),
     ));
     if let Some(warning) = notifier.platform_warning() {
-        runtime.record_event(Event::new(
-            Severity::Warning,
-            "notify.limited",
-            warning.to_string(),
-        ));
+        runtime.record_event(Event::new(Severity::Warning, "notify.limited", warning.to_string()));
     }
     if settings.use_os_keychain {
         if !keychain::available() {
@@ -354,10 +350,9 @@ pub async fn run(
 fn acquire_instance(paths: &Paths) -> Result<InstanceGuard> {
     match platform::single_instance::acquire(paths)? {
         LockOutcome::Acquired(guard) => Ok(guard),
-        LockOutcome::AlreadyRunning(record) => Err(Error::Validation(format!(
-            "superbackup is already running. {}",
-            record.describe()
-        ))),
+        LockOutcome::AlreadyRunning(record) => {
+            Err(Error::Validation(format!("superbackup is already running. {}", record.describe())))
+        }
     }
 }
 
@@ -463,11 +458,9 @@ fn spawn_kopia_setup(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
                             Severity::Debug,
                             "kopia.install_progress",
                             match (update.fraction(), update.total_bytes) {
-                                (Some(f), Some(_)) => format!(
-                                    "{}: {:.0}%",
-                                    update.phase.title(),
-                                    f * 100.0
-                                ),
+                                (Some(f), Some(_)) => {
+                                    format!("{}: {:.0}%", update.phase.title(), f * 100.0)
+                                }
                                 _ => update.phase.title().to_string(),
                             },
                         )
@@ -486,10 +479,8 @@ fn spawn_kopia_setup(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
             Ok(binary) => {
                 let version = binary.version().to_string();
                 runtime.set_kopia(Some(binary));
-                runtime.record_event(Event::info(
-                    "kopia.ready",
-                    format!("kopia {version} is ready."),
-                ));
+                runtime
+                    .record_event(Event::info("kopia.ready", format!("kopia {version} is ready.")));
                 runtime.publish_status().await;
             }
             Err(e) => report_kopia_failure(&runtime, &e.message()),
@@ -684,14 +675,8 @@ mod tests {
     #[test]
     fn a_locked_vault_maps_onto_the_locked_exit_code() {
         assert_eq!(exit_code_for(&Error::Locked), crate::cli::exit::LOCKED as u8);
-        assert_eq!(
-            exit_code_for(&Error::Validation("x".into())),
-            crate::cli::exit::USAGE as u8
-        );
-        assert_eq!(
-            exit_code_for(&Error::Internal("x".into())),
-            crate::cli::exit::FAILED as u8
-        );
+        assert_eq!(exit_code_for(&Error::Validation("x".into())), crate::cli::exit::USAGE as u8);
+        assert_eq!(exit_code_for(&Error::Internal("x".into())), crate::cli::exit::FAILED as u8);
     }
 
     #[test]

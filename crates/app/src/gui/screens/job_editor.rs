@@ -132,7 +132,10 @@ fn same_sources(a: &[Source], b: &[Source]) -> bool {
         })
 }
 
-fn same_hooks(a: &superbackup_core::model::JobHooks, b: &superbackup_core::model::JobHooks) -> bool {
+fn same_hooks(
+    a: &superbackup_core::model::JobHooks,
+    b: &superbackup_core::model::JobHooks,
+) -> bool {
     a.before == b.before
         && a.after_success == b.after_success
         && a.after_failure == b.after_failure
@@ -387,13 +390,8 @@ impl App {
 
     fn source_table(&mut self, ui: &mut Ui, report: &validation::Report) {
         let t = theme::tokens(ui.ctx());
-        let sources: Vec<Source> = self
-            .screens
-            .job_editor
-            .draft
-            .as_ref()
-            .map(|d| d.sources.clone())
-            .unwrap_or_default();
+        let sources: Vec<Source> =
+            self.screens.job_editor.draft.as_ref().map(|d| d.sources.clone()).unwrap_or_default();
 
         if sources.is_empty() {
             widgets::table_frame(ui, |ui| {
@@ -529,13 +527,8 @@ impl App {
         let Some(paths) = picked else {
             return;
         };
-        let existing: Vec<Source> = self
-            .screens
-            .job_editor
-            .draft
-            .as_ref()
-            .map(|d| d.sources.clone())
-            .unwrap_or_default();
+        let existing: Vec<Source> =
+            self.screens.job_editor.draft.as_ref().map(|d| d.sources.clone()).unwrap_or_default();
         let mut rejected: Vec<String> = Vec::new();
         let mut added: Vec<Source> = Vec::new();
         for path in paths {
@@ -639,14 +632,7 @@ impl App {
                         );
                         let location = destination_location(&self.data, destination);
                         let width = (ui.available_width() - 220.0).max(120.0);
-                        widgets::elided(
-                            ui,
-                            &location,
-                            Type::MonoSmall,
-                            t.text_muted,
-                            width,
-                            false,
-                        );
+                        widgets::elided(ui, &location, Type::MonoSmall, t.text_muted, width, false);
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         widgets::overflow_menu(
@@ -671,12 +657,7 @@ impl App {
                             let failed = self.screens.destinations.failed_probe(destination.id);
                             match viewmodel::verification(destination, now, failed) {
                                 viewmodel::Verification::Recent(label) => {
-                                    widgets::badge(
-                                        ui,
-                                        t.success,
-                                        Some(Icon::CheckCircle),
-                                        &label,
-                                    );
+                                    widgets::badge(ui, t.success, Some(Icon::CheckCircle), &label);
                                 }
                                 viewmodel::Verification::Old(label) => {
                                     widgets::neutral_badge(ui, &label, None);
@@ -847,10 +828,7 @@ impl App {
         let metered_reason = if capabilities.metered_detection {
             None
         } else {
-            limitations
-                .iter()
-                .find(|l| l.area == "power")
-                .map(|l| l.message.clone())
+            limitations.iter().find(|l| l.area == "power").map(|l| l.message.clone())
         };
         let mut metered = global_metered;
         match &metered_reason {
@@ -893,7 +871,14 @@ impl App {
         if let Some(minutes) = &mut draft.timeout_minutes {
             ui.horizontal(|ui| {
                 ui.add_space(24.0);
-                widgets::number(ui, minutes, 1..=1440, copy::job::TIMEOUT_UNIT, true, copy::job::TIMEOUT);
+                widgets::number(
+                    ui,
+                    minutes,
+                    1..=1440,
+                    copy::job::TIMEOUT_UNIT,
+                    true,
+                    copy::job::TIMEOUT,
+                );
             });
         }
         ui.add_space(space::S);
@@ -940,65 +925,51 @@ impl App {
         for (index, preset) in ExclusionPreset::all().iter().enumerate() {
             let checked = selected.contains(preset);
             let risky = preset.is_risky();
-            widgets::card_tinted(
-                ui,
-                risky.then(|| theme::alpha(t.warning.tint_bg, 0.3)),
-                None,
-                |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal_top(|ui| {
-                        let mut on = checked;
-                        if widgets::checkbox(ui, &mut on, "", None, true).clicked() {
-                            toggle_preset = Some(*preset);
-                        }
-                        ui.add_space(space::M);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = space::XS;
-                            ui.horizontal(|ui| {
-                                if risky {
-                                    let (rect, response) = ui
-                                        .allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                                    Icon::AlertTriangle.paint(
-                                        ui.painter(),
-                                        rect,
-                                        t.warning.mark,
-                                    );
-                                    response.on_hover_text(copy::job::EXCL_RISKY);
-                                    ui.add_space(space::XS);
-                                }
-                                widgets::text(
-                                    ui,
-                                    preset.title(),
-                                    Type::BodyStrong,
-                                    t.text_primary,
-                                );
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let label =
-                                        copy::job_excl_patterns_count(preset.patterns().len());
-                                    if widgets::link(ui, &label).clicked() {
-                                        toggle_expanded = Some(index);
-                                    }
-                                });
-                            });
-                            // The rationale is the model's own string, verbatim,
-                            // so the CLI and the window never disagree.
-                            widgets::paragraph_at(
-                                ui,
-                                preset.rationale(),
-                                Type::Small,
-                                t.text_muted,
-                                (ui.available_width() - 8.0).max(200.0),
-                            );
-                            if expanded == Some(index) {
+            widgets::row_card(ui, risky.then(|| theme::alpha(t.warning.tint_bg, 0.3)), |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.horizontal_top(|ui| {
+                    let mut on = checked;
+                    if widgets::checkbox(ui, &mut on, "", None, true).clicked() {
+                        toggle_preset = Some(*preset);
+                    }
+                    ui.add_space(space::M);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.horizontal(|ui| {
+                            if risky {
+                                let (rect, response) =
+                                    ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                                Icon::AlertTriangle.paint(ui.painter(), rect, t.warning.mark);
+                                response.on_hover_text(copy::job::EXCL_RISKY);
                                 ui.add_space(space::XS);
-                                for pattern in preset.patterns() {
-                                    widgets::text(ui, *pattern, Type::MonoSmall, t.text_muted);
-                                }
                             }
+                            widgets::text(ui, preset.title(), Type::BodyStrong, t.text_primary);
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let label = copy::job_excl_patterns_count(preset.patterns().len());
+                                if widgets::link(ui, &label).clicked() {
+                                    toggle_expanded = Some(index);
+                                }
+                            });
                         });
+                        // The rationale is the model's own string, verbatim,
+                        // so the CLI and the window never disagree.
+                        widgets::paragraph_at(
+                            ui,
+                            preset.rationale(),
+                            Type::Small,
+                            t.text_muted,
+                            (ui.available_width() - 8.0).max(200.0),
+                        );
+                        if expanded == Some(index) {
+                            ui.add_space(space::XS);
+                            for pattern in preset.patterns() {
+                                widgets::text(ui, *pattern, Type::MonoSmall, t.text_muted);
+                            }
+                        }
                     });
-                },
-            );
+                });
+            });
             ui.add_space(space::M);
         }
 
@@ -1234,10 +1205,7 @@ impl App {
         widgets::banner(ui, widgets::BannerKind::Warning, copy::job::HOOKS_WARNING, None, |_| {});
         ui.add_space(space::L);
         let mut before = draft.hooks.before.clone().unwrap_or_default();
-        widgets::Field::new()
-            .label(copy::job::HOOKS_BEFORE)
-            .mono()
-            .show(ui, &mut before);
+        widgets::Field::new().label(copy::job::HOOKS_BEFORE).mono().show(ui, &mut before);
         draft.hooks.before = (!before.trim().is_empty()).then_some(before);
         ui.add_space(space::M);
         let mut abort = draft.hooks.abort_on_before_failure;
@@ -1246,17 +1214,11 @@ impl App {
         }
         ui.add_space(space::L);
         let mut success = draft.hooks.after_success.clone().unwrap_or_default();
-        widgets::Field::new()
-            .label(copy::job::HOOKS_AFTER_SUCCESS)
-            .mono()
-            .show(ui, &mut success);
+        widgets::Field::new().label(copy::job::HOOKS_AFTER_SUCCESS).mono().show(ui, &mut success);
         draft.hooks.after_success = (!success.trim().is_empty()).then_some(success);
         ui.add_space(space::L);
         let mut failure = draft.hooks.after_failure.clone().unwrap_or_default();
-        widgets::Field::new()
-            .label(copy::job::HOOKS_AFTER_FAILURE)
-            .mono()
-            .show(ui, &mut failure);
+        widgets::Field::new().label(copy::job::HOOKS_AFTER_FAILURE).mono().show(ui, &mut failure);
         draft.hooks.after_failure = (!failure.trim().is_empty()).then_some(failure);
         ui.add_space(space::L);
         widgets::paragraph_at(ui, copy::job::HOOKS_ENV, Type::Small, t.text_muted, 560.0);
@@ -1438,7 +1400,11 @@ fn schedule_controls(
                         "The daemon works out when a cron schedule fires.".to_string()
                     } else {
                         copy::job_schedule_next_five(
-                            &runs.iter().map(|r| format::absolute(*r)).collect::<Vec<_>>().join(", "),
+                            &runs
+                                .iter()
+                                .map(|r| format::absolute(*r))
+                                .collect::<Vec<_>>()
+                                .join(", "),
                         )
                     };
                     widgets::paragraph_at(ui, text, Type::Small, t.text_muted, 520.0);

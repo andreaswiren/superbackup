@@ -104,10 +104,7 @@ pub async fn start(runtime: &Arc<Runtime>, job: Job) -> Result<StartedReply> {
         dry_run: true,
         // A child of the engine's token where there is one, so shutting the
         // daemon down stops a rehearsal too.
-        cancel: runtime
-            .scheduler()
-            .map(|s| s.cancel_token().child())
-            .unwrap_or_default(),
+        cancel: runtime.scheduler().map(|s| s.cancel_token().child()).unwrap_or_default(),
     };
 
     let name = job.name.clone();

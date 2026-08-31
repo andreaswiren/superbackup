@@ -63,7 +63,11 @@ pub struct Confirm {
 }
 
 impl Confirm {
-    pub fn new(title: impl Into<String>, body: impl Into<String>, verb: impl Into<String>) -> Confirm {
+    pub fn new(
+        title: impl Into<String>,
+        body: impl Into<String>,
+        verb: impl Into<String>,
+    ) -> Confirm {
         Confirm {
             title: title.into(),
             body: body.into(),
@@ -211,8 +215,7 @@ impl RotateState {
     /// Any failure blocks step 3 unless at least one destination passed and the
     /// user accepts what will break.
     pub fn can_continue(&self) -> bool {
-        !self.results.is_empty()
-            && self.results.iter().all(|(_, r)| matches!(r, Some(Ok(()))))
+        !self.results.is_empty() && self.results.iter().all(|(_, r)| matches!(r, Some(Ok(()))))
     }
     pub fn any_passed(&self) -> bool {
         self.results.iter().any(|(_, r)| matches!(r, Some(Ok(()))))
@@ -304,9 +307,7 @@ fn dirs_download() -> PathBuf {
 }
 
 fn directories_home() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
+    std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -426,14 +427,10 @@ impl Modal {
 
 pub fn delete_job_confirm(job: Option<&Job>) -> Confirm {
     let name = job.map(|j| j.name.clone()).unwrap_or_else(|| "this job".into());
-    Confirm::new(
-        format!("Delete {name}?"),
-        copy::job::DANGER_BODY,
-        format!("Delete {name}"),
-    )
-    .bullet("The job definition is removed from this machine.")
-    .bullet("Snapshots already written to any destination are left exactly as they are.")
-    .action(ConfirmAction::DeleteJob(job.map(|j| j.id).unwrap_or_else(Uuid::nil)))
+    Confirm::new(format!("Delete {name}?"), copy::job::DANGER_BODY, format!("Delete {name}"))
+        .bullet("The job definition is removed from this machine.")
+        .bullet("Snapshots already written to any destination are left exactly as they are.")
+        .action(ConfirmAction::DeleteJob(job.map(|j| j.id).unwrap_or_else(Uuid::nil)))
 }
 
 pub fn remove_destination_confirm(data: &Data, destination: Uuid) -> Confirm {
@@ -516,15 +513,11 @@ pub fn reset_vault_confirm(data: &Data) -> Confirm {
         .map(|d| d.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    Confirm::new(
-        copy::set::SEC_RESET_TITLE,
-        copy::set::SEC_RESET_BODY,
-        copy::set::SEC_RESET_BUTTON,
-    )
-    .danger_bullet(copy::set_sec_reset_affected(&names))
-    .bullet("Nothing at any destination is deleted.")
-    .typed_confirmation("superbackup")
-    .action(ConfirmAction::ResetVault)
+    Confirm::new(copy::set::SEC_RESET_TITLE, copy::set::SEC_RESET_BODY, copy::set::SEC_RESET_BUTTON)
+        .danger_bullet(copy::set_sec_reset_affected(&names))
+        .bullet("Nothing at any destination is deleted.")
+        .typed_confirmation("superbackup")
+        .action(ConfirmAction::ResetVault)
 }
 
 // ---------------------------------------------------------------------------
@@ -538,11 +531,13 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::Confirm(state) => show_confirm(app, ctx, state),
         Modal::WriteDown(state) => show_write_down(app, ctx, state),
         Modal::Connect(state) => show_connect(app, ctx, state),
-        Modal::Wizard(state) => super::screens::wizard::show(app, ctx, *state).map(Box::new).map(Modal::Wizard),
-        Modal::Rotate(state) => show_rotate(app, ctx, state),
-        Modal::RestoreOptions(state) => {
-            super::screens::restore::show_options(app, ctx, *state).map(Box::new).map(Modal::RestoreOptions)
+        Modal::Wizard(state) => {
+            super::screens::wizard::show(app, ctx, *state).map(Box::new).map(Modal::Wizard)
         }
+        Modal::Rotate(state) => show_rotate(app, ctx, state),
+        Modal::RestoreOptions(state) => super::screens::restore::show_options(app, ctx, *state)
+            .map(Box::new)
+            .map(Modal::RestoreOptions),
         Modal::ChangePassphrase(state) => show_change_passphrase(app, ctx, state),
         Modal::Unsaved(state) => show_unsaved(app, ctx, state),
         Modal::NewProject(state) => show_new_project(app, ctx, state),
@@ -566,64 +561,65 @@ fn show_unlock(app: &mut App, ctx: &egui::Context, mut state: UnlockState) -> Op
         blocking,
         |m| {
             m.body(|ui| {
-            widgets::paragraph(ui, copy::vault::UNLOCK_BODY, Type::Small, t.text_secondary);
-            ui.add_space(space::XL);
-            let response = widgets::passphrase_field(
-                ui,
-                &mut state.passphrase,
-                copy::vault::UNLOCK_FIELD,
-                &mut state.revealed,
-                state.error.as_deref(),
-                280.0,
-            );
-            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                submit = true;
-            }
-            if state.attempts == 0 {
-                response.request_focus();
-            }
-            // Only where the OS keychain is switched on; absent, not disabled.
-            if app.data.settings.use_os_keychain {
-                ui.add_space(space::L);
-                widgets::checkbox(
+                widgets::paragraph(ui, copy::vault::UNLOCK_BODY, Type::Small, t.text_secondary);
+                ui.add_space(space::XL);
+                let response = widgets::passphrase_field(
                     ui,
-                    &mut state.remember,
-                    copy::vault::UNLOCK_REMEMBER,
-                    None,
-                    true,
+                    &mut state.passphrase,
+                    copy::vault::UNLOCK_FIELD,
+                    &mut state.revealed,
+                    state.error.as_deref(),
+                    280.0,
                 );
-            }
-            // Reserved error area, so the modal does not jump.
-            ui.add_space(space::M);
-            let (rect, _) = ui.allocate_exact_size(
-                egui::Vec2::new(ui.available_width(), 20.0),
-                egui::Sense::hover(),
-            );
-            if state.attempts >= 3 {
-                let g = widgets::galley_wrapped(
-                    ui,
-                    copy::vault::UNLOCK_NO_RECOVERY,
-                    Type::Small,
-                    t.text_muted,
-                    rect.width(),
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    submit = true;
+                }
+                if state.attempts == 0 {
+                    response.request_focus();
+                }
+                // Only where the OS keychain is switched on; absent, not disabled.
+                if app.data.settings.use_os_keychain {
+                    ui.add_space(space::L);
+                    widgets::checkbox(
+                        ui,
+                        &mut state.remember,
+                        copy::vault::UNLOCK_REMEMBER,
+                        None,
+                        true,
+                    );
+                }
+                // Reserved error area, so the modal does not jump.
+                ui.add_space(space::M);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::Vec2::new(ui.available_width(), 20.0),
+                    egui::Sense::hover(),
                 );
-                ui.painter().galley(rect.min, g, t.text_muted);
-            }
-        });
+                if state.attempts >= 3 {
+                    let g = widgets::galley_wrapped(
+                        ui,
+                        copy::vault::UNLOCK_NO_RECOVERY,
+                        Type::Small,
+                        t.text_muted,
+                        rect.width(),
+                    );
+                    ui.painter().galley(rect.min, g, t.text_muted);
+                }
+            });
             m.footer(|ui| {
-            let label = if state.busy { copy::vault::UNLOCK_BUSY } else { copy::vault::UNLOCK_BUTTON };
-            if Button::primary(label)
-                .busy(state.busy)
-                .enabled(!state.busy && !state.passphrase.is_empty())
-                .show(ui)
-                .clicked()
-            {
-                submit = true;
-            }
-            if !blocking && Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                cancel = true;
-            }
-        });
+                let label =
+                    if state.busy { copy::vault::UNLOCK_BUSY } else { copy::vault::UNLOCK_BUTTON };
+                if Button::primary(label)
+                    .busy(state.busy)
+                    .enabled(!state.busy && !state.passphrase.is_empty())
+                    .show(ui)
+                    .clicked()
+                {
+                    submit = true;
+                }
+                if !blocking && Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    cancel = true;
+                }
+            });
         },
     );
 
@@ -655,63 +651,57 @@ fn show_confirm(app: &mut App, ctx: &egui::Context, mut state: Confirm) -> Optio
         false,
         |m| {
             m.body(|ui| {
-            widgets::paragraph(ui, state.body.clone(), Type::Body, t.text_secondary);
-            if !state.bullets.is_empty() || !state.danger_bullets.is_empty() {
-                ui.add_space(space::L);
-            }
-            for bullet in &state.danger_bullets {
-                bullet_row(ui, bullet, t.danger.tint_text);
-            }
-            for bullet in &state.bullets {
-                bullet_row(ui, bullet, t.text_secondary);
-            }
-            if let Some((label, helper, on)) = &mut state.extra_toggle {
-                ui.add_space(space::XL);
-                let label = label.clone();
-                let helper = helper.clone();
-                widgets::checkbox(ui, on, &label, Some(&helper), true);
-                if *on && state.type_to_confirm.is_none() {
-                    // Ticking the escalation promotes the modal to a typed
-                    // confirmation, and changes the verb with it.
-                    state.type_to_confirm = Some(state.title.clone());
+                widgets::paragraph(ui, state.body.clone(), Type::Body, t.text_secondary);
+                if !state.bullets.is_empty() || !state.danger_bullets.is_empty() {
+                    ui.add_space(space::L);
                 }
-            }
-            if let Some(needle) = &state.type_to_confirm {
-                if needle != "\u{0}" {
+                for bullet in &state.danger_bullets {
+                    bullet_row(ui, bullet, t.danger.tint_text);
+                }
+                for bullet in &state.bullets {
+                    bullet_row(ui, bullet, t.text_secondary);
+                }
+                if let Some((label, helper, on)) = &mut state.extra_toggle {
                     ui.add_space(space::XL);
-                    let label = copy::confirm_type_name(needle);
-                    widgets::Field::new()
-                        .label(&label)
-                        .width(240.0)
-                        .show(ui, &mut state.typed);
+                    let label = label.clone();
+                    let helper = helper.clone();
+                    widgets::checkbox(ui, on, &label, Some(&helper), true);
+                    if *on && state.type_to_confirm.is_none() {
+                        // Ticking the escalation promotes the modal to a typed
+                        // confirmation, and changes the verb with it.
+                        state.type_to_confirm = Some(state.title.clone());
+                    }
                 }
-            }
-        });
+                if let Some(needle) = &state.type_to_confirm {
+                    if needle != "\u{0}" {
+                        ui.add_space(space::XL);
+                        let label = copy::confirm_type_name(needle);
+                        widgets::Field::new().label(&label).width(240.0).show(ui, &mut state.typed);
+                    }
+                }
+            });
             m.footer(|ui| {
-            let blocked = state.type_to_confirm.as_deref() == Some("\u{0}");
-            let verb = if state.extra_toggle.as_ref().map(|(_, _, on)| *on).unwrap_or(false) {
-                copy::dest::DELETE_BUTTON_FILES.to_string()
-            } else {
-                state.verb.clone()
-            };
-            let button = if state.destructive {
-                Button::danger(&verb)
-            } else {
-                Button::primary(&verb)
-            };
-            let enabled = state.can_confirm() && !blocked;
-            let button = if blocked {
-                button.disabled_because(copy::prov::DELETE_GOTO)
-            } else {
-                button.enabled(enabled)
-            };
-            if button.show(ui).clicked() {
-                confirmed = true;
-            }
-            if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                cancelled = true;
-            }
-        });
+                let blocked = state.type_to_confirm.as_deref() == Some("\u{0}");
+                let verb = if state.extra_toggle.as_ref().map(|(_, _, on)| *on).unwrap_or(false) {
+                    copy::dest::DELETE_BUTTON_FILES.to_string()
+                } else {
+                    state.verb.clone()
+                };
+                let button =
+                    if state.destructive { Button::danger(&verb) } else { Button::primary(&verb) };
+                let enabled = state.can_confirm() && !blocked;
+                let button = if blocked {
+                    button.disabled_because(copy::prov::DELETE_GOTO)
+                } else {
+                    button.enabled(enabled)
+                };
+                if button.show(ui).clicked() {
+                    confirmed = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    cancelled = true;
+                }
+            });
         },
     );
 
@@ -771,11 +761,8 @@ fn perform(app: &mut App, confirm: &Confirm) {
             app.go(super::nav::Route::Destinations);
         }
         ConfirmAction::DeleteProvider(id) => {
-            let name = app
-                .data
-                .provider(id)
-                .map(|p| p.name.clone())
-                .unwrap_or_else(|| id.to_string());
+            let name =
+                app.data.provider(id).map(|p| p.name.clone()).unwrap_or_else(|| id.to_string());
             app.ask(
                 Intent::DeleteProvider(name),
                 Request::ProviderDelete { provider: id.to_string(), force: false },
@@ -811,84 +798,88 @@ fn show_write_down(app: &mut App, ctx: &egui::Context, mut state: WriteDownState
         true,
         |m| {
             m.body(|ui| {
-            widgets::paragraph(
-                ui,
-                copy::writedown_body(&state.location),
-                Type::Body,
-                t.text_secondary,
-            );
-            ui.add_space(space::XXL);
+                widgets::paragraph(
+                    ui,
+                    copy::writedown_body(&state.location),
+                    Type::Body,
+                    t.text_secondary,
+                );
+                ui.add_space(space::XXL);
 
-            // The passphrase itself: focusable, so a screen reader can be
-            // pointed at it deliberately, and never announced automatically.
-            let grouped = state.grouped();
-            let response = egui::Frame::new()
-                .fill(t.bg_code)
-                .stroke(egui::Stroke::new(1.0_f32, t.border_subtle))
-                .corner_radius(super::theme::radius::CONTROL)
-                .inner_margin(egui::Margin::same(16))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    for line in grouped.lines() {
-                        widgets::text(ui, line, Type::MonoStrong, t.text_primary);
+                // The passphrase itself: focusable, so a screen reader can be
+                // pointed at it deliberately, and never announced automatically.
+                let grouped = state.grouped();
+                let response = egui::Frame::new()
+                    .fill(t.bg_code)
+                    .stroke(egui::Stroke::new(1.0_f32, t.border_subtle))
+                    .corner_radius(super::theme::radius::CONTROL)
+                    .inner_margin(egui::Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        for line in grouped.lines() {
+                            widgets::text(ui, line, Type::MonoStrong, t.text_primary);
+                        }
+                    })
+                    .response;
+                let interact = ui.interact(
+                    response.rect,
+                    egui::Id::new("sb-writedown-passphrase"),
+                    egui::Sense::focusable_noninteractive(),
+                );
+                interact.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Label,
+                        true,
+                        copy::a11y::PASSPHRASE_BLOCK,
+                    )
+                });
+                ui.add_space(space::M);
+                widgets::text(ui, copy::writedown::GROUPING, Type::Small, t.text_muted);
+
+                ui.add_space(space::XXL);
+                ui.horizontal(|ui| {
+                    if Button::secondary(copy::writedown::COPY).icon(Icon::Copy).show(ui).clicked()
+                    {
+                        ui.ctx().copy_text(state.passphrase.clone());
+                        state.copied = true;
                     }
-                })
-                .response;
-            let interact = ui.interact(
-                response.rect,
-                egui::Id::new("sb-writedown-passphrase"),
-                egui::Sense::focusable_noninteractive(),
-            );
-            interact.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::Label,
-                    true,
-                    copy::a11y::PASSPHRASE_BLOCK,
-                )
-            });
-            ui.add_space(space::M);
-            widgets::text(ui, copy::writedown::GROUPING, Type::Small, t.text_muted);
-
-            ui.add_space(space::XXL);
-            ui.horizontal(|ui| {
-                if Button::secondary(copy::writedown::COPY).icon(Icon::Copy).show(ui).clicked() {
-                    ui.ctx().copy_text(state.passphrase.clone());
-                    state.copied = true;
+                    if Button::secondary(copy::writedown::SAVE)
+                        .icon(Icon::FileText)
+                        .show(ui)
+                        .clicked()
+                    {
+                        app.toasts.info(copy::writedown::SAVE_NOTE);
+                    }
+                    if cfg!(any(windows, target_os = "macos"))
+                        && Button::ghost(copy::writedown::PRINT)
+                            .icon(Icon::Printer)
+                            .show(ui)
+                            .clicked()
+                    {
+                        app.toasts.info(copy::writedown::SAVE_NOTE);
+                    }
+                });
+                if state.copied {
+                    ui.add_space(space::M);
+                    widgets::text(ui, copy::writedown::COPIED, Type::Small, t.text_muted);
                 }
-                if Button::secondary(copy::writedown::SAVE)
-                    .icon(Icon::FileText)
+                ui.add_space(space::M);
+                widgets::text(ui, copy::writedown::SAVE_NOTE, Type::Small, t.text_muted);
+
+                ui.add_space(space::XXL);
+                widgets::checkbox(ui, &mut state.acknowledged, copy::writedown::ACK, None, true);
+                ui.add_space(space::L);
+                widgets::paragraph(ui, copy::writedown::ESCAPE, Type::Small, t.text_muted);
+            });
+            m.footer(|ui| {
+                if Button::primary(copy::action::DONE)
+                    .enabled(state.acknowledged)
                     .show(ui)
                     .clicked()
                 {
-                    app.toasts.info(copy::writedown::SAVE_NOTE);
-                }
-                if cfg!(any(windows, target_os = "macos"))
-                    && Button::ghost(copy::writedown::PRINT).icon(Icon::Printer).show(ui).clicked()
-                {
-                    app.toasts.info(copy::writedown::SAVE_NOTE);
+                    done = true;
                 }
             });
-            if state.copied {
-                ui.add_space(space::M);
-                widgets::text(ui, copy::writedown::COPIED, Type::Small, t.text_muted);
-            }
-            ui.add_space(space::M);
-            widgets::text(ui, copy::writedown::SAVE_NOTE, Type::Small, t.text_muted);
-
-            ui.add_space(space::XXL);
-            widgets::checkbox(ui, &mut state.acknowledged, copy::writedown::ACK, None, true);
-            ui.add_space(space::L);
-            widgets::paragraph(ui, copy::writedown::ESCAPE, Type::Small, t.text_muted);
-        });
-            m.footer(|ui| {
-            if Button::primary(copy::action::DONE)
-                .enabled(state.acknowledged)
-                .show(ui)
-                .clicked()
-            {
-                done = true;
-            }
-        });
         },
     );
     if done {
@@ -909,49 +900,63 @@ fn show_connect(app: &mut App, ctx: &egui::Context, mut state: ConnectState) -> 
         false,
         |m| {
             m.body(|ui| {
-            widgets::paragraph(ui, copy::dest::CONNECT_BODY, Type::Body, t.text_secondary);
-            ui.add_space(space::XL);
-            widgets::kv(ui, copy::dest::FOLDER, &state.location, true);
-            ui.add_space(space::XL);
-            if state.offer_derive {
-                if widgets::radio(ui, state.derive_from_master, copy::dest::CONNECT_DERIVE, None, true)
+                widgets::paragraph(ui, copy::dest::CONNECT_BODY, Type::Body, t.text_secondary);
+                ui.add_space(space::XL);
+                widgets::kv(ui, copy::dest::FOLDER, &state.location, true);
+                ui.add_space(space::XL);
+                if state.offer_derive {
+                    if widgets::radio(
+                        ui,
+                        state.derive_from_master,
+                        copy::dest::CONNECT_DERIVE,
+                        None,
+                        true,
+                    )
                     .clicked()
-                {
-                    state.derive_from_master = true;
+                    {
+                        state.derive_from_master = true;
+                    }
+                    if widgets::radio(
+                        ui,
+                        !state.derive_from_master,
+                        copy::dest::CONNECT_TYPE,
+                        None,
+                        true,
+                    )
+                    .clicked()
+                    {
+                        state.derive_from_master = false;
+                    }
+                    ui.add_space(space::L);
                 }
-                if widgets::radio(ui, !state.derive_from_master, copy::dest::CONNECT_TYPE, None, true)
-                    .clicked()
-                {
-                    state.derive_from_master = false;
+                if !state.derive_from_master {
+                    widgets::passphrase_field(
+                        ui,
+                        &mut state.passphrase,
+                        copy::dest::CONNECT_FIELD,
+                        &mut state.revealed,
+                        state.error.as_deref(),
+                        400.0,
+                    );
                 }
                 ui.add_space(space::L);
-            }
-            if !state.derive_from_master {
-                widgets::passphrase_field(
-                    ui,
-                    &mut state.passphrase,
-                    copy::dest::CONNECT_FIELD,
-                    &mut state.revealed,
-                    state.error.as_deref(),
-                    400.0,
-                );
-            }
-            ui.add_space(space::L);
-            widgets::text(ui, copy::dest::CONNECT_SETTINGS_NOTE, Type::Small, t.text_muted);
-        });
+                widgets::text(ui, copy::dest::CONNECT_SETTINGS_NOTE, Type::Small, t.text_muted);
+            });
             m.footer(|ui| {
-            if Button::primary(copy::dest::FOLDER_FOUND_REPO_ACTION)
-                .busy(state.busy)
-                .enabled(!state.busy && (state.derive_from_master || !state.passphrase.is_empty()))
-                .show(ui)
-                .clicked()
-            {
-                connect = true;
-            }
-            if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                connect = false;
-            }
-        });
+                if Button::primary(copy::dest::FOLDER_FOUND_REPO_ACTION)
+                    .busy(state.busy)
+                    .enabled(
+                        !state.busy && (state.derive_from_master || !state.passphrase.is_empty()),
+                    )
+                    .show(ui)
+                    .clicked()
+                {
+                    connect = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    connect = false;
+                }
+            });
         },
     );
     if connect {
@@ -976,8 +981,7 @@ fn show_rotate(app: &mut App, ctx: &egui::Context, mut state: RotateState) -> Op
         .map(|p| p.name.clone())
         .unwrap_or_else(|| copy::state::UNKNOWN.into());
     let (inheriting, overriding) = app.data.destinations_using(&state.provider);
-    let affected: Vec<(Uuid, String)> =
-        inheriting.iter().map(|d| (d.id, d.name.clone())).collect();
+    let affected: Vec<(Uuid, String)> = inheriting.iter().map(|d| (d.id, d.name.clone())).collect();
     let unaffected: Vec<String> = overriding.iter().map(|d| d.name.clone()).collect();
     let jobs = app.data.jobs_via_provider(&state.provider).len();
 
@@ -994,138 +998,148 @@ fn show_rotate(app: &mut App, ctx: &egui::Context, mut state: RotateState) -> Op
         false,
         |m| {
             m.body(|ui| match state.step {
-            1 => {
-                widgets::banner(
-                    ui,
-                    widgets::BannerKind::Warning,
-                    copy::prov::ROTATE_LEAD,
-                    Some(copy::prov::ROTATE_OLD_VALID),
-                    |_| {},
-                );
-                ui.add_space(space::XL);
-                widgets::text(
-                    ui,
-                    copy::prov_impact(affected.len(), jobs),
-                    Type::BodyStrong,
-                    t.text_primary,
-                );
-                ui.add_space(space::M);
-                for (_, name) in &affected {
-                    bullet_row(ui, name, t.text_secondary);
-                }
-                if !unaffected.is_empty() {
+                1 => {
+                    widgets::banner(
+                        ui,
+                        widgets::BannerKind::Warning,
+                        copy::prov::ROTATE_LEAD,
+                        Some(copy::prov::ROTATE_OLD_VALID),
+                        |_| {},
+                    );
                     ui.add_space(space::XL);
                     widgets::text(
                         ui,
-                        copy::prov::IMPACT_UNAFFECTED,
+                        copy::prov_impact(affected.len(), jobs),
                         Type::BodyStrong,
                         t.text_primary,
                     );
                     ui.add_space(space::M);
-                    for name in &unaffected {
-                        bullet_row(ui, name, t.text_muted);
+                    for (_, name) in &affected {
+                        bullet_row(ui, name, t.text_secondary);
+                    }
+                    if !unaffected.is_empty() {
+                        ui.add_space(space::XL);
+                        widgets::text(
+                            ui,
+                            copy::prov::IMPACT_UNAFFECTED,
+                            Type::BodyStrong,
+                            t.text_primary,
+                        );
+                        ui.add_space(space::M);
+                        for name in &unaffected {
+                            bullet_row(ui, name, t.text_muted);
+                        }
                     }
                 }
-            }
-            2 => {
-                widgets::text(ui, copy::prov::ROTATE_NEW_CREDS, Type::H3, t.text_primary);
-                ui.add_space(space::L);
-                widgets::Field::new()
-                    .label(copy::prov::ACCESS_KEY)
-                    .width(400.0)
-                    .show(ui, &mut state.access_key);
-                ui.add_space(space::L);
-                let mut revealed = state.revealed;
-                widgets::passphrase_field(
-                    ui,
-                    &mut state.secret_key,
-                    copy::prov::SECRET_KEY,
-                    &mut revealed,
-                    None,
-                    400.0,
-                );
-                state.revealed = revealed;
-                ui.add_space(space::XL);
-                for (id, result) in &state.results {
-                    let name = app.data.destination_name(id);
-                    match result {
-                        None => widgets::checklist_row(
-                            ui,
-                            widgets::StepState::Running,
-                            &copy::prov_rotate_verifying(&name),
-                            None,
-                        ),
-                        Some(Ok(())) => widgets::checklist_row(
-                            ui,
-                            widgets::StepState::Done,
-                            &name,
-                            Some(copy::prov::ROTATE_PASS),
-                        ),
-                        Some(Err(reason)) => widgets::checklist_row(
-                            ui,
-                            widgets::StepState::Failed,
-                            &name,
-                            Some(&copy::prov_rotate_fail(reason)),
-                        ),
-                    }
-                }
-                if !state.results.is_empty() && !state.can_continue() {
+                2 => {
+                    widgets::text(ui, copy::prov::ROTATE_NEW_CREDS, Type::H3, t.text_primary);
                     ui.add_space(space::L);
-                    widgets::paragraph(ui, copy::prov::ROTATE_BLOCKED, Type::Small, t.warning.tint_text);
+                    widgets::Field::new()
+                        .label(copy::prov::ACCESS_KEY)
+                        .width(400.0)
+                        .show(ui, &mut state.access_key);
+                    ui.add_space(space::L);
+                    let mut revealed = state.revealed;
+                    widgets::passphrase_field(
+                        ui,
+                        &mut state.secret_key,
+                        copy::prov::SECRET_KEY,
+                        &mut revealed,
+                        None,
+                        400.0,
+                    );
+                    state.revealed = revealed;
+                    ui.add_space(space::XL);
+                    for (id, result) in &state.results {
+                        let name = app.data.destination_name(id);
+                        match result {
+                            None => widgets::checklist_row(
+                                ui,
+                                widgets::StepState::Running,
+                                &copy::prov_rotate_verifying(&name),
+                                None,
+                            ),
+                            Some(Ok(())) => widgets::checklist_row(
+                                ui,
+                                widgets::StepState::Done,
+                                &name,
+                                Some(copy::prov::ROTATE_PASS),
+                            ),
+                            Some(Err(reason)) => widgets::checklist_row(
+                                ui,
+                                widgets::StepState::Failed,
+                                &name,
+                                Some(&copy::prov_rotate_fail(reason)),
+                            ),
+                        }
+                    }
+                    if !state.results.is_empty() && !state.can_continue() {
+                        ui.add_space(space::L);
+                        widgets::paragraph(
+                            ui,
+                            copy::prov::ROTATE_BLOCKED,
+                            Type::Small,
+                            t.warning.tint_text,
+                        );
+                    }
                 }
-            }
-            _ => {
-                widgets::text(ui, copy::prov::ROTATE_DONE_TITLE, Type::H2, t.text_primary);
-                ui.add_space(space::M);
-                widgets::paragraph(ui, copy::prov::ROTATE_DONE_BODY, Type::Body, t.text_secondary);
-                ui.add_space(space::XL);
-                widgets::paragraph(
-                    ui,
-                    copy::prov_rotate_done_revoke(&state.old_key_id),
-                    Type::Small,
-                    t.text_secondary,
-                );
-                ui.add_space(space::L);
-                if Button::secondary("Copy key ID").icon(Icon::Copy).show(ui).clicked() {
-                    ui.ctx().copy_text(state.old_key_id.clone());
+                _ => {
+                    widgets::text(ui, copy::prov::ROTATE_DONE_TITLE, Type::H2, t.text_primary);
+                    ui.add_space(space::M);
+                    widgets::paragraph(
+                        ui,
+                        copy::prov::ROTATE_DONE_BODY,
+                        Type::Body,
+                        t.text_secondary,
+                    );
+                    ui.add_space(space::XL);
+                    widgets::paragraph(
+                        ui,
+                        copy::prov_rotate_done_revoke(&state.old_key_id),
+                        Type::Small,
+                        t.text_secondary,
+                    );
+                    ui.add_space(space::L);
+                    if Button::secondary("Copy key ID").icon(Icon::Copy).show(ui).clicked() {
+                        ui.ctx().copy_text(state.old_key_id.clone());
+                    }
                 }
-            }
-        });
+            });
             m.footer(|ui| match state.step {
-            1 => {
-                if Button::primary(copy::action::CONTINUE).show(ui).clicked() {
-                    advance = true;
+                1 => {
+                    if Button::primary(copy::action::CONTINUE).show(ui).clicked() {
+                        advance = true;
+                    }
+                    if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                        advance = false;
+                    }
                 }
-                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                    advance = false;
-                }
-            }
-            2 => {
-                let ready = !state.access_key.trim().is_empty() && !state.secret_key.is_empty();
-                if Button::primary(copy::prov::ROTATE_VERIFY)
-                    .busy(state.verifying)
-                    .enabled(ready && !state.verifying)
-                    .show(ui)
-                    .clicked()
-                {
-                    verify = true;
-                }
-                if state.any_passed() && !state.can_continue() {
-                    if Button::danger(copy::prov::ROTATE_CONTINUE_ANYWAY).show(ui).clicked() {
+                2 => {
+                    let ready = !state.access_key.trim().is_empty() && !state.secret_key.is_empty();
+                    if Button::primary(copy::prov::ROTATE_VERIFY)
+                        .busy(state.verifying)
+                        .enabled(ready && !state.verifying)
+                        .show(ui)
+                        .clicked()
+                    {
+                        verify = true;
+                    }
+                    if state.any_passed() && !state.can_continue() {
+                        if Button::danger(copy::prov::ROTATE_CONTINUE_ANYWAY).show(ui).clicked() {
+                            finish = true;
+                        }
+                    } else if state.can_continue()
+                        && Button::primary(copy::action::CONTINUE).show(ui).clicked()
+                    {
                         finish = true;
                     }
-                } else if state.can_continue()
-                    && Button::primary(copy::action::CONTINUE).show(ui).clicked()
-                {
-                    finish = true;
                 }
-            }
-            _ => {
-                if Button::primary(copy::action::DONE).show(ui).clicked() {
-                    advance = true;
+                _ => {
+                    if Button::primary(copy::action::DONE).show(ui).clicked() {
+                        advance = true;
+                    }
                 }
-            }
-        });
+            });
         },
     );
 
@@ -1187,62 +1201,67 @@ fn show_change_passphrase(
         false,
         |m| {
             m.body(|ui| {
-            if state.done {
-                widgets::text(ui, copy::set::SEC_CHANGE_DONE_TITLE, Type::H2, t.text_primary);
+                if state.done {
+                    widgets::text(ui, copy::set::SEC_CHANGE_DONE_TITLE, Type::H2, t.text_primary);
+                    ui.add_space(space::M);
+                    widgets::paragraph(
+                        ui,
+                        copy::set::SEC_CHANGE_DONE_BODY,
+                        Type::Body,
+                        t.text_secondary,
+                    );
+                    return;
+                }
+                let mut revealed = state.revealed;
+                widgets::passphrase_field(
+                    ui,
+                    &mut state.current,
+                    copy::set::SEC_CHANGE_CURRENT,
+                    &mut revealed,
+                    state.error.as_deref(),
+                    400.0,
+                );
+                ui.add_space(space::XL);
+                widgets::passphrase_field(
+                    ui,
+                    &mut state.replacement,
+                    copy::set::SEC_CHANGE_NEW,
+                    &mut revealed,
+                    report.for_field(validation::Field::Passphrase),
+                    400.0,
+                );
                 ui.add_space(space::M);
-                widgets::paragraph(ui, copy::set::SEC_CHANGE_DONE_BODY, Type::Body, t.text_secondary);
-                return;
-            }
-            let mut revealed = state.revealed;
-            widgets::passphrase_field(
-                ui,
-                &mut state.current,
-                copy::set::SEC_CHANGE_CURRENT,
-                &mut revealed,
-                state.error.as_deref(),
-                400.0,
-            );
-            ui.add_space(space::XL);
-            widgets::passphrase_field(
-                ui,
-                &mut state.replacement,
-                copy::set::SEC_CHANGE_NEW,
-                &mut revealed,
-                report.for_field(validation::Field::Passphrase),
-                400.0,
-            );
-            ui.add_space(space::M);
-            widgets::strength_meter(ui, score, 400.0);
-            ui.add_space(space::XL);
-            widgets::passphrase_field(
-                ui,
-                &mut state.confirm,
-                copy::set::SEC_CHANGE_CONFIRM,
-                &mut revealed,
-                report.for_field(validation::Field::PassphraseConfirm),
-                400.0,
-            );
-            state.revealed = revealed;
-        });
+                widgets::strength_meter(ui, score, 400.0);
+                ui.add_space(space::XL);
+                widgets::passphrase_field(
+                    ui,
+                    &mut state.confirm,
+                    copy::set::SEC_CHANGE_CONFIRM,
+                    &mut revealed,
+                    report.for_field(validation::Field::PassphraseConfirm),
+                    400.0,
+                );
+                state.revealed = revealed;
+            });
             m.footer(|ui| {
-            if state.done {
-                if Button::primary(copy::action::DONE).show(ui).clicked() {
+                if state.done {
+                    if Button::primary(copy::action::DONE).show(ui).clicked() {
+                        submit = true;
+                    }
+                    return;
+                }
+                if Button::primary(copy::action::SAVE)
+                    .busy(state.busy)
+                    .enabled(report.ok() && !state.current.is_empty() && !state.busy)
+                    .show(ui)
+                    .clicked()
+                {
                     submit = true;
                 }
-                return;
-            }
-            if Button::primary(copy::action::SAVE)
-                .busy(state.busy)
-                .enabled(report.ok() && !state.current.is_empty() && !state.busy)
-                .show(ui)
-                .clicked()
-            {
-                submit = true;
-            }
-            if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                submit = false;
-            }
-        });
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    submit = false;
+                }
+            });
         },
     );
 
@@ -1284,24 +1303,24 @@ fn show_unsaved(app: &mut App, ctx: &egui::Context, state: UnsavedState) -> Opti
         false,
         |m| {
             m.body(|ui| {
-            widgets::paragraph(
-                ui,
-                copy::job_unsaved_body(&state.tabs),
-                Type::Body,
-                t.text_secondary,
-            );
-        });
+                widgets::paragraph(
+                    ui,
+                    copy::job_unsaved_body(&state.tabs),
+                    Type::Body,
+                    t.text_secondary,
+                );
+            });
             m.footer(|ui| {
-            if Button::primary(copy::action::SAVE).show(ui).clicked() {
-                outcome = Some(true);
-            }
-            if Button::secondary(copy::job::UNSAVED_DISCARD).show(ui).clicked() {
-                outcome = Some(false);
-            }
-            if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                cancel = true;
-            }
-        });
+                if Button::primary(copy::action::SAVE).show(ui).clicked() {
+                    outcome = Some(true);
+                }
+                if Button::secondary(copy::job::UNSAVED_DISCARD).show(ui).clicked() {
+                    outcome = Some(false);
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    cancel = true;
+                }
+            });
         },
     );
     match outcome {
@@ -1325,7 +1344,11 @@ fn show_unsaved(app: &mut App, ctx: &egui::Context, state: UnsavedState) -> Opti
     }
 }
 
-fn show_new_project(app: &mut App, ctx: &egui::Context, mut state: NewProjectState) -> Option<Modal> {
+fn show_new_project(
+    app: &mut App,
+    ctx: &egui::Context,
+    mut state: NewProjectState,
+) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut create = false;
     let (close, _) = widgets::modal(
@@ -1337,60 +1360,60 @@ fn show_new_project(app: &mut App, ctx: &egui::Context, mut state: NewProjectSta
         false,
         |m| {
             m.body(|ui| {
-            widgets::Field::new()
-                .label(copy::job::NAME)
-                .width(360.0)
-                .char_limit(64)
-                .show(ui, &mut state.name);
-            ui.add_space(space::L);
-            widgets::Field::new()
-                .label(copy::job::DESCRIPTION)
-                .width(360.0)
-                .rows(2)
-                .show(ui, &mut state.description);
-            ui.add_space(space::XL);
-            widgets::text(ui, "Colour", Type::H3, t.text_primary);
-            ui.add_space(space::M);
-            ui.horizontal(|ui| {
-                for (index, hex) in PROJECT_COLOURS.iter().enumerate() {
-                    let colour = parse_hex(hex).unwrap_or(t.accent);
-                    let (rect, response) =
-                        ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
-                    ui.painter().rect_filled(rect, super::theme::radius::BADGE, colour);
-                    if state.colour == index {
-                        ui.painter().rect_stroke(
-                            rect.expand(2.0),
-                            super::theme::radius::BADGE,
-                            egui::Stroke::new(2.0_f32, t.text_primary),
-                            egui::StrokeKind::Outside,
-                        );
+                widgets::Field::new()
+                    .label(copy::job::NAME)
+                    .width(360.0)
+                    .char_limit(64)
+                    .show(ui, &mut state.name);
+                ui.add_space(space::L);
+                widgets::Field::new()
+                    .label(copy::job::DESCRIPTION)
+                    .width(360.0)
+                    .rows(2)
+                    .show(ui, &mut state.description);
+                ui.add_space(space::XL);
+                widgets::text(ui, "Colour", Type::H3, t.text_primary);
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    for (index, hex) in PROJECT_COLOURS.iter().enumerate() {
+                        let colour = parse_hex(hex).unwrap_or(t.accent);
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
+                        ui.painter().rect_filled(rect, super::theme::radius::BADGE, colour);
+                        if state.colour == index {
+                            ui.painter().rect_stroke(
+                                rect.expand(2.0),
+                                super::theme::radius::BADGE,
+                                egui::Stroke::new(2.0_f32, t.text_primary),
+                                egui::StrokeKind::Outside,
+                            );
+                        }
+                        if response.clicked() {
+                            state.colour = index;
+                        }
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::RadioButton,
+                                true,
+                                state.colour == index,
+                                format!("Colour {}", index + 1),
+                            )
+                        });
                     }
-                    if response.clicked() {
-                        state.colour = index;
-                    }
-                    response.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::WidgetType::RadioButton,
-                            true,
-                            state.colour == index,
-                            format!("Colour {}", index + 1),
-                        )
-                    });
+                });
+            });
+            m.footer(|ui| {
+                if Button::primary(copy::action::ADD)
+                    .enabled(!state.name.trim().is_empty())
+                    .show(ui)
+                    .clicked()
+                {
+                    create = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    create = false;
                 }
             });
-        });
-            m.footer(|ui| {
-            if Button::primary(copy::action::ADD)
-                .enabled(!state.name.trim().is_empty())
-                .show(ui)
-                .clicked()
-            {
-                create = true;
-            }
-            if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                create = false;
-            }
-        });
         },
     );
     if create {
@@ -1456,8 +1479,8 @@ fn show_cron_help(ctx: &egui::Context) -> Option<Modal> {
             }
         });
             m.footer(|ui| {
-            let _ = Button::primary(copy::action::CLOSE).show(ui);
-        });
+                let _ = Button::primary(copy::action::CLOSE).show(ui);
+            });
         },
     );
     if close {
@@ -1479,22 +1502,22 @@ fn show_export(app: &mut App, ctx: &egui::Context) -> Option<Modal> {
         false,
         |m| {
             m.body(|ui| {
-            for (label, kind) in [
-                (copy::activity::EXPORT_RUNS, "runs"),
-                (copy::activity::EXPORT_EVENTS, "events"),
-                (copy::activity::EXPORT_BUNDLE, "bundle"),
-            ] {
-                if Button::secondary(label).min_width(320.0).show(ui).clicked() {
-                    chosen = Some(kind);
+                for (label, kind) in [
+                    (copy::activity::EXPORT_RUNS, "runs"),
+                    (copy::activity::EXPORT_EVENTS, "events"),
+                    (copy::activity::EXPORT_BUNDLE, "bundle"),
+                ] {
+                    if Button::secondary(label).min_width(320.0).show(ui).clicked() {
+                        chosen = Some(kind);
+                    }
+                    ui.add_space(space::M);
                 }
                 ui.add_space(space::M);
-            }
-            ui.add_space(space::M);
-            widgets::paragraph(ui, copy::activity::EXPORT_NOTE, Type::Small, t.text_muted);
-        });
+                widgets::paragraph(ui, copy::activity::EXPORT_NOTE, Type::Small, t.text_muted);
+            });
             m.footer(|ui| {
-            let _ = Button::ghost(copy::action::CANCEL).show(ui);
-        });
+                let _ = Button::ghost(copy::action::CANCEL).show(ui);
+            });
         },
     );
     if let Some(kind) = chosen {
@@ -1517,10 +1540,7 @@ pub fn probe_message(probe: &ProbeReply) -> String {
     if probe.reachable && probe.writable {
         copy::dest::VERIFY_OK.to_string()
     } else {
-        probe
-            .detail
-            .clone()
-            .unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.to_string())
+        probe.detail.clone().unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.to_string())
     }
 }
 
@@ -1651,7 +1671,8 @@ mod tests {
     fn rotation_blocks_step_three_until_every_destination_passes() {
         let mut state = RotateState::new(Uuid::nil());
         assert!(!state.can_continue());
-        state.results = vec![(Uuid::nil(), Some(Ok(()))), (Uuid::new_v4(), Some(Err("403".into())))];
+        state.results =
+            vec![(Uuid::nil(), Some(Ok(()))), (Uuid::new_v4(), Some(Err("403".into())))];
         assert!(!state.can_continue());
         assert!(state.any_passed());
         state.results = vec![(Uuid::nil(), Some(Ok(())))];

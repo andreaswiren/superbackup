@@ -153,10 +153,7 @@ impl Harness {
     /// than `Err(..)`.
     pub async fn call(&self, client: &Client, request: Request) -> Reply {
         let name = request.command();
-        client
-            .request(request)
-            .await
-            .unwrap_or_else(|e| panic!("`{name}` failed: {e}"))
+        client.request(request).await.unwrap_or_else(|e| panic!("`{name}` failed: {e}"))
     }
 
     /// Rewrite the fake kopia's script.

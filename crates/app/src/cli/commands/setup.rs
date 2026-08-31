@@ -212,8 +212,11 @@ fn offer_first_destination(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<()> {
         .first()
         .map(|a| a.suggested_repository_root())
         .unwrap_or_else(|| ctx.paths.data_dir.join("repository"));
-    let answer =
-        prompt::ask_with_default(ctx, "Folder for the repository", &suggestion.display().to_string())?;
+    let answer = prompt::ask_with_default(
+        ctx,
+        "Folder for the repository",
+        &suggestion.display().to_string(),
+    )?;
     let path = super::objects::absolute(std::path::Path::new(&answer));
 
     let destination = Destination {
@@ -272,7 +275,10 @@ fn offer_first_job(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<()> {
     let name = prompt::ask_with_default(
         ctx,
         "Name for this job",
-        &path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "backup".into()),
+        &path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "backup".into()),
     )?;
     let spec = prompt::ask_with_default(ctx, "When should it run", "daily@02:00")?;
     let parsed = schedule::parse(&spec)?;
@@ -598,10 +604,9 @@ fn config_show(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<Outcome> {
 }
 
 fn config_get(ctx: &mut Ctx, daemon: &Daemon, key: &str) -> CliResult<Outcome> {
-    let settings = serde_json::to_value(
-        *reply!(daemon, Request::SettingsGet {}, Settings)?.settings,
-    )
-    .map_err(|e| CliError::new(ErrorCode::Internal, e.to_string()))?;
+    let settings =
+        serde_json::to_value(*reply!(daemon, Request::SettingsGet {}, Settings)?.settings)
+            .map_err(|e| CliError::new(ErrorCode::Internal, e.to_string()))?;
     let value = lookup(&settings, key).ok_or_else(|| unknown_key(key, &settings))?;
     ctx.ui.line(render_scalar(value));
     Outcome::data(value.clone())
@@ -692,9 +697,8 @@ fn config_export(ctx: &mut Ctx, daemon: &Daemon, to: &std::path::Path) -> CliRes
     let document = whole_config(daemon)?;
     let text = serde_json::to_string_pretty(&document)
         .map_err(|e| CliError::new(ErrorCode::Internal, e.to_string()))?;
-    std::fs::write(to, text.as_bytes()).map_err(|e| {
-        CliError::new(ErrorCode::Io, format!("writing {}: {e}", to.display()))
-    })?;
+    std::fs::write(to, text.as_bytes())
+        .map_err(|e| CliError::new(ErrorCode::Io, format!("writing {}: {e}", to.display())))?;
     ctx.ui.line(format!("Wrote the configuration to {}. It holds no secrets.", to.display()));
     Outcome::data(serde_json::json!({ "written": to }))
 }
@@ -708,11 +712,7 @@ fn lookup<'a>(document: &'a serde_json::Value, key: &str) -> Option<&'a serde_js
     Some(current)
 }
 
-fn replace(
-    document: &mut serde_json::Value,
-    key: &str,
-    value: serde_json::Value,
-) -> CliResult<()> {
+fn replace(document: &mut serde_json::Value, key: &str, value: serde_json::Value) -> CliResult<()> {
     let mut current = document;
     let segments: Vec<&str> = key.split('.').collect();
     let (last, parents) = segments.split_last().unwrap_or((&"", &[]));
@@ -755,8 +755,7 @@ fn flatten(value: &serde_json::Value, prefix: &str) -> Vec<(String, serde_json::
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map {
-                let path =
-                    if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
+                let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
                 if child.is_object() {
                     out.extend(flatten(child, &path));
                 } else {

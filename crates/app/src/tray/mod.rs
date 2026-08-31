@@ -61,9 +61,7 @@ use std::time::Duration;
 
 use superbackup_core::state::Health;
 use superbackup_core::{Error, Result};
-use tray_icon::menu::{
-    CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu,
-};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::daemon::runtime::Runtime;
@@ -160,9 +158,7 @@ pub fn spawn(runtime: Arc<Runtime>) -> Result<TrayHandle> {
     match ready.recv_timeout(Duration::from_secs(10)) {
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(e),
-        Err(_) => {
-            return Err(Error::Platform("the tray did not start within ten seconds".into()))
-        }
+        Err(_) => return Err(Error::Platform("the tray did not start within ten seconds".into())),
     }
 
     spawn_watcher(runtime, commands.clone());
@@ -275,6 +271,9 @@ struct TrayState {
     icon: TrayIcon,
     cache: icons::IconCache,
     variant: icons::Variant,
+    /// The pixel size the shell draws the icon at, and therefore the size the
+    /// mark is rendered natively at. See `icons::preferred_size`.
+    size: u32,
     plan: Option<MenuPlan>,
     frame: usize,
     /// Kept alive: `muda` items are reference-counted and dropping the last
@@ -289,12 +288,12 @@ fn tray_thread(
 ) {
     let cache = icons::IconCache::new();
     let variant = icons::Variant::detect();
-    let initial = match cache.get(icons::IconKey::new(Health::Idle, variant, 0)) {
+    let size = icons::preferred_size();
+    let initial = match cache.get(icons::IconKey::new(Health::Idle, variant, 0), size) {
         Ok(icon) => icon,
         Err(e) => {
-            let _ = started.send(Err(Error::Platform(format!(
-                "the tray icon could not be drawn: {e}"
-            ))));
+            let _ = started
+                .send(Err(Error::Platform(format!("the tray icon could not be drawn: {e}"))));
             return;
         }
     };
@@ -313,14 +312,13 @@ fn tray_thread(
     {
         Ok(icon) => icon,
         Err(e) => {
-            let _ = started.send(Err(Error::Platform(format!(
-                "the tray icon could not be created: {e}"
-            ))));
+            let _ = started
+                .send(Err(Error::Platform(format!("the tray icon could not be created: {e}"))));
             return;
         }
     };
 
-    let mut state = TrayState { icon, cache, variant, plan: None, frame: 0, _menu: menu };
+    let mut state = TrayState { icon, cache, variant, size, plan: None, frame: 0, _menu: menu };
     let _ = started.send(Ok(()));
 
     run_event_loop(&runtime, &mut state, &inbox);
@@ -334,7 +332,11 @@ fn tray_thread(
 /// menu, clicks on the icon itself.
 ///
 /// Returns false once the tray has been asked to stop.
-fn pump_once(runtime: &Arc<Runtime>, state: &mut TrayState, inbox: &std::sync::mpsc::Receiver<TrayCommand>) -> bool {
+fn pump_once(
+    runtime: &Arc<Runtime>,
+    state: &mut TrayState,
+    inbox: &std::sync::mpsc::Receiver<TrayCommand>,
+) -> bool {
     while let Ok(command) = inbox.try_recv() {
         match command {
             TrayCommand::Stop => return false,
@@ -347,6 +349,10 @@ fn pump_once(runtime: &Arc<Runtime>, state: &mut TrayState, inbox: &std::sync::m
             }
             TrayCommand::ThemeChanged => {
                 state.variant = icons::Variant::detect();
+                // The shell's icon size changes with DPI, and a DPI change
+                // arrives as the same kind of shell notification a theme
+                // change does, so it is re-read here too.
+                state.size = icons::preferred_size();
                 state.cache.clear();
                 if let Some(health) = state.plan.as_ref().map(|p| p.health) {
                     set_icon(state, health);
@@ -385,8 +391,7 @@ fn pump_once(runtime: &Arc<Runtime>, state: &mut TrayState, inbox: &std::sync::m
 /// tooltip and the icon are cheap and are set whenever they differ.
 fn apply(state: &mut TrayState, plan: MenuPlan) {
     let menu_changed = state.plan.as_ref().map(|p| &p.items) != Some(&plan.items);
-    let tooltip_changed =
-        state.plan.as_ref().map(|p| p.tooltip()) != Some(plan.tooltip());
+    let tooltip_changed = state.plan.as_ref().map(|p| p.tooltip()) != Some(plan.tooltip());
     let health_changed = state.plan.as_ref().map(|p| p.health) != Some(plan.health);
 
     if menu_changed {
@@ -412,8 +417,8 @@ fn apply(state: &mut TrayState, plan: MenuPlan) {
 
 fn set_icon(state: &mut TrayState, health: Health) {
     let key = icons::IconKey::new(health, state.variant, state.frame);
-    tracing::trace!(mark = %key.stem(), "tray icon");
-    match state.cache.get(key) {
+    tracing::trace!(mark = %key.stem(), size = state.size, "tray icon");
+    match state.cache.get(key, state.size) {
         Ok(icon) => {
             if let Err(e) = state.icon.set_icon(Some(icon)) {
                 tracing::debug!(error = %e, "the tray icon could not be set");
@@ -674,7 +679,9 @@ fn open_interface(runtime: &Arc<Runtime>, extra: &[&str]) {
     command.arg("gui");
     // The window must reach the same configuration this daemon is serving,
     // which is not the default one when `--home` was used.
-    command.arg("--home").arg(runtime.paths.config_dir.parent().unwrap_or(&runtime.paths.config_dir));
+    command
+        .arg("--home")
+        .arg(runtime.paths.config_dir.parent().unwrap_or(&runtime.paths.config_dir));
     for arg in extra {
         command.arg(arg);
     }

@@ -79,8 +79,8 @@ use superbackup_core::engine::{
     SnapshotRequest, VerifyOutcome, VerifyRequest,
 };
 use superbackup_core::kopia::{
-    cancellation, CancelHandle, DestinationSecrets, EventSink, KopiaBinary, KopiaDriver, KopiaError,
-    KopiaEvent, KopiaFailure, RunContext, SnapshotOptions,
+    cancellation, CancelHandle, DestinationSecrets, EventSink, KopiaBinary, KopiaDriver,
+    KopiaError, KopiaEvent, KopiaFailure, RunContext, SnapshotOptions,
 };
 use superbackup_core::model::{Destination, DestinationKind, RetentionPolicy};
 use superbackup_core::paths::Paths;
@@ -303,10 +303,7 @@ impl KopiaExecutor {
     }
 
     /// The kopia call behind `prepare`.
-    async fn prepare_repository(
-        &self,
-        request: &PrepareRequest,
-    ) -> ExecutorResult<PrepareOutcome> {
+    async fn prepare_repository(&self, request: &PrepareRequest) -> ExecutorResult<PrepareOutcome> {
         let destination = &request.destination;
         let driver = self.driver_for(destination).await?;
         let (handle, token) = cancellation();
@@ -318,10 +315,7 @@ impl KopiaExecutor {
             ..PrepareOutcome::default()
         };
         for unsupported in driver.unsupported_options() {
-            outcome.warnings.push(format!(
-                "{}: {}",
-                unsupported.setting, unsupported.reason
-            ));
+            outcome.warnings.push(format!("{}: {}", unsupported.setting, unsupported.reason));
         }
 
         // Connect first. A repository that is already there is the common
@@ -335,10 +329,7 @@ impl KopiaExecutor {
                 if !request.create_if_missing || self.dry_run {
                     return Err(ExecutorError::new(
                         ErrorCode::RepoNotConnected,
-                        format!(
-                            "there is no repository at \"{}\" yet.",
-                            destination.name
-                        ),
+                        format!("there is no repository at \"{}\" yet.", destination.name),
                     )
                     .permanent()
                     .with_hint("Create it from the destination's page before backing up to it."));
@@ -515,11 +506,8 @@ pub fn build_driver(
         )));
     }
 
-    let provider = destination
-        .kind
-        .provider_id()
-        .and_then(|id| store.config().provider(id))
-        .cloned();
+    let provider =
+        destination.kind.provider_id().and_then(|id| store.config().provider(id)).cloned();
     if matches!(destination.kind, DestinationKind::S3 { .. }) && provider.is_none() {
         return Err(Error::Config(format!(
             "\"{}\" points at a storage provider that is no longer in the configuration",
@@ -622,7 +610,10 @@ impl BackupExecutor for KopiaExecutor {
         })
     }
 
-    fn verify<'a>(&'a self, request: VerifyRequest) -> BoxFuture<'a, ExecutorResult<VerifyOutcome>> {
+    fn verify<'a>(
+        &'a self,
+        request: VerifyRequest,
+    ) -> BoxFuture<'a, ExecutorResult<VerifyOutcome>> {
         Box::pin(async move {
             if !request.destination.kind.is_repository() {
                 // Nothing to verify: a mirror is the files themselves.
@@ -685,10 +676,8 @@ async fn dry_run_estimate(
     let ctx = RunContext::new().with_cancel(token);
 
     let mut progress = Progress::default();
-    let mut warnings = vec![format!(
-        "Dry run: nothing was written to \"{}\".",
-        request.destination.name
-    )];
+    let mut warnings =
+        vec![format!("Dry run: nothing was written to \"{}\".", request.destination.name)];
     for source in &request.sources {
         match driver.estimate_snapshot(&source.path, &ctx).await {
             Ok(estimate) => {
@@ -725,7 +714,8 @@ mod tests {
 
     #[test]
     fn accumulating_sums_counters_and_keeps_the_latest_rate() {
-        let mut total = Progress { files_processed: 10, bytes_processed: 100, ..Default::default() };
+        let mut total =
+            Progress { files_processed: 10, bytes_processed: 100, ..Default::default() };
         accumulate(
             &mut total,
             &Progress {
@@ -755,7 +745,8 @@ mod tests {
 
     #[test]
     fn a_network_failure_is_transient_and_a_bad_password_is_not() {
-        let network = map_kopia_error(KopiaError::local("x", KopiaFailure::StorageUnreachable, None));
+        let network =
+            map_kopia_error(KopiaError::local("x", KopiaFailure::StorageUnreachable, None));
         assert_eq!(network.retryable, Retryable::Transient);
         let password = map_kopia_error(KopiaError::local("x", KopiaFailure::WrongPassword, None));
         assert_eq!(password.retryable, Retryable::Permanent);

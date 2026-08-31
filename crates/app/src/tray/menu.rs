@@ -137,8 +137,17 @@ pub enum Item {
         reason: Option<String>,
     },
     /// A checkbox item, whose state is meaningful (§14.2, `Disable all jobs`).
-    Check { label: String, action: Action, checked: bool, enabled: bool },
-    Submenu { label: String, items: Vec<Item>, enabled: bool },
+    Check {
+        label: String,
+        action: Action,
+        checked: bool,
+        enabled: bool,
+    },
+    Submenu {
+        label: String,
+        items: Vec<Item>,
+        enabled: bool,
+    },
     Separator,
 }
 
@@ -305,9 +314,7 @@ pub fn plan(snapshot: &StatusSnapshot, config: &Config, kopia_present: bool) -> 
     // -- run items ------------------------------------------------------
     match (blocker, running) {
         (Some(reason), _) => items.push(Item::blocked("Back up now", Action::RunAll, reason)),
-        (None, true) => {
-            items.push(Item::blocked("Back up now", Action::RunAll, "already running"))
-        }
+        (None, true) => items.push(Item::blocked("Back up now", Action::RunAll, "already running")),
         (None, false) => items.push(Item::entry("Back up now", Action::RunAll)),
     }
 
@@ -317,9 +324,7 @@ pub fn plan(snapshot: &StatusSnapshot, config: &Config, kopia_present: bool) -> 
     for job in enabled_jobs.iter().take(MAX_JOB_ITEMS) {
         let is_running = snapshot.active_runs.iter().any(|r| r.job_id == job.id);
         job_items.push(match (blocker, is_running) {
-            (Some(reason), _) => {
-                Item::blocked(job.name.clone(), Action::RunJob(job.id), reason)
-            }
+            (Some(reason), _) => Item::blocked(job.name.clone(), Action::RunJob(job.id), reason),
             (None, true) => Item::blocked(job.name.clone(), Action::RunJob(job.id), "running"),
             (None, false) => Item::entry(job.name.clone(), Action::RunJob(job.id)),
         });
@@ -657,7 +662,11 @@ mod tests {
         let two = super::plan(&snap, &config, true);
         assert!(Item::find(&two.items, &Action::StopAll).is_some());
         // With several runs the per-run items carry their own percentage.
-        assert!(Item::labels(&two.items).iter().any(|l| l.contains("Stop “b” (90%)")), "{:?}", Item::labels(&two.items));
+        assert!(
+            Item::labels(&two.items).iter().any(|l| l.contains("Stop “b” (90%)")),
+            "{:?}",
+            Item::labels(&two.items)
+        );
     }
 
     #[test]

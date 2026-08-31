@@ -7,9 +7,7 @@ use egui::{Align, Layout, Sense, Ui, Vec2};
 use uuid::Uuid;
 
 use superbackup_core::ipc::protocol::Request;
-use superbackup_core::model::{
-    ExclusionPreset, ExclusionSet, Job, Schedule, Source, TimeOfDay,
-};
+use superbackup_core::model::{ExclusionPreset, ExclusionSet, Job, Schedule, Source, TimeOfDay};
 
 use crate::gui::app::App;
 use crate::gui::copy;
@@ -91,9 +89,7 @@ impl Template {
                 .iter()
                 .map(|p| home.join(p))
                 .collect(),
-            Template::Documents => {
-                ["Documents", "Desktop"].iter().map(|p| home.join(p)).collect()
-            }
+            Template::Documents => ["Documents", "Desktop"].iter().map(|p| home.join(p)).collect(),
             Template::Home => vec![home.clone()],
             Template::Blank => Vec::new(),
         };
@@ -215,40 +211,40 @@ pub fn show(app: &mut App, ctx: &egui::Context, mut state: WizardState) -> Optio
         false,
         |m| {
             m.body(|ui| {
-            widgets::text(ui, &subtitle, Type::Small, t.text_muted);
-            ui.add_space(space::XL);
-            match state.step {
-                WizardStep::Template => step_template(ui, &mut state, &app.data),
-                WizardStep::Sources => step_sources(ui, &mut state),
-                WizardStep::Destinations => step_destinations(ui, &mut state, &app.data),
-                WizardStep::Schedule => step_schedule(ui, &mut state),
-                WizardStep::Exclusions => step_exclusions(ui, &mut state),
-                WizardStep::Review => step_review(ui, &mut state, &app.data),
-            }
-        });
-            m.footer(|ui| {
-            let last = state.step == WizardStep::Review;
-            let label = if last { "Create job" } else { copy::action::CONTINUE };
-            let mut button = Button::primary(label);
-            if let Some(reason) = &blocked {
-                button = button.disabled_because(Box::leak(reason.clone().into_boxed_str()));
-            }
-            if button.show(ui).clicked() {
-                if last {
-                    create = true;
-                } else {
-                    advance = true;
+                widgets::text(ui, &subtitle, Type::Small, t.text_muted);
+                ui.add_space(space::XL);
+                match state.step {
+                    WizardStep::Template => step_template(ui, &mut state, &app.data),
+                    WizardStep::Sources => step_sources(ui, &mut state),
+                    WizardStep::Destinations => step_destinations(ui, &mut state, &app.data),
+                    WizardStep::Schedule => step_schedule(ui, &mut state),
+                    WizardStep::Exclusions => step_exclusions(ui, &mut state),
+                    WizardStep::Review => step_review(ui, &mut state, &app.data),
                 }
-            }
-            if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                cancel = true;
-            }
-            if state.step.previous().is_some()
-                && Button::ghost(copy::action::BACK).show(ui).clicked()
-            {
-                back = true;
-            }
-        });
+            });
+            m.footer(|ui| {
+                let last = state.step == WizardStep::Review;
+                let label = if last { "Create job" } else { copy::action::CONTINUE };
+                let mut button = Button::primary(label);
+                if let Some(reason) = &blocked {
+                    button = button.disabled_because(Box::leak(reason.clone().into_boxed_str()));
+                }
+                if button.show(ui).clicked() {
+                    if last {
+                        create = true;
+                    } else {
+                        advance = true;
+                    }
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    cancel = true;
+                }
+                if state.step.previous().is_some()
+                    && Button::ghost(copy::action::BACK).show(ui).clicked()
+                {
+                    back = true;
+                }
+            });
         },
     );
 
@@ -306,11 +302,8 @@ fn step_template(ui: &mut Ui, state: &mut WizardState, data: &Data) {
                     Vec2::new(width, 116.0),
                     Layout::top_down(Align::Min),
                     |ui| {
-                        let frame = widgets::card_tinted(
-                            ui,
-                            None,
-                            selected.then_some(t.accent),
-                            |ui| {
+                        let frame =
+                            widgets::card_tinted(ui, None, selected.then_some(t.accent), |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.set_height(84.0);
                                 ui.horizontal(|ui| {
@@ -350,8 +343,7 @@ fn step_template(ui: &mut Ui, state: &mut WizardState, data: &Data) {
                                         );
                                     });
                                 });
-                            },
-                        );
+                            });
                         let response = ui.interact(
                             frame.response.rect,
                             egui::Id::new("wizard-template").with(template.title()),
@@ -691,12 +683,8 @@ fn step_review(ui: &mut Ui, state: &mut WizardState, data: &Data) {
             }
         });
     });
-    let destinations: Vec<String> = state
-        .draft
-        .destination_ids
-        .iter()
-        .map(|id| data.destination_name(id))
-        .collect();
+    let destinations: Vec<String> =
+        state.draft.destination_ids.iter().map(|id| data.destination_name(id)).collect();
     widgets::kv(ui, copy::job::DEST_TITLE, &destinations.join(" · "), false);
     let schedule = viewmodel::schedule_string(&state.draft.schedule);
     let next = viewmodel::next_runs(&state.draft.schedule, Utc::now(), 1)

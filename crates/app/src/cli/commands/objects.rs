@@ -124,10 +124,7 @@ fn job_list(ctx: &mut Ctx, daemon: &Daemon, args: JobListArgs) -> CliResult<Outc
             }),
             Cell::new(format::opt_relative(summary.last_run, now)),
             match summary.last_status {
-                Some(status) => Cell::coloured(
-                    status.title(),
-                    super::everyday::run_colour(status),
-                ),
+                Some(status) => Cell::coloured(status.title(), super::everyday::run_colour(status)),
                 None => Cell::coloured("Never run", Colour::Dim),
             },
         ]);
@@ -391,10 +388,7 @@ fn job_remove(ctx: &mut Ctx, daemon: &Daemon, args: JobRemoveArgs) -> CliResult<
     let job = resolve_job(daemon, &args.job)?;
     prompt::confirm(
         ctx,
-        &format!(
-            "Deleting the job {}. The backups it has already taken are not touched",
-            job.name
-        ),
+        &format!("Deleting the job {}. The backups it has already taken are not touched", job.name),
         args.yes,
     )?;
     reply!(daemon, Request::JobDelete { job: job.id.to_string() }, Ack)?;
@@ -404,19 +398,16 @@ fn job_remove(ctx: &mut Ctx, daemon: &Daemon, args: JobRemoveArgs) -> CliResult<
 
 fn job_enabled(ctx: &mut Ctx, daemon: &Daemon, needle: &str, enabled: bool) -> CliResult<Outcome> {
     let job = resolve_job(daemon, needle)?;
-    let updated = *reply!(
-        daemon,
-        Request::JobSetEnabled { job: job.id.to_string(), enabled },
-        Job
-    )?
-    .job;
+    let updated =
+        *reply!(daemon, Request::JobSetEnabled { job: job.id.to_string(), enabled }, Job)?.job;
     if enabled {
-        ctx.ui.line(format!("{} will run {}.", updated.name, schedule::describe(&updated.schedule)));
-    } else {
         ctx.ui.line(format!(
-            "{} will not run on its schedule. Nothing was deleted.",
-            updated.name
+            "{} will run {}.",
+            updated.name,
+            schedule::describe(&updated.schedule)
         ));
+    } else {
+        ctx.ui.line(format!("{} will not run on its schedule. Nothing was deleted.", updated.name));
     }
     Outcome::data(updated)
 }
@@ -467,9 +458,7 @@ fn destination_list(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<Outcome> {
         Column::new("enabled"),
         Column::new("last checked"),
     ])
-    .empty_note(
-        "No destinations yet. Add one with `superbackup destination add --local PATH`.",
-    );
+    .empty_note("No destinations yet. Add one with `superbackup destination add --local PATH`.");
 
     for dest in &all {
         let used = all_jobs.iter().filter(|j| j.destination_ids.contains(&dest.id)).count();
@@ -478,11 +467,7 @@ fn destination_list(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<Outcome> {
             Cell::new(dest.kind.label()),
             Cell::new(location_of(&dest.kind)),
             Cell::new(used.to_string()),
-            if dest.enabled {
-                Cell::new("yes")
-            } else {
-                Cell::coloured("no", Colour::Dim)
-            },
+            if dest.enabled { Cell::new("yes") } else { Cell::coloured("no", Colour::Dim) },
             Cell::new(format::opt_relative(dest.last_verified_at, now)),
         ]);
     }
@@ -574,9 +559,11 @@ fn destination_add(ctx: &mut Ctx, daemon: &Daemon, args: DestinationAddArgs) -> 
     let is_repository = kind.is_repository();
     let encryption = if is_repository { Some(encryption_settings(&args)?) } else { None };
     if !is_repository {
-        for (flag, given) in
-            [("--encryption", &args.encryption), ("--hash", &args.hash), ("--splitter", &args.splitter)]
-        {
+        for (flag, given) in [
+            ("--encryption", &args.encryption),
+            ("--hash", &args.hash),
+            ("--splitter", &args.splitter),
+        ] {
             if given.is_some() {
                 return Err(CliError::usage(format!(
                     "{flag} has no meaning for a folder mirror, which is a plain unencrypted copy"
@@ -599,9 +586,12 @@ fn destination_add(ctx: &mut Ctx, daemon: &Daemon, args: DestinationAddArgs) -> 
         last_verified_at: None,
     };
 
-    let mut created =
-        *reply!(daemon, Request::DestinationCreate { destination: Box::new(destination) }, Destination)?
-            .destination;
+    let mut created = *reply!(
+        daemon,
+        Request::DestinationCreate { destination: Box::new(destination) },
+        Destination
+    )?
+    .destination;
     ctx.ui.line(format!("Added {} ({}).", created.name, created.kind.label()));
 
     // A user-supplied repository passphrase can only be stored once the daemon
@@ -635,7 +625,9 @@ fn destination_add(ctx: &mut Ctx, daemon: &Daemon, args: DestinationAddArgs) -> 
     }
 
     if !is_repository {
-        ctx.ui.line("A folder mirror is a plain copy: no repository, no deduplication, and no encryption.");
+        ctx.ui.line(
+            "A folder mirror is a plain copy: no repository, no deduplication, and no encryption.",
+        );
         return Outcome::data(created);
     }
 
@@ -699,8 +691,9 @@ fn destination_kind(
             credential_override: None,
         });
     }
-    Err(CliError::usage("say where the backups go")
-        .with_hint("Pass one of --local PATH, --onedrive, --s3 PROVIDER --bucket NAME, or --mirror PATH."))
+    Err(CliError::usage("say where the backups go").with_hint(
+        "Pass one of --local PATH, --onedrive, --s3 PROVIDER --bucket NAME, or --mirror PATH.",
+    ))
 }
 
 /// OneDrive discovery runs in this process rather than over IPC.
@@ -732,10 +725,8 @@ fn onedrive_kind(ctx: &mut Ctx, wanted: &str) -> CliResult<DestinationKind> {
         &accounts[0]
     } else {
         let lower = wanted.to_lowercase();
-        let matches: Vec<_> = accounts
-            .iter()
-            .filter(|a| a.display_name.to_lowercase().contains(&lower))
-            .collect();
+        let matches: Vec<_> =
+            accounts.iter().filter(|a| a.display_name.to_lowercase().contains(&lower)).collect();
         match matches.len() {
             1 => matches[0],
             0 => {
@@ -780,19 +771,27 @@ fn encryption_settings(args: &DestinationAddArgs) -> CliResult<EncryptionSetting
         settings.algorithm = *EncryptionAlgorithm::all()
             .iter()
             .find(|a| a.kopia_id().eq_ignore_ascii_case(name))
-            .ok_or_else(|| choice_error("--encryption", name, EncryptionAlgorithm::all().iter().map(|a| a.kopia_id())))?;
+            .ok_or_else(|| {
+                choice_error(
+                    "--encryption",
+                    name,
+                    EncryptionAlgorithm::all().iter().map(|a| a.kopia_id()),
+                )
+            })?;
     }
     if let Some(name) = &args.hash {
         settings.hash = *HashAlgorithm::all()
             .iter()
             .find(|h| h.kopia_id().eq_ignore_ascii_case(name))
-            .ok_or_else(|| choice_error("--hash", name, HashAlgorithm::all().iter().map(|h| h.kopia_id())))?;
+            .ok_or_else(|| {
+                choice_error("--hash", name, HashAlgorithm::all().iter().map(|h| h.kopia_id()))
+            })?;
     }
     if let Some(name) = &args.splitter {
-        settings.splitter = *Splitter::all()
-            .iter()
-            .find(|s| s.kopia_id().eq_ignore_ascii_case(name))
-            .ok_or_else(|| choice_error("--splitter", name, Splitter::all().iter().map(|s| s.kopia_id())))?;
+        settings.splitter =
+            *Splitter::all().iter().find(|s| s.kopia_id().eq_ignore_ascii_case(name)).ok_or_else(
+                || choice_error("--splitter", name, Splitter::all().iter().map(|s| s.kopia_id())),
+            )?;
     }
     settings.passphrase_source = match args.passphrase {
         PassphraseMode::Generated => PassphraseSource::Generated,
@@ -802,11 +801,7 @@ fn encryption_settings(args: &DestinationAddArgs) -> CliResult<EncryptionSetting
     Ok(settings)
 }
 
-fn choice_error<'a>(
-    flag: &str,
-    given: &str,
-    allowed: impl Iterator<Item = &'a str>,
-) -> CliError {
+fn choice_error<'a>(flag: &str, given: &str, allowed: impl Iterator<Item = &'a str>) -> CliError {
     let allowed: Vec<&str> = allowed.collect();
     CliError::usage(format!("`{given}` is not a value {flag} accepts"))
         .with_hint(format!("Accepted: {}.", allowed.join(", ")))
@@ -861,12 +856,9 @@ fn destination_edit(
         return Err(CliError::usage(format!("nothing to change on {}", dest.name)));
     }
 
-    let updated = *reply!(
-        daemon,
-        Request::DestinationUpdate { destination: Box::new(dest) },
-        Destination
-    )?
-    .destination;
+    let updated =
+        *reply!(daemon, Request::DestinationUpdate { destination: Box::new(dest) }, Destination)?
+            .destination;
     ctx.ui.line(format!("Updated {}:", updated.name));
     for change in &changes {
         ctx.ui.line(format!("  {change}"));
@@ -893,8 +885,7 @@ fn destination_remove(
     } else {
         "The copied files stay where they are"
     };
-    let mut what =
-        format!("Removing {} from the configuration. {untouched}", dest.name);
+    let mut what = format!("Removing {} from the configuration. {untouched}", dest.name);
     if !users.is_empty() {
         what.push_str(&format!(
             ". {} here: {}",
@@ -920,16 +911,10 @@ fn destination_remove(
 fn destination_test(ctx: &mut Ctx, daemon: &Daemon, needle: &str) -> CliResult<Outcome> {
     let dest = resolve_destination(daemon, needle)?;
     ctx.ui.note(format!("Checking {}...", dest.name));
-    let probe = reply!(
-        daemon,
-        Request::DestinationTest { destination: dest.id.to_string() },
-        Probe
-    )?;
+    let probe =
+        reply!(daemon, Request::DestinationTest { destination: dest.id.to_string() }, Probe)?;
 
-    let latency = probe
-        .latency_ms
-        .map(|ms| format!(" in {ms} ms"))
-        .unwrap_or_default();
+    let latency = probe.latency_ms.map(|ms| format!(" in {ms} ms")).unwrap_or_default();
     if probe.reachable && probe.writable {
         ctx.ui.coloured(Colour::Green, &format!("{}: reachable and writable{latency}.", dest.name));
     } else if probe.reachable {
@@ -1040,10 +1025,8 @@ fn provider_list(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<Outcome> {
     .empty_note("No storage providers yet. Add one with `superbackup provider add --name NAME`.");
 
     for provider in &all {
-        let used = all_destinations
-            .iter()
-            .filter(|d| d.kind.provider_id() == Some(&provider.id))
-            .count();
+        let used =
+            all_destinations.iter().filter(|d| d.kind.provider_id() == Some(&provider.id)).count();
         let (endpoint, region) = match &provider.kind {
             ProviderKind::S3 { endpoint, region, .. } => (endpoint.clone(), region.clone()),
         };
@@ -1200,19 +1183,13 @@ fn provider_edit(ctx: &mut Ctx, daemon: &Daemon, args: ProviderEditArgs) -> CliR
     Outcome::data(updated)
 }
 
-fn provider_remove(
-    ctx: &mut Ctx,
-    daemon: &Daemon,
-    args: ProviderRemoveArgs,
-) -> CliResult<Outcome> {
+fn provider_remove(ctx: &mut Ctx, daemon: &Daemon, args: ProviderRemoveArgs) -> CliResult<Outcome> {
     let provider = resolve_provider(daemon, &args.provider)?;
-    let used = reply!(
-        daemon,
-        Request::ProviderUsedBy { provider: provider.id.to_string() },
-        UsedBy
-    )?;
+    let used =
+        reply!(daemon, Request::ProviderUsedBy { provider: provider.id.to_string() }, UsedBy)?;
 
-    let mut what = format!("Deleting the provider {} and forgetting its credentials", provider.name);
+    let mut what =
+        format!("Deleting the provider {} and forgetting its credentials", provider.name);
     if !used.destinations.is_empty() {
         let names: Vec<&str> = used.destinations.iter().map(|r| r.name.as_str()).collect();
         what.push_str(&format!(
@@ -1236,8 +1213,7 @@ fn provider_remove(
 fn provider_test(ctx: &mut Ctx, daemon: &Daemon, needle: &str) -> CliResult<Outcome> {
     let provider = resolve_provider(daemon, needle)?;
     ctx.ui.note(format!("Checking {}...", provider.name));
-    let probe =
-        reply!(daemon, Request::ProviderTest { provider: provider.id.to_string() }, Probe)?;
+    let probe = reply!(daemon, Request::ProviderTest { provider: provider.id.to_string() }, Probe)?;
     if probe.reachable {
         ctx.ui.coloured(
             Colour::Green,
@@ -1258,17 +1234,11 @@ fn provider_test(ctx: &mut Ctx, daemon: &Daemon, needle: &str) -> CliResult<Outc
 
 fn provider_rotate(ctx: &mut Ctx, daemon: &Daemon, needle: &str) -> CliResult<Outcome> {
     let provider = resolve_provider(daemon, needle)?;
-    let used = reply!(
-        daemon,
-        Request::ProviderUsedBy { provider: provider.id.to_string() },
-        UsedBy
-    )?;
+    let used =
+        reply!(daemon, Request::ProviderUsedBy { provider: provider.id.to_string() }, UsedBy)?;
     if !used.destinations.is_empty() {
         let names: Vec<&str> = used.destinations.iter().map(|r| r.name.as_str()).collect();
-        ctx.ui.note(format!(
-            "These destinations inherit these credentials: {}.",
-            names.join(", ")
-        ));
+        ctx.ui.note(format!("These destinations inherit these credentials: {}.", names.join(", ")));
     }
 
     let access_key = prompt::ask_line(ctx, "New access key id: ")?.trim().to_string();
@@ -1295,11 +1265,8 @@ fn provider_rotate(ctx: &mut Ctx, daemon: &Daemon, needle: &str) -> CliResult<Ou
 
 fn provider_used_by(ctx: &mut Ctx, daemon: &Daemon, needle: &str) -> CliResult<Outcome> {
     let provider = resolve_provider(daemon, needle)?;
-    let used = reply!(
-        daemon,
-        Request::ProviderUsedBy { provider: provider.id.to_string() },
-        UsedBy
-    )?;
+    let used =
+        reply!(daemon, Request::ProviderUsedBy { provider: provider.id.to_string() }, UsedBy)?;
 
     let mut table = Table::new(vec![Column::new("kind"), Column::new("name").flex()])
         .empty_note(format!("Nothing uses {}.", provider.name));
@@ -1326,9 +1293,6 @@ pub fn project(_ctx: &mut Ctx, command: ProjectCommand) -> CliResult<Outcome> {
         ProjectCommand::Add { .. } => "creating a project",
         ProjectCommand::Remove { .. } => "deleting a project",
     };
-    Err(CliError::unsupported(
-        what,
-        "the running instance exposes no project commands over IPC",
-    )
-    .with_hint("Group jobs with tags, or edit projects in the graphical interface."))
+    Err(CliError::unsupported(what, "the running instance exposes no project commands over IPC")
+        .with_hint("Group jobs with tags, or edit projects in the graphical interface."))
 }

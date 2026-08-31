@@ -5,7 +5,7 @@ use chrono::Utc;
 use egui::{Align, Layout, Ui};
 use uuid::Uuid;
 
-use superbackup_core::ipc::protocol::{ErrorPayload, Request, RepositoryReply};
+use superbackup_core::ipc::protocol::{ErrorPayload, RepositoryReply, Request};
 use superbackup_core::model::{
     default_s3_prefix, normalise_prefix, Destination, DestinationKind, EccAlgorithm,
     EncryptionAlgorithm, EncryptionSettings, HashAlgorithm, PassphraseSource, RetentionPolicy,
@@ -181,14 +181,8 @@ impl App {
             widgets::form_group(ui, copy::job::BANDWIDTH_TITLE, None);
             if let Some(draft) = &mut self.screens.destination_editor.draft {
                 let mut overriding = draft.bandwidth.is_some();
-                if widgets::toggle(
-                    ui,
-                    &mut overriding,
-                    copy::job::BANDWIDTH_CUSTOM,
-                    None,
-                    true,
-                )
-                .clicked()
+                if widgets::toggle(ui, &mut overriding, copy::job::BANDWIDTH_CUSTOM, None, true)
+                    .clicked()
                 {
                     draft.bandwidth = overriding.then(Default::default);
                 }
@@ -221,13 +215,8 @@ impl App {
     fn destination_report(&self) -> validation::Report {
         match &self.screens.destination_editor.draft {
             Some(draft) => {
-                let others: Vec<Destination> = self
-                    .data
-                    .destinations
-                    .iter()
-                    .filter(|d| d.id != draft.id)
-                    .cloned()
-                    .collect();
+                let others: Vec<Destination> =
+                    self.data.destinations.iter().filter(|d| d.id != draft.id).cloned().collect();
                 validation::validate_destination(draft, &others, &self.data.jobs)
             }
             None => validation::Report::default(),
@@ -328,8 +317,7 @@ impl App {
         });
         if browse {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                self.screens.destination_editor.path_input =
-                    path.to_string_lossy().into_owned();
+                self.screens.destination_editor.path_input = path.to_string_lossy().into_owned();
             }
         }
         let path = std::path::PathBuf::from(self.screens.destination_editor.path_input.clone());
@@ -466,9 +454,8 @@ impl App {
             .draft
             .as_ref()
             .and_then(|d| d.kind.provider_id().copied());
-        let mut index = current
-            .and_then(|id| self.data.providers.iter().position(|p| p.id == id))
-            .unwrap_or(0);
+        let mut index =
+            current.and_then(|id| self.data.providers.iter().position(|p| p.id == id)).unwrap_or(0);
         let new_index = providers.len() - 1;
         let mut new_provider = false;
         if widgets::combo(ui, "dest-provider", &mut index, &providers, 400.0, true) {
@@ -488,9 +475,8 @@ impl App {
         ui.add_space(space::M);
         match current.and_then(|id| self.data.provider(&id)) {
             Some(provider) => {
-                let superbackup_core::model::ProviderKind::S3 {
-                    endpoint, region, flavour, ..
-                } = &provider.kind;
+                let superbackup_core::model::ProviderKind::S3 { endpoint, region, flavour, .. } =
+                    &provider.kind;
                 let line = format!("{endpoint} · {region} · {}", flavour.title());
                 egui::Frame::new()
                     .fill(t.bg_raised)
@@ -792,12 +778,7 @@ impl App {
                     if *algorithm == EncryptionAlgorithm::Aes256GcmHmacSha256 {
                         ui.horizontal(|ui| {
                             ui.add_space(24.0);
-                            widgets::text(
-                                ui,
-                                copy::enc::RECOMMENDED,
-                                Type::SmallStrong,
-                                t.accent,
-                            );
+                            widgets::text(ui, copy::enc::RECOMMENDED, Type::SmallStrong, t.accent);
                         });
                     }
                     ui.add_space(space::S);
@@ -808,10 +789,8 @@ impl App {
                 ui.add_space(space::S);
                 let hashes: Vec<String> =
                     HashAlgorithm::all().iter().map(|h| h.kopia_id().to_string()).collect();
-                let mut hash_index = HashAlgorithm::all()
-                    .iter()
-                    .position(|h| *h == settings.hash)
-                    .unwrap_or(0);
+                let mut hash_index =
+                    HashAlgorithm::all().iter().position(|h| *h == settings.hash).unwrap_or(0);
                 if widgets::combo(ui, "enc-hash", &mut hash_index, &hashes, 320.0, true) {
                     if let Some(hash) = HashAlgorithm::all().get(hash_index) {
                         settings.hash = *hash;
@@ -840,7 +819,13 @@ impl App {
                     }
                 }
                 ui.add_space(space::S);
-                widgets::paragraph_at(ui, copy::enc::SPLITTER_BODY, Type::Small, t.text_muted, 520.0);
+                widgets::paragraph_at(
+                    ui,
+                    copy::enc::SPLITTER_BODY,
+                    Type::Small,
+                    t.text_muted,
+                    520.0,
+                );
                 if settings.splitter != Splitter::recommended_for_many_small_files() {
                     ui.add_space(space::M);
                     egui::Frame::new()
@@ -949,7 +934,8 @@ impl App {
         if let Some(reason) = gate.reason() {
             create = create.disabled_because(reason);
         } else if existing.is_none() {
-            create = create.disabled_because("Save this destination before creating its repository.");
+            create =
+                create.disabled_because("Save this destination before creating its repository.");
         }
         if create.show(ui).clicked() {
             if let Some(id) = existing.map(|d| d.id) {
@@ -1011,8 +997,7 @@ impl App {
         let mut verify = false;
         let mut remove = false;
         ui.horizontal(|ui| {
-            let mut button =
-                Button::primary(copy::action::SAVE_CHANGES).enabled(report.ok());
+            let mut button = Button::primary(copy::action::SAVE_CHANGES).enabled(report.ok());
             if let Some(summary) = report.summary() {
                 button = button.disabled_because(Box::leak(summary.into_boxed_str()));
             }
@@ -1031,7 +1016,10 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if existing.is_some()
-                    && Button::danger_ghost(copy::action::REMOVE).icon(Icon::Trash).show(ui).clicked()
+                    && Button::danger_ghost(copy::action::REMOVE)
+                        .icon(Icon::Trash)
+                        .show(ui)
+                        .clicked()
                 {
                     remove = true;
                 }

@@ -298,9 +298,9 @@ fn no_screen_draws_outside_the_window() {
                 .tessellate(output.shapes, 1.0)
                 .iter()
                 .filter_map(|p| match &p.primitive {
-                    egui::epaint::Primitive::Mesh(mesh) => Some(
-                        mesh.vertices.iter().map(|v| v.pos.x).fold(0.0f32, f32::max),
-                    ),
+                    egui::epaint::Primitive::Mesh(mesh) => {
+                        Some(mesh.vertices.iter().map(|v| v.pos.x).fold(0.0f32, f32::max))
+                    }
                     _ => None,
                 })
                 .fold(0.0f32, f32::max);
@@ -311,4 +311,3 @@ fn no_screen_draws_outside_the_window() {
         }
     }
 }
-

@@ -44,7 +44,8 @@ pub fn parse_duration(input: &str) -> CliResult<Duration> {
             'w' => 604_800,
             _ => return Err(bad_duration(input)),
         };
-        total = total.checked_add(value.saturating_mul(seconds)).ok_or_else(|| bad_duration(input))?;
+        total =
+            total.checked_add(value.saturating_mul(seconds)).ok_or_else(|| bad_duration(input))?;
         saw_unit = true;
     }
 
@@ -154,9 +155,8 @@ fn start_of_day_local(now: DateTime<Utc>, days_back: i64) -> CliResult<DateTime<
 }
 
 fn bad_time(input: &str) -> CliError {
-    CliError::usage(format!("`{input}` is not a time superbackup understands")).with_hint(
-        "Use 2026-08-29T14:00, 2026-08-29, yesterday, today, or `3 days ago`.",
-    )
+    CliError::usage(format!("`{input}` is not a time superbackup understands"))
+        .with_hint("Use 2026-08-29T14:00, 2026-08-29, yesterday, today, or `3 days ago`.")
 }
 
 fn ambiguous_local(input: &str) -> CliError {

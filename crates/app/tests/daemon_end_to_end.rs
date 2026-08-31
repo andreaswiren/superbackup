@@ -76,10 +76,7 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
     // rather than zeroes that would hide a broken parse.
     let manifest = harness.root.join("manifest.json");
     std::fs::write(&manifest, manifest_json(1204, 4_400_000_000)).expect("write the manifest");
-    harness.script(&[
-        ("mode", "snapshot"),
-        ("stdout_file", &manifest.display().to_string()),
-    ]);
+    harness.script(&[("mode", "snapshot"), ("stdout_file", &manifest.display().to_string())]);
 
     let client = harness.client().await;
 
@@ -101,10 +98,8 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
     assert_eq!(refused.code(), superbackup_core::ErrorCode::Locked);
 
     // ---- unlock -----------------------------------------------------
-    let unlocked = client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    let unlocked =
+        client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     assert!(unlocked.unlocked);
     assert!(
         wait_for_async(Duration::from_secs(5), || {
@@ -146,9 +141,8 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
         .await
         .expect("subscribe");
 
-    let started = harness
-        .call(&client, Request::JobRun { job: "dev code".into(), dry_run: false })
-        .await;
+    let started =
+        harness.call(&client, Request::JobRun { job: "dev code".into(), dry_run: false }).await;
     let Reply::Started(started) = started else { panic!("expected a started reply") };
     assert!(started.started);
 
@@ -157,8 +151,7 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
     let mut saw_finish = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline && !saw_finish {
-        let Ok(Some(item)) =
-            tokio::time::timeout(Duration::from_secs(5), stream.next()).await
+        let Ok(Some(item)) = tokio::time::timeout(Duration::from_secs(5), stream.next()).await
         else {
             break;
         };
@@ -167,9 +160,7 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
                 assert_eq!(d, destination_id);
                 saw_progress = true;
             }
-            superbackup_core::ipc::StreamItem::Event { event }
-                if event.kind == "job.finished" =>
-            {
+            superbackup_core::ipc::StreamItem::Event { event } if event.kind == "job.finished" => {
                 saw_finish = true;
             }
             _ => {}
@@ -217,9 +208,9 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
         "every invocation must be pinned to superbackup's own config file: {connect:?}"
     );
     assert!(
-        invocations.iter().all(|argv| argv
+        invocations
             .iter()
-            .any(|a| a.starts_with("--config-file=") || a == "--version")),
+            .all(|argv| argv.iter().any(|a| a.starts_with("--config-file=") || a == "--version")),
         "an invocation escaped superbackup's own kopia configuration: {invocations:#?}"
     );
     let snapshot = invocations
@@ -292,25 +283,18 @@ async fn a_dry_run_reports_without_writing() {
     let repo_id = repo_id.expect("id");
 
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     // A rehearsal still has to connect to a real repository, so it has to
     // exist — and creating it is what puts its passphrase in the vault.
     harness
         .call(
             &client,
-            Request::DestinationRepoCreate {
-                destination: repo_id.to_string(),
-                encryption: None,
-            },
+            Request::DestinationRepoCreate { destination: repo_id.to_string(), encryption: None },
         )
         .await;
 
-    let Reply::Started(started) = harness
-        .call(&client, Request::JobRun { job: "docs".into(), dry_run: true })
-        .await
+    let Reply::Started(started) =
+        harness.call(&client, Request::JobRun { job: "docs".into(), dry_run: true }).await
     else {
         panic!("expected a started reply")
     };
@@ -353,21 +337,19 @@ async fn a_dry_run_reports_without_writing() {
     // And kopia was asked to *estimate*, never to snapshot.
     let invocations = harness.invocations();
     assert!(
-        invocations
-            .iter()
-            .any(|argv| argv.iter().any(|a| a == "estimate")),
+        invocations.iter().any(|argv| argv.iter().any(|a| a == "estimate")),
         "a repository rehearsal must ask kopia what it would copy: {invocations:#?}"
     );
     assert!(
-        !invocations.iter().any(|argv| argv.iter().any(|a| a == "snapshot")
-            && argv.iter().any(|a| a == "create")),
+        !invocations
+            .iter()
+            .any(|argv| argv.iter().any(|a| a == "snapshot") && argv.iter().any(|a| a == "create")),
         "a dry run must never run `snapshot create`: {invocations:#?}"
     );
 
     // The run is recorded, with the dry-run warning attached to it.
-    let Reply::Runs(history) = harness
-        .call(&client, Request::JobHistory { job: None, limit: 5 })
-        .await
+    let Reply::Runs(history) =
+        harness.call(&client, Request::JobHistory { job: None, limit: 5 }).await
     else {
         panic!("expected runs")
     };
@@ -426,10 +408,7 @@ async fn restore_is_accepted_and_refuses_a_policy_kopia_cannot_honour() {
     let destination_id = destination_id.expect("id");
 
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
     let target = harness.root.join("restored");
     // `KeepBoth` is refused rather than silently doing something else with the

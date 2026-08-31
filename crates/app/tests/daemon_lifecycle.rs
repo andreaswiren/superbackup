@@ -70,10 +70,7 @@ async fn the_daemon_starts_serves_and_stops_cleanly() {
     harness.shutdown().await.expect("clean shutdown");
 
     // And released afterwards, so a restart is not blocked by a corpse.
-    assert!(
-        !paths.lock_file().is_file(),
-        "the single-instance lock must be released on shutdown"
-    );
+    assert!(!paths.lock_file().is_file(), "the single-instance lock must be released on shutdown");
 
     // Nothing is listening any more.
     let refused = Client::connect(&endpoint).await;
@@ -120,10 +117,7 @@ async fn a_second_instance_is_refused_and_the_first_keeps_running() {
     };
     let control = daemon::logging::init(&paths, true);
     let result = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
         rt.block_on(daemon::run(paths, daemon::Surface::Headless, control, 0, Some(hooks)))
     });
     let outcome = tokio::task::spawn_blocking(move || result.join())
@@ -184,9 +178,8 @@ async fn unlocking_runs_what_the_lock_blocked() {
 
     // Nothing ran, and the vault is why.
     let client = harness.client().await;
-    let Reply::Runs(before) = harness
-        .call(&client, Request::JobHistory { job: None, limit: 10 })
-        .await
+    let Reply::Runs(before) =
+        harness.call(&client, Request::JobHistory { job: None, limit: 10 }).await
     else {
         panic!("expected runs")
     };
@@ -196,10 +189,7 @@ async fn unlocking_runs_what_the_lock_blocked() {
     );
 
     // Unlock. The daemon must re-queue exactly the job it dropped.
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
     assert!(
         wait_for_async(Duration::from_secs(30), || {
@@ -236,10 +226,7 @@ async fn locking_stops_the_scheduler_as_well_as_the_ipc_surface() {
     let mut harness = Harness::start("lock", |_, _| {}).await;
     let client = harness.client().await;
 
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     assert!(harness.runtime.environment.vault_unlocked(), "the engine must see the unlock");
 
     let Reply::Unlocked(locked) = harness.call(&client, Request::VaultLock {}).await else {
@@ -297,10 +284,8 @@ async fn the_auto_lock_deadline_follows_the_setting() {
     .await;
     let client = harness.client().await;
 
-    let unlocked = client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    let unlocked =
+        client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     let at = unlocked.auto_lock_at.expect("a 30-minute auto-lock must be armed");
     let minutes = (at - chrono::Utc::now()).num_minutes();
     assert!((25..=30).contains(&minutes), "expected about 30 minutes, got {minutes}");
@@ -328,10 +313,7 @@ async fn a_missing_vault_is_an_error_and_never_a_new_empty_one() {
     };
     let run_paths = paths.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
         rt.block_on(daemon::run(run_paths, daemon::Surface::Headless, control, 0, Some(hooks)))
     })
     .await
@@ -367,10 +349,7 @@ async fn run_history_survives_a_restart() {
     let paths = harness.paths.clone();
 
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     harness.call(&client, Request::JobRun { job: "docs".into(), dry_run: false }).await;
     assert!(
         wait_for(Duration::from_secs(30), || harness.runtime.active_runs().is_empty()
@@ -411,10 +390,7 @@ async fn health_drives_the_icon_and_the_daemon_owns_the_rule() {
     );
 
     // Unlocked with nothing to do: idle.
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     assert!(
         wait_for_async(Duration::from_secs(5), || {
             let client = client.clone();
@@ -445,7 +421,6 @@ async fn health_drives_the_icon_and_the_daemon_owns_the_rule() {
     harness.shutdown().await.expect("clean shutdown");
 }
 
-
 /// The cached passphrase is destroyed when the vault locks.
 ///
 /// This is the invariant that makes `vault.lock` mean something on an install
@@ -461,10 +436,7 @@ async fn locking_destroys_the_cached_passphrase() {
     .await;
     let client = harness.client().await;
 
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
     // Seed the local half directly, so the test never writes to the machine's
     // real credential store.
@@ -503,10 +475,7 @@ async fn withdrawing_consent_destroys_the_cache() {
     })
     .await;
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
     let key = superbackup_core::crypto::random_bytes(32).expect("key");
     daemon::keychain::seal_local(
@@ -516,16 +485,12 @@ async fn withdrawing_consent_destroys_the_cache() {
     )
     .expect("seal the sidecar");
 
-    let Reply::Settings(settings) =
-        harness.call(&client, Request::SettingsGet {}).await
-    else {
+    let Reply::Settings(settings) = harness.call(&client, Request::SettingsGet {}).await else {
         panic!("expected a settings reply")
     };
     let mut updated = (*settings.settings).clone();
     updated.use_os_keychain = false;
-    harness
-        .call(&client, Request::SettingsUpdate { settings: Box::new(updated) })
-        .await;
+    harness.call(&client, Request::SettingsUpdate { settings: Box::new(updated) }).await;
 
     assert!(
         !daemon::keychain::has_local(&harness.paths),
@@ -544,10 +509,7 @@ async fn rotating_the_passphrase_invalidates_the_cache() {
     })
     .await;
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
     let key = superbackup_core::crypto::random_bytes(32).expect("key");
     daemon::keychain::seal_local(
@@ -582,9 +544,7 @@ async fn rotating_the_passphrase_invalidates_the_cache() {
         .unlock(SecretString::from_string(replacement.to_string()))
         .await
         .expect("the new passphrase must open the vault");
-    let stale = client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await;
+    let stale = client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await;
     assert!(stale.is_ok(), "unlocking an already-open vault is a no-op");
 
     drop(client);

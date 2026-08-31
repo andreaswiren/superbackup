@@ -102,7 +102,10 @@ pub fn snapshots(ctx: &mut Ctx, args: SnapshotsArgs) -> CliResult<Outcome> {
             found.push((destination.name.clone(), snapshot));
         }
     }
-    found.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+    // Newest first: `sort_by_key` cannot express a reversed key without
+    // cloning, so reverse after sorting ascending.
+    found.sort_by_key(|(_, s)| s.created_at);
+    found.reverse();
     found.truncate(args.limit);
 
     let mut table = Table::new(vec![
@@ -334,7 +337,8 @@ pub fn restore(ctx: &mut Ctx, args: RestoreArgs) -> CliResult<Outcome> {
         if let Some(note) = &started.note {
             ctx.ui.line(note);
         }
-        let outcome = follow_run(ctx, &daemon, started.run_id, &format!("restore of {}", job.name))?;
+        let outcome =
+            follow_run(ctx, &daemon, started.run_id, &format!("restore of {}", job.name))?;
         if !outcome.succeeded() {
             all_ok = false;
         }
@@ -366,11 +370,7 @@ fn confirm_restore(ctx: &mut Ctx, policy: ConflictPolicy) -> CliResult<()> {
         return Ok(());
     }
     if destructive {
-        prompt::confirm(
-            ctx,
-            "This replaces files that already exist in the target folder",
-            false,
-        )
+        prompt::confirm(ctx, "This replaces files that already exist in the target folder", false)
     } else {
         prompt::confirm(ctx, "This writes files into the target folder", false)
     }

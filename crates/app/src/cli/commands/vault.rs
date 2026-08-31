@@ -42,8 +42,7 @@ pub fn unlock(ctx: &mut Ctx, args: UnlockArgs) -> CliResult<Outcome> {
         }
     }
 
-    let secret =
-        prompt::passphrase(ctx, args.passphrase_file.as_deref(), "Master passphrase: ")?;
+    let secret = prompt::passphrase(ctx, args.passphrase_file.as_deref(), "Master passphrase: ")?;
     let unlocked =
         reply!(daemon, Request::VaultUnlock { passphrase: SecretString::new(secret) }, Unlocked)?;
 
@@ -57,10 +56,7 @@ pub fn unlock(ctx: &mut Ctx, args: UnlockArgs) -> CliResult<Outcome> {
     Outcome::data(unlocked)
 }
 
-fn report_auto_lock(
-    ctx: &mut Ctx,
-    reply: &superbackup_core::ipc::protocol::UnlockedReply,
-) {
+fn report_auto_lock(ctx: &mut Ctx, reply: &superbackup_core::ipc::protocol::UnlockedReply) {
     if let Some(at) = reply.auto_lock_at {
         ctx.ui.line(format!(
             "It locks itself again {} ({}).",

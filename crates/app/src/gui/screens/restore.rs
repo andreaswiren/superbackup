@@ -105,8 +105,7 @@ impl App {
         let count = self.screens.restore.selection.len();
         let mut restore = false;
         let label = copy::restore_browse_restore_n(count.max(1));
-        let mut button =
-            Button::primary(&label).icon(Icon::History).enabled(count > 0);
+        let mut button = Button::primary(&label).icon(Icon::History).enabled(count > 0);
         if let Some(reason) = self.data.gate(Action::Restore).reason() {
             button = button.disabled_because(reason);
         }
@@ -150,10 +149,9 @@ impl App {
             })
             .unwrap_or(0);
         let mut state = RestoreOptionsState::new(destination, snapshot, items, bytes);
-        state.free_bytes = superbackup_core::platform::disk_space(std::path::Path::new(
-            &state.target,
-        ))
-        .map(|(free, _)| free);
+        state.free_bytes =
+            superbackup_core::platform::disk_space(std::path::Path::new(&state.target))
+                .map(|(free, _)| free);
         self.open_modal(Modal::RestoreOptions(Box::new(state)));
     }
 
@@ -198,20 +196,10 @@ impl App {
             return;
         }
 
-        let repositories: Vec<Destination> = self
-            .data
-            .destinations
-            .iter()
-            .filter(|d| d.kind.is_repository())
-            .cloned()
-            .collect();
-        let mirrors: Vec<Destination> = self
-            .data
-            .destinations
-            .iter()
-            .filter(|d| !d.kind.is_repository())
-            .cloned()
-            .collect();
+        let repositories: Vec<Destination> =
+            self.data.destinations.iter().filter(|d| d.kind.is_repository()).cloned().collect();
+        let mirrors: Vec<Destination> =
+            self.data.destinations.iter().filter(|d| !d.kind.is_repository()).cloned().collect();
 
         if repositories.is_empty() {
             let empty = if mirrors.is_empty() {
@@ -262,113 +250,109 @@ impl App {
 
         let mut select: Option<Uuid> = None;
         widgets::scroll_area(ui, "restore-sources", |ui| {
-                for destination in repositories {
-                    let selected = self.screens.restore.selected_destination == Some(destination.id);
-                    let (rect, response) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), 48.0),
-                        Sense::click(),
-                    );
-                    if selected {
-                        ui.painter().rect_filled(rect, radius::CONTROL, t.bg_selected);
-                    } else if response.hovered() {
-                        ui.painter().rect_filled(rect, radius::CONTROL, t.bg_surface_hover);
-                    }
-                    if response.has_focus() {
-                        widgets::focus_ring(ui, rect.shrink(2.0), radius::CONTROL);
-                    }
-                    let icon_rect = egui::Rect::from_min_size(
-                        egui::Pos2::new(rect.left() + 10.0, rect.center().y - 8.0),
-                        Vec2::splat(16.0),
-                    );
-                    Icon::for_destination_kind(&destination.kind).paint(
-                        ui.painter(),
-                        icon_rect,
-                        t.text_secondary,
-                    );
-                    let snapshots = self
+            for destination in repositories {
+                let selected = self.screens.restore.selected_destination == Some(destination.id);
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 48.0), Sense::click());
+                if selected {
+                    ui.painter().rect_filled(rect, radius::CONTROL, t.bg_selected);
+                } else if response.hovered() {
+                    ui.painter().rect_filled(rect, radius::CONTROL, t.bg_surface_hover);
+                }
+                if response.has_focus() {
+                    widgets::focus_ring(ui, rect.shrink(2.0), radius::CONTROL);
+                }
+                let icon_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(rect.left() + 10.0, rect.center().y - 8.0),
+                    Vec2::splat(16.0),
+                );
+                Icon::for_destination_kind(&destination.kind).paint(
+                    ui.painter(),
+                    icon_rect,
+                    t.text_secondary,
+                );
+                let snapshots = self
+                    .screens
+                    .restore
+                    .snapshots
+                    .get(&destination.id)
+                    .map(|s| s.len())
+                    .unwrap_or(0);
+                let name = widgets::galley(ui, &destination.name, Type::BodyStrong, t.text_primary);
+                let sub_text = if snapshots > 0 {
+                    let newest = self
                         .screens
                         .restore
                         .snapshots
                         .get(&destination.id)
-                        .map(|s| s.len())
-                        .unwrap_or(0);
-                    let name = widgets::galley(ui, &destination.name, Type::BodyStrong, t.text_primary);
-                    let sub_text = if snapshots > 0 {
-                        let newest = self
-                            .screens
-                            .restore
-                            .snapshots
-                            .get(&destination.id)
-                            .and_then(|s| s.first())
-                            .map(|s| copy::restore_newest(&format::relative_past(s.created_at, now)))
-                            .unwrap_or_default();
-                        format!("{} · {}", copy::restore_snapshot_count(snapshots), newest)
-                    } else {
-                        copy::state::LOADING.to_string()
-                    };
-                    let sub = widgets::galley(ui, sub_text, Type::Small, t.text_muted);
-                    let name_h = name.size().y;
-                    ui.painter().galley(
-                        egui::Pos2::new(rect.left() + 36.0, rect.top() + 8.0),
-                        name,
-                        t.text_primary,
-                    );
-                    ui.painter().galley(
-                        egui::Pos2::new(rect.left() + 36.0, rect.top() + 8.0 + name_h),
-                        sub,
-                        t.text_muted,
-                    );
-                    let announce = format!("{}, {}", destination.name, destination.kind.label());
-                    response.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::WidgetType::SelectableLabel,
-                            true,
-                            selected,
-                            &announce,
-                        )
-                    });
-                    if response.clicked() {
-                        select = Some(destination.id);
-                    }
-                    ui.add_space(space::XS);
+                        .and_then(|s| s.first())
+                        .map(|s| copy::restore_newest(&format::relative_past(s.created_at, now)))
+                        .unwrap_or_default();
+                    format!("{} · {}", copy::restore_snapshot_count(snapshots), newest)
+                } else {
+                    copy::state::LOADING.to_string()
+                };
+                let sub = widgets::galley(ui, sub_text, Type::Small, t.text_muted);
+                let name_h = name.size().y;
+                ui.painter().galley(
+                    egui::Pos2::new(rect.left() + 36.0, rect.top() + 8.0),
+                    name,
+                    t.text_primary,
+                );
+                ui.painter().galley(
+                    egui::Pos2::new(rect.left() + 36.0, rect.top() + 8.0 + name_h),
+                    sub,
+                    t.text_muted,
+                );
+                let announce = format!("{}, {}", destination.name, destination.kind.label());
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        true,
+                        selected,
+                        &announce,
+                    )
+                });
+                if response.clicked() {
+                    select = Some(destination.id);
                 }
+                ui.add_space(space::XS);
+            }
 
-                if !mirrors.is_empty() {
-                    ui.add_space(space::XL);
-                    widgets::text(ui, copy::restore::MIRRORS_GROUP, Type::H3, t.text_primary);
-                    ui.add_space(space::XS);
-                    widgets::paragraph_at(
-                        ui,
-                        copy::restore::MIRRORS_NOTE,
-                        Type::Small,
-                        t.text_muted,
-                        260.0,
-                    );
-                    ui.add_space(space::M);
-                    for mirror in mirrors {
-                        ui.horizontal(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-                            Icon::FolderSync.paint(ui.painter(), rect, t.text_muted);
-                            ui.add_space(space::M);
-                            widgets::elided(
-                                ui,
-                                &mirror.name,
-                                Type::Small,
-                                t.text_secondary,
-                                120.0,
-                                false,
-                            );
-                            if Button::ghost(copy::action::OPEN_FOLDER).compact().show(ui).clicked()
-                            {
-                                if let Some(path) = mirror.kind.local_path() {
-                                    let _ = open::that_detached(path);
-                                }
+            if !mirrors.is_empty() {
+                ui.add_space(space::XL);
+                widgets::text(ui, copy::restore::MIRRORS_GROUP, Type::H3, t.text_primary);
+                ui.add_space(space::XS);
+                widgets::paragraph_at(
+                    ui,
+                    copy::restore::MIRRORS_NOTE,
+                    Type::Small,
+                    t.text_muted,
+                    260.0,
+                );
+                ui.add_space(space::M);
+                for mirror in mirrors {
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                        Icon::FolderSync.paint(ui.painter(), rect, t.text_muted);
+                        ui.add_space(space::M);
+                        widgets::elided(
+                            ui,
+                            &mirror.name,
+                            Type::Small,
+                            t.text_secondary,
+                            120.0,
+                            false,
+                        );
+                        if Button::ghost(copy::action::OPEN_FOLDER).compact().show(ui).clicked() {
+                            if let Some(path) = mirror.kind.local_path() {
+                                let _ = open::that_detached(path);
                             }
-                        });
-                    }
+                        }
+                    });
                 }
-            });
+            }
+        });
 
         if let Some(id) = select {
             self.screens.restore.select(id);
@@ -380,12 +364,7 @@ impl App {
         let t = theme::tokens(ui.ctx());
         let now = Utc::now();
         let Some(destination) = self.screens.restore.selected_destination else {
-            widgets::paragraph(
-                ui,
-                "Choose where to restore from.",
-                Type::Body,
-                t.text_secondary,
-            );
+            widgets::paragraph(ui, "Choose where to restore from.", Type::Body, t.text_secondary);
             return;
         };
 
@@ -402,7 +381,8 @@ impl App {
             return;
         }
 
-        let snapshots = self.screens.restore.snapshots.get(&destination).cloned().unwrap_or_default();
+        let snapshots =
+            self.screens.restore.snapshots.get(&destination).cloned().unwrap_or_default();
         if self.screens.restore.loading_snapshots == Some(destination) {
             for _ in 0..6 {
                 skeleton_row(ui);
@@ -410,23 +390,16 @@ impl App {
             return;
         }
         if snapshots.is_empty() {
-            let (primary, _) = widgets::empty_state(
-                ui,
-                Icon::History,
-                &copy::empty::RESTORE_NO_SNAPSHOTS,
-                None,
-            );
+            let (primary, _) =
+                widgets::empty_state(ui, Icon::History, &copy::empty::RESTORE_NO_SNAPSHOTS, None);
             if primary {
                 self.request_run_all();
             }
             return;
         }
 
-        let retention = self
-            .data
-            .destination(&destination)
-            .map(|d| d.retention.clone())
-            .unwrap_or_default();
+        let retention =
+            self.data.destination(&destination).map(|d| d.retention.clone()).unwrap_or_default();
         widgets::text(
             ui,
             copy::restore_retention_note(
@@ -583,12 +556,9 @@ impl App {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let snapshots =
                     self.screens.restore.snapshots.get(&destination).cloned().unwrap_or_default();
-                let labels: Vec<String> = snapshots
-                    .iter()
-                    .map(|s| format::absolute(s.created_at))
-                    .collect();
-                let mut index =
-                    snapshots.iter().position(|s| s.id == snapshot).unwrap_or(0);
+                let labels: Vec<String> =
+                    snapshots.iter().map(|s| format::absolute(s.created_at)).collect();
+                let mut index = snapshots.iter().position(|s| s.id == snapshot).unwrap_or(0);
                 if !labels.is_empty()
                     && widgets::combo(ui, "restore-snapshot", &mut index, &labels, 180.0, true)
                 {
@@ -687,8 +657,7 @@ impl App {
 
         widgets::table_frame(ui, |ui| {
             let gap = ui.spacing().item_spacing.x;
-            let name_width =
-                (ui.available_width() - 32.0 - 90.0 - 130.0 - gap * 4.0).max(180.0);
+            let name_width = (ui.available_width() - 32.0 - 90.0 - 130.0 - gap * 4.0).max(180.0);
             egui_extras::TableBuilder::new(ui)
                 .id_salt("restore-listing")
                 .cell_layout(Layout::left_to_right(Align::Center))
@@ -850,8 +819,7 @@ fn entry_path(base: &str, name: &str) -> String {
 /// A 28px skeleton bar, so the layout does not jump when data lands.
 fn skeleton_row(ui: &mut Ui) {
     let t = theme::tokens(ui.ctx());
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
     ui.painter().rect_filled(
         egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * 0.6, 12.0)),
         egui::CornerRadius::same(4),
@@ -880,185 +848,202 @@ pub fn show_options(
         state.running,
         |m| {
             m.body(|ui| {
-            if state.running {
-                widgets::progress_bar(
+                if state.running {
+                    widgets::progress_bar(
+                        ui,
+                        ui.available_width(),
+                        8.0,
+                        None,
+                        t.progress_fill,
+                        &copy::a11y_progress_restore(0, 0, 0),
+                    );
+                    ui.add_space(space::M);
+                    widgets::text(ui, copy::state::ESTIMATING, Type::MonoSmall, t.text_secondary);
+                    return;
+                }
+
+                widgets::text(
                     ui,
-                    ui.available_width(),
-                    8.0,
-                    None,
-                    t.progress_fill,
-                    &copy::a11y_progress_restore(0, 0, 0),
+                    copy::restore_options_what(
+                        state.items.len(),
+                        state.estimated_bytes,
+                        &state.snapshot,
+                    ),
+                    Type::Body,
+                    t.text_secondary,
                 );
                 ui.add_space(space::M);
-                widgets::text(ui, copy::state::ESTIMATING, Type::MonoSmall, t.text_secondary);
-                return;
-            }
+                widgets::code_block(ui, &state.items.join("\n"), 120.0, None);
 
-            widgets::text(
-                ui,
-                copy::restore_options_what(
-                    state.items.len(),
-                    state.estimated_bytes,
-                    &state.snapshot,
-                ),
-                Type::Body,
-                t.text_secondary,
-            );
-            ui.add_space(space::M);
-            widgets::code_block(ui, &state.items.join("\n"), 120.0, None);
-
-            ui.add_space(space::XL);
-            widgets::text(ui, copy::restore::OPTIONS_WHERE, Type::H3, t.text_primary);
-            ui.add_space(space::M);
-            if widgets::radio(ui, state.to_original, copy::restore::OPTIONS_ORIGINAL, None, true)
-                .clicked()
-            {
-                state.to_original = true;
-                // Restoring over the original location makes the conflict
-                // question mandatory: there is no safe default.
-                state.conflict = None;
-            }
-            if widgets::radio(ui, !state.to_original, copy::restore::OPTIONS_ELSEWHERE, None, true)
-                .clicked()
-            {
-                state.to_original = false;
-                state.conflict = Some(ConflictPolicy::Skip);
-            }
-            if !state.to_original {
-                ui.horizontal_top(|ui| {
-                    ui.add_space(28.0);
-                    widgets::Field::new().width(340.0).mono().show(ui, &mut state.target);
-                    if Button::secondary(copy::action::BROWSE).show(ui).clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                            state.target = path.to_string_lossy().into_owned();
-                        }
-                    }
-                });
+                ui.add_space(space::XL);
+                widgets::text(ui, copy::restore::OPTIONS_WHERE, Type::H3, t.text_primary);
                 ui.add_space(space::M);
-                ui.horizontal(|ui| {
-                    ui.add_space(28.0);
-                    let mut structure = state.recreate_structure;
-                    let helper =
-                        (!structure).then_some(copy::restore::OPTIONS_FLAT_WARN);
-                    if widgets::checkbox(
-                        ui,
-                        &mut structure,
-                        copy::restore::OPTIONS_STRUCTURE,
-                        helper,
-                        true,
-                    )
-                    .clicked()
-                    {
-                        state.recreate_structure = structure;
-                    }
-                });
-            }
-
-            ui.add_space(space::XL);
-            widgets::text(ui, copy::restore::OPTIONS_CONFLICT, Type::H3, t.text_primary);
-            ui.add_space(space::M);
-            for (policy, label, helper, danger) in [
-                (
-                    ConflictPolicy::Skip,
-                    copy::restore::OPTIONS_SKIP,
-                    copy::restore::OPTIONS_SKIP_BODY,
-                    false,
-                ),
-                (
-                    ConflictPolicy::Overwrite,
-                    copy::restore::OPTIONS_OVERWRITE,
-                    copy::restore::OPTIONS_OVERWRITE_BODY,
+                if widgets::radio(
+                    ui,
+                    state.to_original,
+                    copy::restore::OPTIONS_ORIGINAL,
+                    None,
                     true,
-                ),
-                (
-                    ConflictPolicy::KeepBoth,
-                    copy::restore::OPTIONS_KEEP_BOTH,
-                    copy::restore::OPTIONS_KEEP_BOTH_BODY,
-                    false,
-                ),
-            ] {
-                if widgets::radio(ui, state.conflict == Some(policy), label, Some(helper), true)
-                    .clicked()
-                {
-                    state.conflict = Some(policy);
-                }
-                let _ = danger;
-                ui.add_space(space::XS);
-            }
-
-            ui.add_space(space::XL);
-            widgets::text(ui, copy::restore::OPTIONS_ALSO, Type::H3, t.text_primary);
-            ui.add_space(space::M);
-            let mut timestamps = state.timestamps;
-            if widgets::checkbox(ui, &mut timestamps, copy::restore::OPTIONS_TIMESTAMPS, None, true)
+                )
                 .clicked()
-            {
-                state.timestamps = timestamps;
-            }
-            ui.add_space(space::S);
-            let mut permissions = state.permissions;
-            // Disabled with an explanation on Windows rather than offered and
-            // silently ignored.
-            let windows = cfg!(windows);
-            widgets::checkbox(
-                ui,
-                &mut permissions,
-                copy::restore::OPTIONS_PERMISSIONS,
-                windows.then_some(copy::restore::OPTIONS_PERMS_WINDOWS),
-                !windows,
-            );
-            if !windows {
-                state.permissions = permissions;
-            }
-
-            if let Some(free) = state.free_bytes {
-                ui.add_space(space::XL);
-                if state.estimated_bytes > free {
-                    widgets::text(
-                        ui,
-                        copy::restore_options_not_enough(state.estimated_bytes, free),
-                        Type::Small,
-                        t.danger.tint_text,
-                    );
-                } else {
-                    widgets::text(
-                        ui,
-                        copy::restore_options_free_space(free),
-                        Type::Small,
-                        t.text_muted,
-                    );
+                {
+                    state.to_original = true;
+                    // Restoring over the original location makes the conflict
+                    // question mandatory: there is no safe default.
+                    state.conflict = None;
                 }
-            }
+                if widgets::radio(
+                    ui,
+                    !state.to_original,
+                    copy::restore::OPTIONS_ELSEWHERE,
+                    None,
+                    true,
+                )
+                .clicked()
+                {
+                    state.to_original = false;
+                    state.conflict = Some(ConflictPolicy::Skip);
+                }
+                if !state.to_original {
+                    ui.horizontal_top(|ui| {
+                        ui.add_space(28.0);
+                        widgets::Field::new().width(340.0).mono().show(ui, &mut state.target);
+                        if Button::secondary(copy::action::BROWSE).show(ui).clicked() {
+                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                state.target = path.to_string_lossy().into_owned();
+                            }
+                        }
+                    });
+                    ui.add_space(space::M);
+                    ui.horizontal(|ui| {
+                        ui.add_space(28.0);
+                        let mut structure = state.recreate_structure;
+                        let helper = (!structure).then_some(copy::restore::OPTIONS_FLAT_WARN);
+                        if widgets::checkbox(
+                            ui,
+                            &mut structure,
+                            copy::restore::OPTIONS_STRUCTURE,
+                            helper,
+                            true,
+                        )
+                        .clicked()
+                        {
+                            state.recreate_structure = structure;
+                        }
+                    });
+                }
 
-            if state.needs_typed_confirmation() {
                 ui.add_space(space::XL);
-                widgets::Field::new()
-                    .label(copy::restore::OPTIONS_TYPE_CONFIRM)
-                    .width(200.0)
-                    .show(ui, &mut state.typed_overwrite);
-            }
-        });
+                widgets::text(ui, copy::restore::OPTIONS_CONFLICT, Type::H3, t.text_primary);
+                ui.add_space(space::M);
+                for (policy, label, helper, danger) in [
+                    (
+                        ConflictPolicy::Skip,
+                        copy::restore::OPTIONS_SKIP,
+                        copy::restore::OPTIONS_SKIP_BODY,
+                        false,
+                    ),
+                    (
+                        ConflictPolicy::Overwrite,
+                        copy::restore::OPTIONS_OVERWRITE,
+                        copy::restore::OPTIONS_OVERWRITE_BODY,
+                        true,
+                    ),
+                    (
+                        ConflictPolicy::KeepBoth,
+                        copy::restore::OPTIONS_KEEP_BOTH,
+                        copy::restore::OPTIONS_KEEP_BOTH_BODY,
+                        false,
+                    ),
+                ] {
+                    if widgets::radio(ui, state.conflict == Some(policy), label, Some(helper), true)
+                        .clicked()
+                    {
+                        state.conflict = Some(policy);
+                    }
+                    let _ = danger;
+                    ui.add_space(space::XS);
+                }
+
+                ui.add_space(space::XL);
+                widgets::text(ui, copy::restore::OPTIONS_ALSO, Type::H3, t.text_primary);
+                ui.add_space(space::M);
+                let mut timestamps = state.timestamps;
+                if widgets::checkbox(
+                    ui,
+                    &mut timestamps,
+                    copy::restore::OPTIONS_TIMESTAMPS,
+                    None,
+                    true,
+                )
+                .clicked()
+                {
+                    state.timestamps = timestamps;
+                }
+                ui.add_space(space::S);
+                let mut permissions = state.permissions;
+                // Disabled with an explanation on Windows rather than offered and
+                // silently ignored.
+                let windows = cfg!(windows);
+                widgets::checkbox(
+                    ui,
+                    &mut permissions,
+                    copy::restore::OPTIONS_PERMISSIONS,
+                    windows.then_some(copy::restore::OPTIONS_PERMS_WINDOWS),
+                    !windows,
+                );
+                if !windows {
+                    state.permissions = permissions;
+                }
+
+                if let Some(free) = state.free_bytes {
+                    ui.add_space(space::XL);
+                    if state.estimated_bytes > free {
+                        widgets::text(
+                            ui,
+                            copy::restore_options_not_enough(state.estimated_bytes, free),
+                            Type::Small,
+                            t.danger.tint_text,
+                        );
+                    } else {
+                        widgets::text(
+                            ui,
+                            copy::restore_options_free_space(free),
+                            Type::Small,
+                            t.text_muted,
+                        );
+                    }
+                }
+
+                if state.needs_typed_confirmation() {
+                    ui.add_space(space::XL);
+                    widgets::Field::new()
+                        .label(copy::restore::OPTIONS_TYPE_CONFIRM)
+                        .width(200.0)
+                        .show(ui, &mut state.typed_overwrite);
+                }
+            });
             m.footer(|ui| {
-            if state.running {
-                if Button::danger_ghost(copy::restore::PROGRESS_CANCEL).show(ui).clicked() {
+                if state.running {
+                    if Button::danger_ghost(copy::restore::PROGRESS_CANCEL).show(ui).clicked() {
+                        cancel = true;
+                    }
+                    return;
+                }
+                let danger = state.conflict == Some(ConflictPolicy::Overwrite);
+                let label = if danger {
+                    copy::restore::OPTIONS_BUTTON_DANGER
+                } else {
+                    copy::restore::OPTIONS_BUTTON
+                };
+                let button = if danger { Button::danger(label) } else { Button::primary(label) };
+                if button.enabled(state.can_restore()).show(ui).clicked() {
+                    start = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
                     cancel = true;
                 }
-                return;
-            }
-            let danger = state.conflict == Some(ConflictPolicy::Overwrite);
-            let label = if danger {
-                copy::restore::OPTIONS_BUTTON_DANGER
-            } else {
-                copy::restore::OPTIONS_BUTTON
-            };
-            let button = if danger { Button::danger(label) } else { Button::primary(label) };
-            if button.enabled(state.can_restore()).show(ui).clicked() {
-                start = true;
-            }
-            if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                cancel = true;
-            }
-        });
+            });
         },
     );
 

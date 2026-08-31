@@ -71,6 +71,8 @@ impl Captured {
     }
     /// Parse stdout as the JSON envelope. Fails loudly if it is not exactly
     /// one document, which is itself the assertion most of these tests want.
+    // Part of the harness API; used by some test targets and not others.
+    #[allow(dead_code)]
     pub fn json(&self) -> serde_json::Value {
         let text = self.stdout();
         serde_json::from_str(&text)
@@ -168,6 +170,8 @@ impl Harness {
     }
 
     /// Connect the way a command would.
+    // Part of the harness API; used by some test targets and not others.
+    #[allow(dead_code)]
     pub fn daemon(&self, ctx: &mut Ctx) -> Daemon {
         Daemon::connect(ctx, super::client::Start::Never)
             .unwrap_or_else(|e| panic!("connecting to the harness: {}", e.message))
@@ -185,9 +189,8 @@ impl RunResult {
     /// Parse stdout as the single JSON envelope. Panics if it is not exactly
     /// one document — which is itself the property most of these tests check.
     pub fn json(&self) -> serde_json::Value {
-        serde_json::from_str(&self.stdout).unwrap_or_else(|e| {
-            panic!("stdout was not one JSON document ({e}):\n{}", self.stdout)
-        })
+        serde_json::from_str(&self.stdout)
+            .unwrap_or_else(|e| panic!("stdout was not one JSON document ({e}):\n{}", self.stdout))
     }
 
     pub fn data(&self) -> serde_json::Value {

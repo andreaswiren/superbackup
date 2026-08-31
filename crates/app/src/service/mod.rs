@@ -130,8 +130,7 @@ fn windows_service(paths: Paths, global: &crate::cli::GlobalArgs) -> ExitCode {
             })
             .ok();
 
-        let hooks =
-            daemon::Hooks { ready: None, external_stop: Some(stop_rx), endpoint: None };
+        let hooks = daemon::Hooks { ready: None, external_stop: Some(stop_rx), endpoint: None };
         let result = runtime.block_on(daemon::run(
             service_paths,
             Surface::Headless,
@@ -186,8 +185,8 @@ pub use crate::daemon::destination_report;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use superbackup_core::model::Config;
     use superbackup_core::engine::testing::{test_mirror, test_repository};
+    use superbackup_core::model::Config;
 
     fn config_with(destinations: Vec<superbackup_core::model::Destination>) -> Config {
         Config { destinations, ..Config::default() }
@@ -217,8 +216,7 @@ mod tests {
             path: r"C:\Users\me\OneDrive\backups".into(),
             account: None,
         };
-        let account =
-            ServiceAccount::User { username: r".\me".into(), password: None };
+        let account = ServiceAccount::User { username: r".\me".into(), password: None };
         let report =
             destination_report(&config_with(vec![onedrive]), &account, ServiceScope::System);
         assert_eq!(report.len(), 1);

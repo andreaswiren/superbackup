@@ -94,11 +94,7 @@ impl Report {
 // ---------------------------------------------------------------------------
 
 /// Validate a job draft against the rest of the configuration.
-pub fn validate_job(
-    job: &Job,
-    others: &[Job],
-    destinations: &[Destination],
-) -> Report {
+pub fn validate_job(job: &Job, others: &[Job], destinations: &[Destination]) -> Report {
     let mut report = Report::default();
 
     let name = job.name.trim();
@@ -106,10 +102,7 @@ pub fn validate_job(
         report.push(Field::Name, copy::valid::JOB_NAME_EMPTY);
     } else if name.chars().count() > 64 {
         report.push(Field::Name, copy::valid::JOB_NAME_LONG);
-    } else if others
-        .iter()
-        .any(|o| o.id != job.id && o.name.trim().eq_ignore_ascii_case(name))
-    {
+    } else if others.iter().any(|o| o.id != job.id && o.name.trim().eq_ignore_ascii_case(name)) {
         report.push(Field::Name, copy::valid_job_name_dup(name));
     }
 
@@ -130,10 +123,8 @@ pub fn validate_job(
                 break;
             }
             if source.path.starts_with(&other.path) && source.path != other.path {
-                report.push(
-                    Field::Sources,
-                    copy::valid_source_nested(&other.path.to_string_lossy()),
-                );
+                report
+                    .push(Field::Sources, copy::valid_source_nested(&other.path.to_string_lossy()));
                 break;
             }
         }
@@ -141,19 +132,15 @@ pub fn validate_job(
         for destination in destinations {
             if let Some(root) = destination.kind.local_path() {
                 if source.path.starts_with(root) {
-                    report.push(
-                        Field::Sources,
-                        copy::valid_source_in_destination(&destination.name),
-                    );
+                    report
+                        .push(Field::Sources, copy::valid_source_in_destination(&destination.name));
                 }
             }
         }
     }
 
-    let enabled_destinations: Vec<&Destination> = destinations
-        .iter()
-        .filter(|d| job.destination_ids.contains(&d.id) && d.enabled)
-        .collect();
+    let enabled_destinations: Vec<&Destination> =
+        destinations.iter().filter(|d| job.destination_ids.contains(&d.id) && d.enabled).collect();
     if job.destination_ids.is_empty() || enabled_destinations.is_empty() {
         report.push(Field::Destinations, copy::job::ERR_NO_DESTINATIONS);
     }
@@ -294,7 +281,9 @@ pub fn parse_cron(expression: &str) -> Result<(), String> {
             let value = match part.split_once('/') {
                 Some((base, step)) => {
                     if step.parse::<u32>().map(|s| s == 0).unwrap_or(true) {
-                        return Err(format!("`{part}` has a step that is not a number above zero."));
+                        return Err(format!(
+                            "`{part}` has a step that is not a number above zero."
+                        ));
                     }
                     base
                 }
@@ -473,10 +462,8 @@ pub fn validate_destination(
                     }
                     if let Some(other_path) = other.kind.local_path() {
                         if path.starts_with(other_path) || other_path.starts_with(path) {
-                            report.push(
-                                Field::Path,
-                                copy::valid_dest_path_inside_dest(&other.name),
-                            );
+                            report
+                                .push(Field::Path, copy::valid_dest_path_inside_dest(&other.name));
                             break;
                         }
                     }
@@ -486,9 +473,7 @@ pub fn validate_destination(
                         if path.starts_with(&source.path) {
                             report.push(
                                 Field::Path,
-                                copy::valid_dest_path_inside_source(
-                                    &source.path.to_string_lossy(),
-                                ),
+                                copy::valid_dest_path_inside_source(&source.path.to_string_lossy()),
                             );
                         }
                     }
@@ -513,10 +498,7 @@ pub fn validate_bucket(bucket: &str) -> Result<(), String> {
     if b.len() < 3 || b.len() > 63 {
         return Err(copy::valid::BUCKET.to_string());
     }
-    if !b
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
-    {
+    if !b.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.') {
         return Err(copy::valid::BUCKET.to_string());
     }
     if b.starts_with('-') || b.ends_with('-') || b.starts_with('.') || b.ends_with('.') {
@@ -548,9 +530,7 @@ pub fn validate_provider(
         report.push(Field::Name, copy::valid::PROVIDER_NAME_EMPTY);
     } else if name.chars().count() > 64 {
         report.push(Field::Name, copy::valid::JOB_NAME_LONG);
-    } else if others
-        .iter()
-        .any(|o| o.id != provider.id && o.name.trim().eq_ignore_ascii_case(name))
+    } else if others.iter().any(|o| o.id != provider.id && o.name.trim().eq_ignore_ascii_case(name))
     {
         report.push(Field::Name, copy::valid_provider_name_dup(name));
     }
@@ -612,9 +592,7 @@ pub fn parse_endpoint(input: &str) -> Result<Endpoint, String> {
         || host.starts_with('.')
         || host.ends_with('.')
         || host.contains(' ')
-        || !host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        || !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
     {
         return Err(copy::valid::ENDPOINT_INVALID.to_string());
     }
@@ -652,10 +630,7 @@ pub fn passphrase_score(passphrase: &str) -> u8 {
     .filter(|x| **x)
     .count();
 
-    let words = lower
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 3)
-        .count();
+    let words = lower.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() >= 3).count();
 
     let mut score = 0i32;
     score += match len {
@@ -678,8 +653,16 @@ pub fn passphrase_score(passphrase: &str) -> u8 {
 
     // Obvious weaknesses knock the score back down.
     const COMMON: [&str; 10] = [
-        "password", "passphrase", "123456", "qwerty", "letmein", "welcome", "admin",
-        "superbackup", "backup", "iloveyou",
+        "password",
+        "passphrase",
+        "123456",
+        "qwerty",
+        "letmein",
+        "welcome",
+        "admin",
+        "superbackup",
+        "backup",
+        "iloveyou",
     ];
     if COMMON.iter().any(|c| lower.contains(c)) {
         score -= 2;
@@ -784,7 +767,11 @@ impl WizardStep {
 }
 
 /// Why `Continue` is disabled on this step, or `None` when it is not.
-pub fn wizard_blocked(step: WizardStep, draft: &Job, destinations: &[Destination]) -> Option<String> {
+pub fn wizard_blocked(
+    step: WizardStep,
+    draft: &Job,
+    destinations: &[Destination],
+) -> Option<String> {
     match step {
         WizardStep::Template => None,
         WizardStep::Sources => {
@@ -797,9 +784,8 @@ pub fn wizard_blocked(step: WizardStep, draft: &Job, destinations: &[Destination
             }
         }
         WizardStep::Destinations => {
-            let usable = destinations
-                .iter()
-                .any(|d| draft.destination_ids.contains(&d.id) && d.enabled);
+            let usable =
+                destinations.iter().any(|d| draft.destination_ids.contains(&d.id) && d.enabled);
             if usable {
                 None
             } else {
@@ -936,10 +922,7 @@ mod tests {
         let j = job("Dev code", vec![]);
         let report = validate_job(&j, &[], &[]);
         assert!(!report.ok());
-        assert_eq!(
-            report.for_field(Field::Destinations),
-            Some(copy::job::ERR_NO_DESTINATIONS)
-        );
+        assert_eq!(report.for_field(Field::Destinations), Some(copy::job::ERR_NO_DESTINATIONS));
     }
 
     #[test]
@@ -951,7 +934,8 @@ mod tests {
         let existing = job("Dev code", vec![d.id]);
         let mut candidate = job("dev CODE", vec![d.id]);
         candidate.id = Uuid::new_v4();
-        let report = validate_job(&candidate, std::slice::from_ref(&existing), std::slice::from_ref(&d));
+        let report =
+            validate_job(&candidate, std::slice::from_ref(&existing), std::slice::from_ref(&d));
         assert!(report.for_field(Field::Name).is_some());
     }
 
@@ -972,10 +956,8 @@ mod tests {
 
     #[test]
     fn a_mirror_only_job_warns_but_still_saves() {
-        let d = destination(
-            "Mirror",
-            DestinationKind::LocalMirror { path: PathBuf::from("/mirror") },
-        );
+        let d =
+            destination("Mirror", DestinationKind::LocalMirror { path: PathBuf::from("/mirror") });
         let j = job("Docs", vec![d.id]);
         let report = validate_job(&j, &[], std::slice::from_ref(&d));
         assert!(report.ok(), "the warning must not block saving");
@@ -1107,10 +1089,14 @@ mod tests {
 
         draft.sources.push(Source::new(if cfg!(windows) { r"C:\dev" } else { "/dev" }));
         assert!(wizard_blocked(WizardStep::Sources, &draft, &[]).is_none());
-        assert!(wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_some());
+        assert!(
+            wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_some()
+        );
 
         draft.destination_ids.push(d.id);
-        assert!(wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_none());
+        assert!(
+            wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_none()
+        );
         assert!(wizard_blocked(WizardStep::Schedule, &draft, std::slice::from_ref(&d)).is_none());
         assert!(wizard_blocked(WizardStep::Exclusions, &draft, std::slice::from_ref(&d)).is_none());
     }
@@ -1123,7 +1109,9 @@ mod tests {
         );
         d.enabled = false;
         let draft = job("Dev code", vec![d.id]);
-        assert!(wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_some());
+        assert!(
+            wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_some()
+        );
     }
 
     #[test]

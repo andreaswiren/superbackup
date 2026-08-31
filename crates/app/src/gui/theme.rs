@@ -125,10 +125,10 @@ impl Tokens {
             border_control: rgb(0x6A, 0x75, 0x83), // 3.53 : bg.surface
             border_focus: rgb(0x7F, 0xB4, 0xFF),   // 8.45 : bg.canvas
 
-            text_primary: rgb(0xE8, 0xEC, 0xF2),   // 13.94 : bg.surface
+            text_primary: rgb(0xE8, 0xEC, 0xF2), // 13.94 : bg.surface
             text_secondary: rgb(0xA3, 0xAD, 0xBB), // 7.28
-            text_muted: rgb(0x8A, 0x94, 0xA1),     // 5.38
-            text_disabled: rgb(0x5E, 0x66, 0x74),  // deliberately sub-AA
+            text_muted: rgb(0x8A, 0x94, 0xA1),   // 5.38
+            text_disabled: rgb(0x5E, 0x66, 0x74), // deliberately sub-AA
             text_oncolor: Color32::WHITE,
             text_link: rgb(0x7F, 0xB4, 0xFF),
 
@@ -496,21 +496,13 @@ pub fn visuals(t: &Tokens) -> egui::Visuals {
         offset: [0, 4],
         blur: 16,
         spread: 0,
-        color: if t.dark {
-            Color32::from_black_alpha(115)
-        } else {
-            rgba(0x17, 0x1B, 0x21, 36)
-        },
+        color: if t.dark { Color32::from_black_alpha(115) } else { rgba(0x17, 0x1B, 0x21, 36) },
     };
     v.window_shadow = egui::epaint::Shadow {
         offset: [0, 10],
         blur: 40,
         spread: 0,
-        color: if t.dark {
-            Color32::from_black_alpha(140)
-        } else {
-            rgba(0x17, 0x1B, 0x21, 51)
-        },
+        color: if t.dark { Color32::from_black_alpha(140) } else { rgba(0x17, 0x1B, 0x21, 51) },
     };
 
     v.striped = false;
@@ -592,19 +584,11 @@ pub fn fonts() -> egui::FontDefinitions {
 
     if let Some((name, data)) = ui_regular {
         insert_font(&mut fonts, "sb-ui", name, data);
-        fonts
-            .families
-            .entry(FontFamily::Proportional)
-            .or_default()
-            .insert(0, "sb-ui".to_owned());
+        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "sb-ui".to_owned());
     }
     if let Some((name, data)) = mono {
         insert_font(&mut fonts, "sb-mono", name, data);
-        fonts
-            .families
-            .entry(FontFamily::Monospace)
-            .or_default()
-            .insert(0, "sb-mono".to_owned());
+        fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "sb-mono".to_owned());
     }
 
     // The two synthetic weight families. When a real medium or bold face is
@@ -647,9 +631,7 @@ pub fn fonts() -> egui::FontDefinitions {
 
 fn insert_font(fonts: &mut egui::FontDefinitions, key: &str, path: String, data: Vec<u8>) {
     tracing::debug!(font = %path, "loaded font");
-    fonts
-        .font_data
-        .insert(key.to_owned(), std::sync::Arc::new(egui::FontData::from_owned(data)));
+    fonts.font_data.insert(key.to_owned(), std::sync::Arc::new(egui::FontData::from_owned(data)));
 }
 
 fn load_first(candidates: &[String]) -> Option<(String, Vec<u8>)> {

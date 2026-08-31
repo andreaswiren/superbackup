@@ -239,11 +239,8 @@ impl App {
                                             menu = Some(("rotate", provider.id));
                                         }
                                         widgets::divider(ui);
-                                        if widgets::menu_item_danger(
-                                            ui,
-                                            copy::action::DELETE,
-                                            true,
-                                        ) {
+                                        if widgets::menu_item_danger(ui, copy::action::DELETE, true)
+                                        {
                                             menu = Some(("delete", provider.id));
                                         }
                                     },
@@ -263,8 +260,7 @@ impl App {
                         });
 
                         let response = row.response();
-                        let announce =
-                            format!("{}, {endpoint}, {region}", provider.name);
+                        let announce = format!("{}, {endpoint}, {region}", provider.name);
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &announce)
                         });

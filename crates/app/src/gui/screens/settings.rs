@@ -89,19 +89,19 @@ impl App {
             ui.add_space(space::H3);
             ui.vertical(|ui| {
                 widgets::scroll_area(ui, ("settings", section), |ui| {
-                        match section {
-                            SettingsSection::General => self.settings_general(ui),
-                            SettingsSection::Scheduling => self.settings_scheduling(ui),
-                            SettingsSection::Bandwidth => self.settings_bandwidth(ui),
-                            SettingsSection::Notifications => self.settings_notifications(ui),
-                            SettingsSection::Security => self.settings_security(ui),
-                            SettingsSection::Kopia => self.settings_kopia(ui),
-                            SettingsSection::Remote => self.settings_remote(ui),
-                            SettingsSection::Advanced => self.settings_advanced(ui),
-                            SettingsSection::Reset => self.settings_reset(ui),
-                        }
-                        ui.add_space(space::H2);
-                    });
+                    match section {
+                        SettingsSection::General => self.settings_general(ui),
+                        SettingsSection::Scheduling => self.settings_scheduling(ui),
+                        SettingsSection::Bandwidth => self.settings_bandwidth(ui),
+                        SettingsSection::Notifications => self.settings_notifications(ui),
+                        SettingsSection::Security => self.settings_security(ui),
+                        SettingsSection::Kopia => self.settings_kopia(ui),
+                        SettingsSection::Remote => self.settings_remote(ui),
+                        SettingsSection::Advanced => self.settings_advanced(ui),
+                        SettingsSection::Reset => self.settings_reset(ui),
+                    }
+                    ui.add_space(space::H2);
+                });
             });
         });
 
@@ -114,10 +114,7 @@ impl App {
         let t = theme::tokens(ui.ctx());
         let mut changed = false;
         let mut label = self.data.machine_label().to_string();
-        widgets::Field::new()
-            .label(copy::set::MACHINE_LABEL)
-            .char_limit(64)
-            .show(ui, &mut label);
+        widgets::Field::new().label(copy::set::MACHINE_LABEL).char_limit(64).show(ui, &mut label);
         ui.add_space(space::S);
         widgets::text(
             ui,
@@ -170,14 +167,8 @@ impl App {
         ui.horizontal(|ui| {
             ui.add_space(28.0);
             let mut minimised = self.data.settings.start_minimised;
-            if widgets::toggle(
-                ui,
-                &mut minimised,
-                copy::set::START_MINIMISED,
-                None,
-                autostart,
-            )
-            .clicked()
+            if widgets::toggle(ui, &mut minimised, copy::set::START_MINIMISED, None, autostart)
+                .clicked()
             {
                 self.data.settings.start_minimised = minimised;
                 changed = true;
@@ -232,7 +223,13 @@ impl App {
             }
         });
         ui.add_space(space::S);
-        widgets::paragraph_at(ui, copy::onboarding::SERVICE_ELEVATE, Type::Small, t.text_muted, 560.0);
+        widgets::paragraph_at(
+            ui,
+            copy::onboarding::SERVICE_ELEVATE,
+            Type::Small,
+            t.text_muted,
+            560.0,
+        );
 
         widgets::form_group(ui, copy::set::PARALLEL, Some(copy::set::PARALLEL_BODY));
         let mut parallel = self.data.settings.max_parallel_jobs;
@@ -576,8 +573,11 @@ impl App {
             ui.horizontal(|ui| {
                 for (index, label) in format::WEEKDAY_SHORT.iter().enumerate() {
                     let on = window.weekdays.contains(&(index as u8));
-                    let button =
-                        if on { Button::primary(&label[..2]) } else { Button::secondary(&label[..2]) };
+                    let button = if on {
+                        Button::primary(&label[..2])
+                    } else {
+                        Button::secondary(&label[..2])
+                    };
                     if button.min_width(36.0).show(ui).clicked() {
                         if on {
                             window.weekdays.retain(|d| *d != index as u8);
@@ -636,10 +636,7 @@ impl App {
         for hour in 0..=24 {
             let x = x_for(hour * 60);
             ui.painter().line_segment(
-                [
-                    egui::Pos2::new(x, rect.bottom() - 8.0),
-                    egui::Pos2::new(x, rect.bottom()),
-                ],
+                [egui::Pos2::new(x, rect.bottom() - 8.0), egui::Pos2::new(x, rect.bottom())],
                 egui::Stroke::new(1.0_f32, t.border_subtle),
             );
         }
@@ -732,7 +729,14 @@ impl App {
             widgets::text(ui, copy::set::NOTIF_STALE, Type::Body, t.text_primary);
             ui.add_space(space::M);
             let mut days = n.stale_after_days;
-            widgets::number(ui, &mut days, 0..=90, copy::set::NOTIF_STALE_UNIT, on, copy::set::NOTIF_STALE);
+            widgets::number(
+                ui,
+                &mut days,
+                0..=90,
+                copy::set::NOTIF_STALE_UNIT,
+                on,
+                copy::set::NOTIF_STALE,
+            );
             if days != n.stale_after_days {
                 n.stale_after_days = days;
                 changed = true;
@@ -859,14 +863,8 @@ impl App {
         widgets::form_group(ui, "Credential store", None);
         let keychain_name = keychain_name();
         let mut keychain = self.data.settings.use_os_keychain;
-        if widgets::toggle(
-            ui,
-            &mut keychain,
-            &copy::set_sec_keychain(keychain_name),
-            None,
-            true,
-        )
-        .clicked()
+        if widgets::toggle(ui, &mut keychain, &copy::set_sec_keychain(keychain_name), None, true)
+            .clicked()
         {
             if keychain {
                 act = Some("keychain-on");
@@ -905,7 +903,13 @@ impl App {
             ui.set_width(ui.available_width());
             widgets::text(ui, copy::job::DANGER_TITLE, Type::H3, t.text_primary);
             ui.add_space(space::M);
-            widgets::paragraph_at(ui, copy::set::SEC_RESET_BODY, Type::Small, t.text_secondary, 560.0);
+            widgets::paragraph_at(
+                ui,
+                copy::set::SEC_RESET_BODY,
+                Type::Small,
+                t.text_secondary,
+                560.0,
+            );
             ui.add_space(space::L);
             if Button::danger(copy::set::SEC_RESET).show(ui).clicked() {
                 act = Some("reset-vault");
@@ -1043,7 +1047,13 @@ impl App {
             }
         });
         ui.add_space(space::L);
-        widgets::paragraph_at(ui, copy::set::REMOTE_PULL_KEEPS_LOCAL, Type::Small, t.text_muted, 560.0);
+        widgets::paragraph_at(
+            ui,
+            copy::set::REMOTE_PULL_KEEPS_LOCAL,
+            Type::Small,
+            t.text_muted,
+            560.0,
+        );
     }
 
     fn settings_advanced(&mut self, ui: &mut Ui) {
@@ -1052,15 +1062,9 @@ impl App {
 
         widgets::text(ui, copy::set::ADV_LOG_LEVEL, Type::H3, t.text_primary);
         ui.add_space(space::S);
-        let levels = [
-            LogLevel::Error,
-            LogLevel::Warn,
-            LogLevel::Info,
-            LogLevel::Debug,
-            LogLevel::Trace,
-        ];
-        let labels: Vec<String> =
-            levels.iter().map(|l| format!("{l:?}")).collect();
+        let levels =
+            [LogLevel::Error, LogLevel::Warn, LogLevel::Info, LogLevel::Debug, LogLevel::Trace];
+        let labels: Vec<String> = levels.iter().map(|l| format!("{l:?}")).collect();
         let mut index = levels
             .iter()
             .position(|l| format!("{l:?}") == format!("{:?}", self.data.settings.log_level))
@@ -1101,7 +1105,13 @@ impl App {
         );
 
         widgets::form_group(ui, copy::set::ADV_BUNDLE, None);
-        widgets::paragraph_at(ui, copy::set::ADV_BUNDLE_INCLUDES, Type::Small, t.text_secondary, 600.0);
+        widgets::paragraph_at(
+            ui,
+            copy::set::ADV_BUNDLE_INCLUDES,
+            Type::Small,
+            t.text_secondary,
+            600.0,
+        );
         ui.add_space(space::S);
         widgets::paragraph_at(ui, copy::set::ADV_BUNDLE_EXCLUDES, Type::Small, t.text_muted, 600.0);
         ui.add_space(space::L);
@@ -1159,7 +1169,13 @@ impl App {
             ui.set_width(ui.available_width());
             widgets::text(ui, copy::set::RESET_SETTINGS, Type::H3, t.text_primary);
             ui.add_space(space::M);
-            widgets::paragraph_at(ui, copy::set::RESET_SETTINGS_BODY, Type::Small, t.text_secondary, 560.0);
+            widgets::paragraph_at(
+                ui,
+                copy::set::RESET_SETTINGS_BODY,
+                Type::Small,
+                t.text_secondary,
+                560.0,
+            );
             ui.add_space(space::L);
             if Button::secondary(copy::set::RESET_SETTINGS).show(ui).clicked() {
                 act = Some("settings");
@@ -1171,7 +1187,13 @@ impl App {
             ui.set_width(ui.available_width());
             widgets::text(ui, copy::set::RESET_ALL, Type::H3, t.text_primary);
             ui.add_space(space::M);
-            widgets::paragraph_at(ui, copy::set::RESET_ALL_BODY, Type::Small, t.text_secondary, 560.0);
+            widgets::paragraph_at(
+                ui,
+                copy::set::RESET_ALL_BODY,
+                Type::Small,
+                t.text_secondary,
+                560.0,
+            );
             ui.add_space(space::L);
             if Button::danger(copy::set::RESET_ALL).show(ui).clicked() {
                 act = Some("all");

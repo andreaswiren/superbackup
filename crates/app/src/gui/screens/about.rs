@@ -39,12 +39,7 @@ impl App {
                     ui.add_space(space::XL);
                     widgets::text(ui, copy::APP_NAME, Type::Display, t.text_primary);
                     ui.add_space(space::XS);
-                    widgets::text(
-                        ui,
-                        copy::about_version(info.version),
-                        Type::Body,
-                        t.text_muted,
-                    );
+                    widgets::text(ui, copy::about_version(info.version), Type::Body, t.text_muted);
                     ui.add_space(space::XXS);
                     widgets::text(
                         ui,
@@ -86,7 +81,11 @@ impl App {
                         widgets::kv(
                             ui,
                             copy::about::MACHINE,
-                            &format!("{} ({})", self.data.machine_label(), self.data.machine_slug()),
+                            &format!(
+                                "{} ({})",
+                                self.data.machine_label(),
+                                self.data.machine_slug()
+                            ),
                             false,
                         );
                         widgets::kv(

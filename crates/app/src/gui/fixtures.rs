@@ -18,8 +18,8 @@ use uuid::Uuid;
 use superbackup_core::error::ErrorCode;
 use superbackup_core::model::{
     BandwidthSettings, Destination, DestinationKind, EncryptionSettings, ExclusionSet, Job,
-    JobHooks, ProviderKind, RetentionPolicy, S3Credentials, S3Flavour, Schedule, SecretRef,
-    Source, StorageProvider, TimeOfDay,
+    JobHooks, ProviderKind, RetentionPolicy, S3Credentials, S3Flavour, Schedule, SecretRef, Source,
+    StorageProvider, TimeOfDay,
 };
 use superbackup_core::state::{
     DestinationRun, Event, Health, JobRun, JobSummary, Progress, RunError, RunStatus, Severity,
@@ -206,10 +206,8 @@ pub fn jobs() -> Vec<Job> {
     let mut photos = base(JOB_PHOTOS, "Photos");
     photos.sources = vec![Source::new(path(r"D:\Photos", "/home/andreas/Pictures"))];
     photos.destination_ids = vec![DEST_S3];
-    photos.schedule = Schedule::Weekly {
-        weekdays: vec![6],
-        times: vec![TimeOfDay { hour: 3, minute: 30 }],
-    };
+    photos.schedule =
+        Schedule::Weekly { weekdays: vec![6], times: vec![TimeOfDay { hour: 3, minute: 30 }] };
 
     let mut vm = base(JOB_VM, "Scratch VM");
     vm.sources = vec![Source::new(path(r"D:\VMs", "/var/lib/libvirt/images"))];
@@ -246,9 +244,7 @@ fn destination_run(
             current_path: None,
             estimated_seconds_remaining: (!status.is_terminal()).then_some(190),
         },
-        snapshot_id: status
-            .is_terminal()
-            .then(|| "k9f2ab7c31de4f0a8c2b".to_string()),
+        snapshot_id: status.is_terminal().then(|| "k9f2ab7c31de4f0a8c2b".to_string()),
         error: None,
         warnings: vec![],
     }
@@ -321,7 +317,9 @@ pub fn partial_failure_run() -> JobRun {
     failed.error = Some(RunError {
         code: ErrorCode::Kopia,
         message: "The endpoint answered, but rejected these credentials.".into(),
-        hint: Some("Check the access key on StorJ eu-1 (personal), then verify the destination.".into()),
+        hint: Some(
+            "Check the access key on StorJ eu-1 (personal), then verify the destination.".into(),
+        ),
         detail: Some(
             "kopia: error connecting to repository: unable to list from the blob store: \
              The request signature we calculated does not match the signature you provided.\n\
@@ -417,18 +415,12 @@ pub fn events() -> Vec<Event> {
         Event::info("job.started", "Dev code started (Schedule)")
             .with_job(JOB_DEV)
             .with_run(RUN_ACTIVE),
-        Event::warn(
-            "dest.warning",
-            "OneDrive finished with 12 unreadable files",
-        )
-        .with_job(JOB_DEV)
-        .with_destination(DEST_ONEDRIVE),
-        Event::error(
-            "dest.failed",
-            "StorJ offsite rejected the stored credentials",
-        )
-        .with_job(JOB_DEV)
-        .with_destination(DEST_S3),
+        Event::warn("dest.warning", "OneDrive finished with 12 unreadable files")
+            .with_job(JOB_DEV)
+            .with_destination(DEST_ONEDRIVE),
+        Event::error("dest.failed", "StorJ offsite rejected the stored credentials")
+            .with_job(JOB_DEV)
+            .with_destination(DEST_S3),
         Event::info("vault.unlocked", "The vault was unlocked"),
         Event::info("repo.maintenance", "Maintenance finished on Local repo")
             .with_destination(DEST_LOCAL),
@@ -576,10 +568,8 @@ pub fn corrupt(data: &mut Data) {
         snapshot.jobs.insert(Uuid::nil(), JobSummary::default());
         snapshot.machine_label = String::new();
         snapshot.kopia_version = None;
-        snapshot.next_scheduled = Some((
-            Uuid::nil(),
-            Utc.timestamp_opt(0, 0).single().unwrap_or_else(Utc::now),
-        ));
+        snapshot.next_scheduled =
+            Some((Uuid::nil(), Utc.timestamp_opt(0, 0).single().unwrap_or_else(Utc::now)));
     }
     data.providers.clear();
 }

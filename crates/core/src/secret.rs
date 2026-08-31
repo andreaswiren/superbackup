@@ -38,6 +38,11 @@ impl Secret {
         secret
     }
 
+    // `from_str` collides in spirit with `std::str::FromStr`, but implementing
+    // that trait would give `Secret` a `parse()` route that returns a `Result`
+    // and invites `?` on secret material in unexpected places. The inherent
+    // method is deliberate.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         Secret { inner: s.as_bytes().to_vec() }
     }

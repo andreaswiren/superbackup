@@ -166,9 +166,7 @@ pub async fn change_passphrase(
         return Err(Error::Validation("the new passphrase cannot be empty".into()));
     }
     if current.ct_eq(&replacement) {
-        return Err(Error::Validation(
-            "the new passphrase is the same as the current one".into(),
-        ));
+        return Err(Error::Validation("the new passphrase is the same as the current one".into()));
     }
     let strength = replacement
         .expose_str()
@@ -397,24 +395,16 @@ pub async fn migrate_all(runtime: &Arc<Runtime>, rekey: &mut Rekey) {
 /// this function twice harmless — and that is precisely what makes the whole
 /// walk safe to resume after a crash, a dropped Wi-Fi connection, or a laptop
 /// lid closing.
-async fn migrate_one(
-    runtime: &Arc<Runtime>,
-    rekey: &Rekey,
-    destination_id: &Uuid,
-) -> Result<bool> {
+async fn migrate_one(runtime: &Arc<Runtime>, rekey: &Rekey, destination_id: &Uuid) -> Result<bool> {
     let credentials = rekey.credentials(destination_id)?;
     let binary = runtime.kopia().ok_or(Error::KopiaMissing)?;
     let destination = {
         let store = runtime.store.lock().await;
-        store
-            .config()
-            .destination(destination_id)
-            .cloned()
-            .ok_or_else(|| {
-                Error::Validation(format!(
-                    "destination {destination_id} is no longer in the configuration"
-                ))
-            })?
+        store.config().destination(destination_id).cloned().ok_or_else(|| {
+            Error::Validation(format!(
+                "destination {destination_id} is no longer in the configuration"
+            ))
+        })?
     };
 
     let with_new = driver_with(&binary, runtime, &destination, &credentials.new)?;
@@ -424,9 +414,10 @@ async fn migrate_one(
     }
 
     let with_old = driver_with(&binary, runtime, &destination, &credentials.old)?;
-    with_old.connect_repository(&ctx).await.map_err(|e| {
-        Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.message }
-    })?;
+    with_old
+        .connect_repository(&ctx)
+        .await
+        .map_err(|e| Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.message })?;
     with_old
         .change_password(&credentials.new, &ctx)
         .await
@@ -438,7 +429,10 @@ async fn migrate_one(
     let verify = driver_with(&binary, runtime, &destination, &credentials.new)?;
     verify.connect_repository(&ctx).await.map_err(|e| Error::Kopia {
         status: e.status.unwrap_or(-1),
-        stderr: format!("the repository did not accept the new passphrase afterwards: {}", e.message),
+        stderr: format!(
+            "the repository did not accept the new passphrase afterwards: {}",
+            e.message
+        ),
     })?;
     Ok(false)
 }
@@ -462,9 +456,8 @@ fn driver_with(
     // Object-store credentials are unaffected by a master rotation — only the
     // repository password changes — so a derived-passphrase destination on S3
     // still needs its access keys. Those come from the vault, which is open.
-    KopiaDriver::new(binary.clone(), &runtime.paths, destination, None, secrets).map_err(|e| {
-        Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.message }
-    })
+    KopiaDriver::new(binary.clone(), &runtime.paths, destination, None, secrets)
+        .map_err(|e| Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.message })
 }
 
 #[cfg(test)]

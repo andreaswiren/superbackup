@@ -106,13 +106,13 @@ fn default_hint(code: ErrorCode) -> Option<String> {
         ErrorCode::Kopia | ErrorCode::Internal => {
             "Run `superbackup doctor`; it checks the things that cause this."
         }
-        ErrorCode::RepoNotConnected => {
-            "Connect to it with `superbackup destination connect NAME`."
-        }
+        ErrorCode::RepoNotConnected => "Connect to it with `superbackup destination connect NAME`.",
         ErrorCode::RepoExists => {
             "Add the destination with --connect-existing to use the repository that is there."
         }
-        ErrorCode::JobRunning => "Watch it with `superbackup status`, or stop it with `superbackup stop`.",
+        ErrorCode::JobRunning => {
+            "Watch it with `superbackup status`, or stop it with `superbackup stop`."
+        }
         _ => return None,
     };
     Some(hint.to_string())
@@ -346,8 +346,12 @@ impl Ui {
         let drawn = super::format::width_of(&trimmed);
         let pad = self.transient_width.saturating_sub(drawn);
         self.transient_width = drawn;
-        let _ = write!(self.out, "
-{trimmed}{}", " ".repeat(pad));
+        let _ = write!(
+            self.out,
+            "
+{trimmed}{}",
+            " ".repeat(pad)
+        );
         let _ = self.out.flush();
     }
 
@@ -356,9 +360,13 @@ impl Ui {
         if self.json || self.quiet || !self.out_is_tty || self.transient_width == 0 {
             return;
         }
-        let _ = write!(self.out, "
+        let _ = write!(
+            self.out,
+            "
 {}
-", " ".repeat(self.transient_width));
+",
+            " ".repeat(self.transient_width)
+        );
         self.transient_width = 0;
         let _ = self.out.flush();
     }
@@ -528,8 +536,11 @@ mod tests {
         let (mut ui, captured) = Ui::capturing(true);
         ui.stream_line("{\"kind\":\"event\"}");
         ui.finish(&Outcome::streamed());
-        assert_eq!(captured.stdout(), "{\"kind\":\"event\"}
-");
+        assert_eq!(
+            captured.stdout(),
+            "{\"kind\":\"event\"}
+"
+        );
     }
 
     #[test]

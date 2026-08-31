@@ -270,10 +270,8 @@ impl App {
                         if has("used_by") {
                             row.col(|ui| {
                                 let jobs = self.data.jobs_using(&destination.id);
-                                let response = widgets::count_pill(
-                                    ui,
-                                    &copy::dest_used_by(jobs.len()),
-                                );
+                                let response =
+                                    widgets::count_pill(ui, &copy::dest_used_by(jobs.len()));
                                 if !jobs.is_empty() {
                                     let names: Vec<&str> =
                                         jobs.iter().map(|j| j.name.as_str()).collect();
@@ -304,9 +302,7 @@ impl App {
                         row.col(|ui| {
                             let (palette, icon) = match status {
                                 DestinationStatus::Ready => (t.success, Icon::CheckCircle),
-                                DestinationStatus::NotConnected => {
-                                    (t.neutral, Icon::MinusCircle)
-                                }
+                                DestinationStatus::NotConnected => (t.neutral, Icon::MinusCircle),
                                 DestinationStatus::Unreachable => (t.danger, Icon::XOctagon),
                                 DestinationStatus::Disabled => (t.neutral, Icon::Pause),
                             };
@@ -340,11 +336,8 @@ impl App {
                                             menu = Some(("toggle", destination.id));
                                         }
                                         widgets::divider(ui);
-                                        if widgets::menu_item_danger(
-                                            ui,
-                                            copy::action::REMOVE,
-                                            true,
-                                        ) {
+                                        if widgets::menu_item_danger(ui, copy::action::REMOVE, true)
+                                        {
                                             menu = Some(("remove", destination.id));
                                         }
                                     },
@@ -438,10 +431,7 @@ pub const KIND_CHOICES: [(&str, &str); 4] = [
         "Offsite through a folder you already sync. Limited by your OneDrive quota.",
     ),
     (copy::kind::S3, "Offsite and independent. Costs money and needs an account."),
-    (
-        copy::kind::MIRROR,
-        "A plain readable copy. No history, no deduplication, no encryption.",
-    ),
+    (copy::kind::MIRROR, "A plain readable copy. No history, no deduplication, no encryption."),
 ];
 
 pub fn kind_icon(index: usize) -> Icon {
@@ -453,7 +443,11 @@ pub fn kind_icon(index: usize) -> Icon {
     }
 }
 
-pub fn kind_for_index(index: usize, path: std::path::PathBuf, provider: Option<Uuid>) -> DestinationKind {
+pub fn kind_for_index(
+    index: usize,
+    path: std::path::PathBuf,
+    provider: Option<Uuid>,
+) -> DestinationKind {
     match index {
         0 => DestinationKind::LocalRepository { path },
         1 => DestinationKind::OneDrive { path, account: None },

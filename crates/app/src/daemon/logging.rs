@@ -101,16 +101,13 @@ pub fn init(paths: &Paths, quiet: bool) -> LogControl {
         .ok()
         .and_then(|value| EnvFilter::try_new(value).ok())
         .unwrap_or_else(|| {
-            EnvFilter::try_new(directives("info"))
-                .unwrap_or_else(|_| EnvFilter::new("info"))
+            EnvFilter::try_new(directives("info")).unwrap_or_else(|_| EnvFilter::new("info"))
         });
     let (filter, reload) = tracing_subscriber::reload::Layer::new(initial);
 
     let file = RollingFile::new(paths.log_dir.clone());
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .with_target(true)
-        .with_writer(file);
+    let file_layer =
+        tracing_subscriber::fmt::layer().with_ansi(false).with_target(true).with_writer(file);
 
     // No console layer when quiet, and none at all on a Windows service, where
     // stderr goes nowhere and the formatter would just burn cycles.
@@ -147,9 +144,7 @@ impl RollingFile {
 impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RollingFile {
     type Writer = DayFile;
     fn make_writer(&'a self) -> DayFile {
-        DayFile {
-            path: self.dir.join(format!("{LOG_STEM}.{}", Utc::now().format("%Y-%m-%d"))),
-        }
+        DayFile { path: self.dir.join(format!("{LOG_STEM}.{}", Utc::now().format("%Y-%m-%d"))) }
     }
 }
 

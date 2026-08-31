@@ -78,10 +78,7 @@ async fn every_command_answers_or_refuses_cleanly() {
     let (mirror_id, repo_id, job_id) = ids.expect("ids");
 
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
     // A provider, so the provider commands have something to work on.
     let provider = StorageProvider {
@@ -99,9 +96,8 @@ async fn every_command_answers_or_refuses_cleanly() {
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     };
-    let Reply::Provider(created) = harness
-        .call(&client, Request::ProviderCreate { provider: Box::new(provider) })
-        .await
+    let Reply::Provider(created) =
+        harness.call(&client, Request::ProviderCreate { provider: Box::new(provider) }).await
     else {
         panic!("expected a provider reply")
     };
@@ -164,7 +160,10 @@ async fn every_command_answers_or_refuses_cleanly() {
     edited.enabled = true;
     run!("dest.update", Request::DestinationUpdate { destination: Box::new(edited) });
     run!("dest.test", Request::DestinationTest { destination: mirror_id.to_string() });
-    run!("dest.stats", Request::DestinationStats { destination: mirror_id.to_string(), refresh: true });
+    run!(
+        "dest.stats",
+        Request::DestinationStats { destination: mirror_id.to_string(), refresh: true }
+    );
     run!(
         "dest.repo_create",
         Request::DestinationRepoCreate { destination: repo_id.to_string(), encryption: None }
@@ -203,7 +202,10 @@ async fn every_command_answers_or_refuses_cleanly() {
             session_token: None,
         }
     );
-    run!("provider.delete", Request::ProviderDelete { provider: provider_id.to_string(), force: true });
+    run!(
+        "provider.delete",
+        Request::ProviderDelete { provider: provider_id.to_string(), force: true }
+    );
 
     // -- snapshots --------------------------------------------------------
     run!(
@@ -324,10 +326,7 @@ async fn malformed_input_is_refused_and_the_daemon_survives() {
     })
     .await;
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
     let hostile: Vec<(&str, Request)> = vec![
         ("an unknown job", Request::JobGet { job: "no-such-job".into() }),
@@ -371,10 +370,7 @@ async fn malformed_input_is_refused_and_the_daemon_survives() {
                 dry_run: false,
             },
         ),
-        (
-            "a history limit of four billion",
-            Request::JobHistory { job: None, limit: u32::MAX },
-        ),
+        ("a history limit of four billion", Request::JobHistory { job: None, limit: u32::MAX }),
         (
             "a pause of a hundred years",
             Request::ControlPause { seconds: Some(u64::MAX), reason: None },
@@ -497,11 +493,7 @@ async fn every_command_flagged_needs_unlock_refuses_while_locked() {
 /// hold for every one of them: no reply carries secret material, and no
 /// refusal is an `internal` or `ipc` error — both of which mean the daemon,
 /// not the caller, got something wrong.
-fn check(
-    covered: &mut BTreeSet<String>,
-    name: &str,
-    result: superbackup_core::Result<Reply>,
-) {
+fn check(covered: &mut BTreeSet<String>, name: &str, result: superbackup_core::Result<Reply>) {
     covered.insert(name.to_string());
     match result {
         Ok(reply) => {

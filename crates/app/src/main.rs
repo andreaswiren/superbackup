@@ -86,10 +86,7 @@ fn main() -> ExitCode {
                     }
                 }
             } else {
-                println!(
-                    "superbackup {} ({} {})",
-                    info.version, info.target_os, info.target_arch
-                );
+                println!("superbackup {} ({} {})", info.version, info.target_os, info.target_arch);
             }
             ExitCode::SUCCESS
         }

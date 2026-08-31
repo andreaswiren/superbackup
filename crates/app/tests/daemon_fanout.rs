@@ -92,14 +92,9 @@ async fn a_job_fans_out_to_a_repository_and_a_mirror_and_survives_one_failing() 
     ]);
 
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
-    harness
-        .call(&client, Request::JobRun { job: "everything".into(), dry_run: false })
-        .await;
+    harness.call(&client, Request::JobRun { job: "everything".into(), dry_run: false }).await;
 
     assert!(
         wait_for_async(Duration::from_secs(60), || {
@@ -115,9 +110,8 @@ async fn a_job_fans_out_to_a_repository_and_a_mirror_and_survives_one_failing() 
         "the run must finish"
     );
 
-    let Reply::Runs(history) = harness
-        .call(&client, Request::JobHistory { job: None, limit: 5 })
-        .await
+    let Reply::Runs(history) =
+        harness.call(&client, Request::JobHistory { job: None, limit: 5 }).await
     else {
         panic!("expected runs")
     };
@@ -189,10 +183,7 @@ async fn stopping_a_run_leaves_no_kopia_behind() {
     let destination_id = destination_id.expect("id");
 
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     // The repository has to exist before a run can reach kopia at all: that
     // is what puts its passphrase in the vault.
     harness
@@ -210,9 +201,8 @@ async fn stopping_a_run_leaves_no_kopia_behind() {
     let _ = std::fs::remove_file(&heartbeat);
     harness.script(&[("mode", "hang")]);
 
-    let Reply::Started(started) = harness
-        .call(&client, Request::JobRun { job: "big".into(), dry_run: false })
-        .await
+    let Reply::Started(started) =
+        harness.call(&client, Request::JobRun { job: "big".into(), dry_run: false }).await
     else {
         panic!("expected a started reply")
     };
@@ -228,9 +218,8 @@ async fn stopping_a_run_leaves_no_kopia_behind() {
     );
 
     let stopped_at = std::time::Instant::now();
-    let Reply::Stopped(stopped) = harness
-        .call(&client, Request::JobStop { run_id: started.run_id })
-        .await
+    let Reply::Stopped(stopped) =
+        harness.call(&client, Request::JobStop { run_id: started.run_id }).await
     else {
         panic!("expected a stopped reply")
     };
@@ -259,9 +248,8 @@ async fn stopping_a_run_leaves_no_kopia_behind() {
     );
 
     // And it is recorded as cancelled, not as a failure — the user asked.
-    let Reply::Runs(history) = harness
-        .call(&client, Request::JobHistory { job: None, limit: 5 })
-        .await
+    let Reply::Runs(history) =
+        harness.call(&client, Request::JobHistory { job: None, limit: 5 }).await
     else {
         panic!("expected runs")
     };
@@ -293,10 +281,7 @@ async fn shutting_down_mid_backup_stops_kopia_first() {
     let destination_id = destination_id.expect("id");
 
     let client = harness.client().await;
-    client
-        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
-        .await
-        .expect("unlock");
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
     harness
         .call(
             &client,
@@ -343,9 +328,8 @@ async fn stopping_nothing_is_idempotent() {
     let mut harness = Harness::start("stop-nothing", |_, _| {}).await;
     let client = harness.client().await;
 
-    let Reply::Stopped(stopped) = harness
-        .call(&client, Request::JobStop { run_id: uuid::Uuid::new_v4() })
-        .await
+    let Reply::Stopped(stopped) =
+        harness.call(&client, Request::JobStop { run_id: uuid::Uuid::new_v4() }).await
     else {
         panic!("expected a stopped reply")
     };

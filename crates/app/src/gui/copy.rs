@@ -131,8 +131,7 @@ pub mod onboarding {
         "A six-word passphrase has been filled in. Save it before you continue.";
     pub const PASS_REQ_LENGTH: &str = "At least 12 characters";
     pub const PASS_REQ_UNIQUE: &str = "Not a password you use anywhere else";
-    pub const PASS_REQ_WORDS: &str =
-        "Four or more words is stronger than a short mix of symbols";
+    pub const PASS_REQ_WORDS: &str = "Four or more words is stronger than a short mix of symbols";
 
     pub const NORECOVERY_TITLE: &str = "There is no way to recover this";
     pub const NORECOVERY_BODY: &str = "Your master passphrase encrypts the vault on this machine. It is never sent anywhere, and it is not stored in a form anyone can read.\n\nThat means there is no reset link, no backdoor and no support address that can open your vault for you. If the passphrase is lost, the repository keys inside are lost with it, and the backups they protect cannot be read again.\n\nPut it in a password manager now, or write it down and keep the paper somewhere you would keep a spare key.";
@@ -169,19 +168,16 @@ pub mod onboarding {
     pub const JOB_ESTIMATE_NONE: &str = "Size could not be estimated. The job will still work.";
 
     pub const RUN_TITLE: &str = "Keep it running";
-    pub const RUN_LEAD: &str =
-        "Backups only help if they happen without you thinking about them.";
+    pub const RUN_LEAD: &str = "Backups only help if they happen without you thinking about them.";
     pub const AUTOSTART_TITLE: &str = "Start superbackup when I sign in";
     pub const AUTOSTART_BODY: &str = "superbackup sits in the tray and runs your schedules.";
     pub const MINIMISED_TITLE: &str = "Start minimised to the tray";
-    pub const MINIMISED_BODY: &str =
-        "No window on sign-in. The tray icon shows the current state.";
+    pub const MINIMISED_BODY: &str = "No window on sign-in. The tray icon shows the current state.";
     pub const SERVICE_TITLE: &str = "Install the background service";
     pub const SERVICE_BODY: &str = "The service runs backups even when nobody is signed in. To do that it needs the master passphrase without a person to type it, which means storing the key in this computer's credential store.";
     pub const SERVICE_KEYCHAIN_WARN: &str =
         "Anything that can run programs as you can then ask the credential store for the key.";
-    pub const SERVICE_ELEVATE: &str =
-        "Installing the service asks for administrator permission.";
+    pub const SERVICE_ELEVATE: &str = "Installing the service asks for administrator permission.";
     pub const SERVICE_DECLINED: &str =
         "The service was not installed. Backups will run while you are signed in.";
 
@@ -333,7 +329,8 @@ pub mod empty {
     };
     pub const SOURCES: Empty = Empty {
         title: "No folders yet",
-        body: "Add the folders this job should back up. You can drop folders onto the window as well.",
+        body:
+            "Add the folders this job should back up. You can drop folders onto the window as well.",
         primary: Some("Add folder…"),
         secondary: None,
     };
@@ -735,7 +732,9 @@ pub fn job_sources_child(parent: &str) -> String {
     format!("That folder is already covered by {parent}.")
 }
 pub fn job_sources_parent(path: &str, count: usize) -> String {
-    format!("{path} contains {count} folders already in this job. Replace them with the parent folder?")
+    format!(
+        "{path} contains {count} folders already in this job. Replace them with the parent folder?"
+    )
 }
 pub fn job_dest_verified(relative: &str) -> String {
     format!("Verified {relative}")
@@ -902,7 +901,8 @@ pub fn confirm_type_name(name: &str) -> String {
 
 pub mod enc {
     pub const TITLE: &str = "Encryption";
-    pub const LEAD: &str = "These settings are fixed when the repository is created and cannot be changed afterwards.";
+    pub const LEAD: &str =
+        "These settings are fixed when the repository is created and cannot be changed afterwards.";
     pub const SUMMARY: &str =
         "Recommended settings — AES-256-GCM, BLAKE2B-256, dynamic 4 MB blocks, no error correction.";
     pub const CHANGE: &str = "Change…";
@@ -1769,7 +1769,9 @@ pub fn valid_dest_path_inside_dest(other: &str) -> String {
     format!("That path is inside {other}. Two destinations cannot share a folder.")
 }
 pub fn valid_dest_path_inside_source(source: &str) -> String {
-    format!("That path is inside {source}, which this job backs up. The backup would contain itself.")
+    format!(
+        "That path is inside {source}, which this job backs up. The backup would contain itself."
+    )
 }
 pub fn valid_pattern_empty(line: usize) -> String {
     format!("Line {line} is empty.")
@@ -1793,7 +1795,8 @@ pub fn valid_form_problems(count: usize) -> String {
 
 pub mod warn {
     pub const MIRROR_ONLY: &str = "This job's only destination is a folder mirror, so there is no history to go back to and nothing is encrypted.";
-    pub const RETENTION_NO_MAINTENANCE: &str = "Every retention value is zero, so nothing would be kept.";
+    pub const RETENTION_NO_MAINTENANCE: &str =
+        "Every retention value is zero, so nothing would be kept.";
     pub const AUTOLOCK_SERVICE: &str = "With auto-lock at 0 minutes and the credential store off, no scheduled backup will run without you first typing the passphrase.";
 }
 
@@ -1906,13 +1909,7 @@ pub fn a11y_job_card_running(name: &str, percent: i64) -> String {
 pub fn a11y_job_card_disabled(name: &str, status: &str, last: &str) -> String {
     format!("{name}, disabled, {status} {last}")
 }
-pub fn a11y_progress(
-    job: &str,
-    destination: &str,
-    percent: i64,
-    done: u64,
-    total: u64,
-) -> String {
+pub fn a11y_progress(job: &str, destination: &str, percent: i64, done: u64, total: u64) -> String {
     format!(
         "Backing up {job} to {destination}, {percent} percent, {} of {} files",
         format::count(done),
@@ -1935,12 +1932,7 @@ pub fn a11y_strength(level: &str) -> String {
 pub fn a11y_exclusion(title: &str, checked: &str, count: usize, rationale: &str) -> String {
     format!("{title}, {checked}, {count} patterns. {rationale}")
 }
-pub fn a11y_exclusion_risky(
-    title: &str,
-    checked: &str,
-    count: usize,
-    rationale: &str,
-) -> String {
+pub fn a11y_exclusion_risky(title: &str, checked: &str, count: usize, rationale: &str) -> String {
     format!("{title}, {checked}, {count} patterns. {rationale} This one may lose data.")
 }
 pub fn a11y_destination_row(name: &str, kind: &str, status: &str, checked: &str) -> String {
@@ -1992,10 +1984,7 @@ mod tests {
     #[test]
     fn formatted_strings_substitute_in_the_documented_order() {
         assert_eq!(window_title("Up to date"), "superbackup — Up to date");
-        assert_eq!(
-            dash_health_failed("Dev code", "2 hours ago"),
-            "Dev code failed 2 hours ago"
-        );
+        assert_eq!(dash_health_failed("Dev code", "2 hours ago"), "Dev code failed 2 hours ago");
         assert_eq!(valid_form_problems(1), "1 problem to fix");
         assert_eq!(valid_form_problems(2), "2 problems to fix");
         assert_eq!(restore_browse_restore_n(1), "Restore 1 item");

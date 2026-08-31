@@ -99,7 +99,8 @@ fn the_published_schema_offers_no_way_to_pass_a_passphrase() {
                 // of the listed tokens. `destination add --passphrase` is such
                 // an argument — it names *where the passphrase comes from*,
                 // not what it is.
-                let is_choice = option["choices"].as_array().map(|c| !c.is_empty()).unwrap_or(false);
+                let is_choice =
+                    option["choices"].as_array().map(|c| !c.is_empty()).unwrap_or(false);
                 if takes_value && !is_file_reference && !is_choice {
                     assert!(
                         !(name.contains("passphrase") || name.contains("password")),
@@ -183,11 +184,7 @@ fn json_mode_puts_exactly_one_document_on_stdout_and_nothing_else() {
         let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| {
             panic!("`{}` did not put one JSON document on stdout ({e}):\n{text}", args.join(" "))
         });
-        assert!(
-            value["ok"].is_boolean(),
-            "`{}` produced an envelope without `ok`",
-            args.join(" ")
-        );
+        assert!(value["ok"].is_boolean(), "`{}` produced an envelope without `ok`", args.join(" "));
         if value["ok"] == serde_json::Value::Bool(false) {
             let error = &value["error"];
             assert!(error["code"].is_string(), "`code` is the stable field to branch on");

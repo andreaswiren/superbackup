@@ -181,6 +181,8 @@ impl Schema {
 
     /// Flattened list of every invocable command path, for tests and for
     /// shell-completion style consumers.
+    // Part of the harness API; used by some test targets and not others.
+    #[allow(dead_code)]
     pub fn command_paths(&self) -> Vec<String> {
         fn walk(c: &CommandDoc, out: &mut Vec<String>) {
             out.push(c.path.clone());

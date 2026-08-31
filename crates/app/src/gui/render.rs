@@ -166,10 +166,7 @@ pub fn gallery() -> Vec<Shot> {
             dark: true,
             setup: |app| {
                 app.screens.restore.select(fixtures::DEST_LOCAL);
-                app.screens.restore.snapshots_arrived(
-                    fixtures::DEST_LOCAL,
-                    sample_snapshots(),
-                );
+                app.screens.restore.snapshots_arrived(fixtures::DEST_LOCAL, sample_snapshots());
                 app.go(Route::Restore);
             },
         },
@@ -179,10 +176,7 @@ pub fn gallery() -> Vec<Shot> {
             dark: true,
             setup: |app| {
                 app.screens.restore.select(fixtures::DEST_LOCAL);
-                app.screens.restore.snapshots_arrived(
-                    fixtures::DEST_LOCAL,
-                    sample_snapshots(),
-                );
+                app.screens.restore.snapshots_arrived(fixtures::DEST_LOCAL, sample_snapshots());
                 app.screens.restore.selected_snapshot = Some("k9f2ab7c31de4f0a".into());
                 app.screens.restore.listing_arrived(
                     fixtures::DEST_LOCAL,
@@ -249,9 +243,9 @@ pub fn gallery() -> Vec<Shot> {
                     s.unlocked = false;
                 }
                 app.go(Route::Dashboard);
-                app.open_modal(super::modals::Modal::Unlock(
-                    super::modals::UnlockState::blocking(),
-                ));
+                app.open_modal(
+                    super::modals::Modal::Unlock(super::modals::UnlockState::blocking()),
+                );
             },
         },
         Shot {
@@ -270,15 +264,13 @@ pub fn gallery() -> Vec<Shot> {
             dark: true,
             setup: |app| {
                 app.go(Route::Destinations);
-                app.open_modal(super::modals::Modal::WriteDown(
-                    super::modals::WriteDownState {
-                        destination: fixtures::DEST_LOCAL,
-                        location: "D:\\superbackup\\andreas-pc\\repository".into(),
-                        passphrase: "kX7fQ2mNbR4tYw8ZaP1sDv6HgJ3eLc0UqT5xWn9BiM2r".into(),
-                        acknowledged: false,
-                        copied: false,
-                    },
-                ));
+                app.open_modal(super::modals::Modal::WriteDown(super::modals::WriteDownState {
+                    destination: fixtures::DEST_LOCAL,
+                    location: "D:\\superbackup\\andreas-pc\\repository".into(),
+                    passphrase: "kX7fQ2mNbR4tYw8ZaP1sDv6HgJ3eLc0UqT5xWn9BiM2r".into(),
+                    acknowledged: false,
+                    copied: false,
+                }));
             },
         },
         Shot {
@@ -409,9 +401,7 @@ pub fn write_gallery(dir: &Path) -> std::io::Result<()> {
     for shot in gallery() {
         let image = capture(&shot);
         let path = dir.join(format!("{}.png", shot.name));
-        image
-            .save(&path)
-            .map_err(|e| std::io::Error::other(format!("{}: {e}", path.display())))?;
+        image.save(&path).map_err(|e| std::io::Error::other(format!("{}: {e}", path.display())))?;
     }
     Ok(())
 }
@@ -420,11 +410,7 @@ pub fn write_gallery(dir: &Path) -> std::io::Result<()> {
 pub fn capture(shot: &Shot) -> image::RgbaImage {
     let ctx = Context::default();
     // `Visuals::dark_mode` is what the window reads as "the OS theme".
-    ctx.set_visuals(if shot.dark {
-        egui::Visuals::dark()
-    } else {
-        egui::Visuals::light()
-    });
+    ctx.set_visuals(if shot.dark { egui::Visuals::dark() } else { egui::Visuals::light() });
 
     let handler = Arc::new(superbackup_core::ipc::testing::MockHandler::new());
     let mut app = App::new_with_daemon(&ctx, Arc::new(MockDaemon::new(handler)));
@@ -493,16 +479,11 @@ impl Textures {
         for (id, image) in &delta.set {
             let (size, pixels): ([usize; 2], Vec<Color32>) = match &image.image {
                 egui::ImageData::Color(colour) => (colour.size, colour.pixels.clone()),
-                egui::ImageData::Font(font) => {
-                    (font.size, font.srgba_pixels(None).collect())
-                }
+                egui::ImageData::Font(font) => (font.size, font.srgba_pixels(None).collect()),
             };
             match image.pos {
                 None => {
-                    self.images.insert(
-                        *id,
-                        Texture { width: size[0], height: size[1], pixels },
-                    );
+                    self.images.insert(*id, Texture { width: size[0], height: size[1], pixels });
                 }
                 Some([x, y]) => {
                     if let Some(existing) = self.images.get_mut(id) {
@@ -605,10 +586,8 @@ impl Canvas {
 
     fn mesh(&mut self, mesh: &egui::Mesh, clip: Rect, pixels_per_point: f32) {
         for triangle in mesh.indices.chunks_exact(3) {
-            let vertices: Vec<&egui::epaint::Vertex> = triangle
-                .iter()
-                .filter_map(|i| mesh.vertices.get(*i as usize))
-                .collect();
+            let vertices: Vec<&egui::epaint::Vertex> =
+                triangle.iter().filter_map(|i| mesh.vertices.get(*i as usize)).collect();
             if vertices.len() != 3 {
                 continue;
             }
@@ -704,8 +683,15 @@ mod tests {
     fn the_gallery_covers_every_section() {
         let names: Vec<&str> = gallery().iter().map(|s| s.name).collect();
         for needle in [
-            "dashboard", "jobs", "destinations", "providers", "activity", "restore",
-            "settings", "about", "onboarding",
+            "dashboard",
+            "jobs",
+            "destinations",
+            "providers",
+            "activity",
+            "restore",
+            "settings",
+            "about",
+            "onboarding",
         ] {
             assert!(
                 names.iter().any(|n| n.contains(needle)),
@@ -726,8 +712,7 @@ mod tests {
         assert_eq!(image.width(), 1800);
         assert_eq!(image.height(), 1200);
         // Something was actually drawn: the canvas is not uniformly empty.
-        let distinct: std::collections::BTreeSet<[u8; 4]> =
-            image.pixels().map(|p| p.0).collect();
+        let distinct: std::collections::BTreeSet<[u8; 4]> = image.pixels().map(|p| p.0).collect();
         assert!(distinct.len() > 8, "the render produced {} colours", distinct.len());
     }
 }

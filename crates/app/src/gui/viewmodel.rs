@@ -13,7 +13,7 @@ use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use superbackup_core::model::{Destination, Job, Schedule};
-use superbackup_core::state::{Event, JobRun, JobSummary, RunStatus, Severity};
+use superbackup_core::state::{DestinationRun, Event, JobRun, JobSummary, RunStatus, Severity};
 
 use super::copy;
 use super::data::Data;
@@ -113,12 +113,8 @@ pub fn next_runs(schedule: &Schedule, from: DateTime<Utc>, count: usize) -> Vec<
                     let mut sorted = times.to_vec();
                     sorted.sort();
                     for t in &sorted {
-                        if let Some(naive) =
-                            date.and_hms_opt(t.hour as u32, t.minute as u32, 0)
-                        {
-                            if let Some(local) =
-                                Local.from_local_datetime(&naive).earliest()
-                            {
+                        if let Some(naive) = date.and_hms_opt(t.hour as u32, t.minute as u32, 0) {
+                            if let Some(local) = Local.from_local_datetime(&naive).earliest() {
                                 let utc = local.with_timezone(&Utc);
                                 if utc > from && out.len() < count {
                                     out.push(utc);
@@ -277,9 +273,7 @@ pub fn job_view(data: &Data, job: &Job, now: DateTime<Utc>) -> JobView {
                     .history
                     .iter()
                     .find(|r| r.job_id == job.id)
-                    .map(|r| {
-                        r.destinations.iter().map(|d| d.progress.errors_ignored).sum::<u64>()
-                    })
+                    .map(|r| r.destinations.iter().map(|d| d.progress.errors_ignored).sum::<u64>())
                     .unwrap_or(0);
                 return JobView {
                     state: CardState::Warnings { skipped },
@@ -375,22 +369,40 @@ fn status_rank(view: &JobView) -> u8 {
 
 /// Does this job match the search box? Name, description, tags and source
 /// paths, because "which job backs up ~/dev" is a real question.
+/// The completion fraction to *draw* for one destination, which is not always
+/// the fraction that was measured.
+///
+/// Kopia estimates the byte total before it starts and then processes fewer
+/// bytes than estimated once deduplication and exclusions bite, so a
+/// destination that genuinely finished routinely reports something like 0.96.
+/// Rendering that verbatim produced a green **Succeeded** badge beside a bar
+/// stopped short of the end, which invites exactly one question — *what
+/// happened to the other 4%?* — and a backup tool that leaves that question
+/// hanging spends the trust the rest of the interface earns.
+///
+/// So a destination that reached a terminal *success* state draws as complete.
+/// A destination that failed, was cancelled, or was skipped does **not**: there
+/// the short bar is the truth, and flattering it would be the far worse lie.
+pub fn displayed_fraction(destination: &DestinationRun) -> Option<f32> {
+    match destination.status {
+        RunStatus::Succeeded | RunStatus::SucceededWithWarnings => Some(1.0),
+        _ => destination.progress.fraction(),
+    }
+}
+
 pub fn matches_search(job: &Job, needle: &str) -> bool {
     let needle = needle.trim().to_lowercase();
     if needle.is_empty() {
         return true;
     }
-    if job.name.to_lowercase().contains(&needle)
-        || job.description.to_lowercase().contains(&needle)
+    if job.name.to_lowercase().contains(&needle) || job.description.to_lowercase().contains(&needle)
     {
         return true;
     }
     if job.tags.iter().any(|t| t.to_lowercase().contains(&needle)) {
         return true;
     }
-    job.sources
-        .iter()
-        .any(|s| s.path.to_string_lossy().to_lowercase().contains(&needle))
+    job.sources.iter().any(|s| s.path.to_string_lossy().to_lowercase().contains(&needle))
 }
 
 /// The visible, ordered job list.
@@ -414,10 +426,9 @@ pub fn visible_jobs<'a>(
             JobFilter::Failing => {
                 data.summary_for(&job.id).map(|s| s.last_status) == Some(Some(RunStatus::Failed))
             }
-            JobFilter::Stale => data
-                .summary_for(&job.id)
-                .map(|s| s.is_stale(stale_days, now))
-                .unwrap_or(false),
+            JobFilter::Stale => {
+                data.summary_for(&job.id).map(|s| s.is_stale(stale_days, now)).unwrap_or(false)
+            }
         })
         .map(|job| {
             let view = job_view(data, job, now);
@@ -585,10 +596,7 @@ impl DestinationStatus {
     }
 }
 
-pub fn destination_status(
-    destination: &Destination,
-    last_probe_failed: bool,
-) -> DestinationStatus {
+pub fn destination_status(destination: &Destination, last_probe_failed: bool) -> DestinationStatus {
     if !destination.enabled {
         return DestinationStatus::Disabled;
     }
@@ -611,11 +619,7 @@ pub enum Verification {
     Unreachable,
 }
 
-pub fn verification(
-    destination: &Destination,
-    now: DateTime<Utc>,
-    failed: bool,
-) -> Verification {
+pub fn verification(destination: &Destination, now: DateTime<Utc>, failed: bool) -> Verification {
     if failed {
         return Verification::Unreachable;
     }
@@ -647,11 +651,7 @@ pub fn order_destinations<'a>(
             superbackup_core::model::DestinationKind::S3 { .. } => 2,
             superbackup_core::model::DestinationKind::LocalMirror { .. } => 3,
         };
-        (
-            if ticked.contains(&d.id) { 0 } else { 1 },
-            kind_rank,
-            d.name.to_lowercase(),
-        )
+        (if ticked.contains(&d.id) { 0 } else { 1 }, kind_rank, d.name.to_lowercase())
     });
     out
 }
@@ -767,9 +767,7 @@ pub fn destination_summary(run: &JobRun) -> String {
     let ok = run
         .destinations
         .iter()
-        .filter(|d| {
-            matches!(d.status, RunStatus::Succeeded | RunStatus::SucceededWithWarnings)
-        })
+        .filter(|d| matches!(d.status, RunStatus::Succeeded | RunStatus::SucceededWithWarnings))
         .count();
     copy::activity_dest_summary(ok, total)
 }
@@ -828,34 +826,20 @@ mod tests {
     #[test]
     fn schedule_strings_match_the_specification_table() {
         assert_eq!(schedule_string(&Schedule::Manual), "Manual only");
-        assert_eq!(
-            schedule_string(&Schedule::Interval { minutes: 30 }),
-            "Every 30 minutes"
-        );
+        assert_eq!(schedule_string(&Schedule::Interval { minutes: 30 }), "Every 30 minutes");
         assert_eq!(schedule_string(&Schedule::Interval { minutes: 60 }), "Every hour");
-        assert_eq!(
-            schedule_string(&Schedule::Interval { minutes: 240 }),
-            "Every 4 hours"
-        );
-        assert_eq!(
-            schedule_string(&Schedule::Daily { times: vec![t(2, 0)] }),
-            "Daily at 02:00"
-        );
+        assert_eq!(schedule_string(&Schedule::Interval { minutes: 240 }), "Every 4 hours");
+        assert_eq!(schedule_string(&Schedule::Daily { times: vec![t(2, 0)] }), "Daily at 02:00");
         assert_eq!(
             schedule_string(&Schedule::Daily { times: vec![t(9, 0), t(18, 0)] }),
             "Daily at 09:00 and 18:00"
         );
         assert_eq!(
-            schedule_string(&Schedule::Daily {
-                times: vec![t(1, 0), t(7, 0), t(13, 0), t(19, 0)]
-            }),
+            schedule_string(&Schedule::Daily { times: vec![t(1, 0), t(7, 0), t(13, 0), t(19, 0)] }),
             "Daily, 4 times a day"
         );
         assert_eq!(
-            schedule_string(&Schedule::Weekly {
-                weekdays: vec![0, 2, 4],
-                times: vec![t(2, 0)]
-            }),
+            schedule_string(&Schedule::Weekly { weekdays: vec![0, 2, 4], times: vec![t(2, 0)] }),
             "Mon, Wed, Fri at 02:00"
         );
         assert_eq!(
@@ -1175,17 +1159,60 @@ mod tests {
             Event::info("b", "info line"),
             Event::error("c", "error line"),
         ];
-        assert_eq!(
-            visible_events(&events, "", Severity::Info, TimeRange::All, now).len(),
-            2
-        );
-        assert_eq!(
-            visible_events(&events, "", Severity::Error, TimeRange::All, now).len(),
-            1
-        );
-        assert_eq!(
-            visible_events(&events, "", Severity::Debug, TimeRange::All, now).len(),
-            3
-        );
+        assert_eq!(visible_events(&events, "", Severity::Info, TimeRange::All, now).len(), 2);
+        assert_eq!(visible_events(&events, "", Severity::Error, TimeRange::All, now).len(), 1);
+        assert_eq!(visible_events(&events, "", Severity::Debug, TimeRange::All, now).len(), 3);
+    }
+
+    /// A finished destination must never show an incomplete bar.
+    ///
+    /// Found by looking at the rendered dashboard: `StorJ offsite` carried a
+    /// green Succeeded badge next to a bar filled to 96%.
+    #[test]
+    fn a_succeeded_destination_draws_as_complete() {
+        use superbackup_core::state::Progress;
+
+        let short = Progress {
+            // What kopia actually reports when its up-front estimate exceeded
+            // the bytes it ended up needing to process.
+            bytes_processed: 960,
+            bytes_total: Some(1000),
+            ..Default::default()
+        };
+
+        let dest = |status: RunStatus| DestinationRun {
+            destination_id: Uuid::new_v4(),
+            destination_name: "StorJ offsite".into(),
+            status,
+            started_at: None,
+            finished_at: None,
+            progress: short.clone(),
+            snapshot_id: None,
+            error: None,
+            warnings: vec![],
+        };
+
+        for status in [RunStatus::Succeeded, RunStatus::SucceededWithWarnings] {
+            assert_eq!(
+                displayed_fraction(&dest(status)),
+                Some(1.0),
+                "{status:?} must draw as complete, not as 96%"
+            );
+        }
+
+        // Failure keeps the honest, unflattering number.
+        for status in [RunStatus::Failed, RunStatus::Cancelled, RunStatus::Skipped] {
+            let d = dest(status);
+            assert_eq!(
+                displayed_fraction(&d),
+                d.progress.fraction(),
+                "{status:?} must keep the real fraction — a short bar is the truth there"
+            );
+            assert!(displayed_fraction(&d).unwrap() < 1.0);
+        }
+
+        // A run still going shows where it actually is.
+        let running = dest(RunStatus::Running);
+        assert_eq!(displayed_fraction(&running), running.progress.fraction());
     }
 }

@@ -80,7 +80,10 @@ pub enum Incoming {
     Failed(Intent, ErrorPayload),
     Stream(Box<StreamItem>),
     /// The link came up or went down. Drives the `DaemonUnreachable` banner.
-    Link { up: bool, detail: Option<String> },
+    Link {
+        up: bool,
+        detail: Option<String>,
+    },
 }
 
 struct Call {
@@ -167,18 +170,15 @@ fn worker(
     results: Sender<Incoming>,
     ctx: egui::Context,
 ) {
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(e) => {
-            let _ = results.send(Incoming::Link { up: false, detail: Some(e.to_string()) });
-            ctx.request_repaint();
-            return;
-        }
-    };
+    let runtime =
+        match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
+            Ok(rt) => rt,
+            Err(e) => {
+                let _ = results.send(Incoming::Link { up: false, detail: Some(e.to_string()) });
+                ctx.request_repaint();
+                return;
+            }
+        };
 
     // The subscription: one task forwarding into an unbounded channel, drained
     // below alongside the request results.
@@ -226,12 +226,11 @@ fn worker(
                 }
                 Err(e) => {
                     let payload = ErrorPayload::from_error(&e);
-                    if matches!(
-                        payload.code,
-                        ErrorCode::DaemonUnreachable | ErrorCode::Ipc
-                    ) {
-                        let _ = results
-                            .send(Incoming::Link { up: false, detail: Some(payload.message.clone()) });
+                    if matches!(payload.code, ErrorCode::DaemonUnreachable | ErrorCode::Ipc) {
+                        let _ = results.send(Incoming::Link {
+                            up: false,
+                            detail: Some(payload.message.clone()),
+                        });
                     }
                     let _ = results.send(Incoming::Failed(intent, payload));
                 }
@@ -261,11 +260,7 @@ pub struct IpcDaemon {
 
 impl IpcDaemon {
     pub fn new(endpoint: impl Into<String>, timeout: Duration) -> IpcDaemon {
-        IpcDaemon {
-            endpoint: endpoint.into(),
-            timeout,
-            client: tokio::sync::Mutex::new(None),
-        }
+        IpcDaemon { endpoint: endpoint.into(), timeout, client: tokio::sync::Mutex::new(None) }
     }
 
     async fn connected(&self) -> superbackup_core::Result<superbackup_core::ipc::Client> {
@@ -373,11 +368,11 @@ impl Daemon for MockDaemon {
             match request {
                 // The transport answers these two itself, exactly as the
                 // server does; reaching the dispatcher with them is a bug.
-                Request::Schema {} => Ok(Reply::Schema(
-                    superbackup_core::ipc::protocol::SchemaReply {
+                Request::Schema {} => {
+                    Ok(Reply::Schema(superbackup_core::ipc::protocol::SchemaReply {
                         schema: Box::new(superbackup_core::ipc::protocol::schema()),
-                    },
-                )),
+                    }))
+                }
                 Request::Subscribe { .. } => Err(Error::Ipc(
                     "subscribe is answered by the transport, not by a request".into(),
                 )),
@@ -472,14 +467,9 @@ mod tests {
         assert!(outcome.is_err(), "the handler was armed to fail");
 
         handler.fail_with(Some(ErrorCode::Locked));
-        let outcome = runtime.block_on(daemon.call(Request::JobRun {
-            job: "anything".into(),
-            dry_run: false,
-        }));
-        assert_eq!(
-            outcome.expect_err("a locked vault refuses").code(),
-            ErrorCode::Locked
-        );
+        let outcome = runtime
+            .block_on(daemon.call(Request::JobRun { job: "anything".into(), dry_run: false }));
+        assert_eq!(outcome.expect_err("a locked vault refuses").code(), ErrorCode::Locked);
     }
 
     #[test]

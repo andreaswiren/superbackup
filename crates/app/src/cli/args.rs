@@ -725,7 +725,6 @@ pub struct ProviderAddArgs {
     /// puts it in your shell history and in the process list.
     #[arg(long, value_name = "KEY")]
     pub access_key: Option<String>,
-
     // Deliberately no `--path-style`. Kopia's S3 backend selects path-style
     // addressing automatically and exposes no flag to override it, so offering
     // the switch would mean shipping a control that does nothing. The property

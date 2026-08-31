@@ -168,12 +168,7 @@ fn ambiguous<T: Entity>(needle: &str, matches: &[&T], kind: Kind) -> CliError {
     names.sort();
     CliError::new(
         ErrorCode::Validation,
-        format!(
-            "`{needle}` matches {} {}s: {}",
-            names.len(),
-            kind.label(),
-            names.join(", ")
-        ),
+        format!("`{needle}` matches {} {}s: {}", names.len(), kind.label(), names.join(", ")),
     )
     .with_hint("Name it in full, or use its id. superbackup will not guess which one you meant.")
 }
@@ -184,7 +179,8 @@ fn not_found<T: Entity>(needle: &str, items: &[T], kind: Kind) -> CliError {
         format!("there is no {} matching `{needle}`", kind.label()),
     );
     if items.is_empty() {
-        return error.with_hint(format!("Nothing is configured yet. Run `{}`.", kind.list_command()));
+        return error
+            .with_hint(format!("Nothing is configured yet. Run `{}`.", kind.list_command()));
     }
     // Listing every name on a machine with two hundred jobs is not help.
     let mut names: Vec<String> = items.iter().map(|i| i.entity_name().to_string()).collect();

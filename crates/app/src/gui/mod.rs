@@ -41,18 +41,40 @@ pub mod widgets;
 const DEFAULT_SIZE: [f32; 2] = [1100.0, 720.0];
 const MIN_SIZE: [f32; 2] = [900.0, 600.0];
 
+/// The application mark, embedded so the window carries it with no runtime
+/// file lookup.
+///
+/// The Windows executable gets its icon from the resource compiled in by
+/// `build.rs`, but that is the icon Explorer and the taskbar *button* use — the
+/// window itself, Alt-Tab, and every Linux and macOS surface take theirs from
+/// here. Without it the window shows eframe's default and the application looks
+/// unfinished in exactly the place a user looks most.
+///
+/// A decode failure is not worth failing to start over: the window simply keeps
+/// the default icon.
+fn window_icon() -> egui::IconData {
+    const PNG: &[u8] = include_bytes!("../../../../assets/icons/png/superbackup-256.png");
+    match image::load_from_memory(PNG) {
+        Ok(img) => {
+            let rgba = img.to_rgba8();
+            let (width, height) = rgba.dimensions();
+            egui::IconData { rgba: rgba.into_raw(), width, height }
+        }
+        Err(_) => egui::IconData::default(),
+    }
+}
+
 /// Open the window, or focus an already-open one.
 pub fn open_or_focus(paths: Paths, global: &crate::cli::GlobalArgs) -> ExitCode {
     let endpoint = paths.ipc_endpoint();
     let timeout = Duration::from_secs(global.timeout.max(5));
 
     let viewport = egui::ViewportBuilder::default()
-        .with_title(copy::window_title(
-            superbackup_core::state::Health::Idle.title(),
-        ))
+        .with_title(copy::window_title(superbackup_core::state::Health::Idle.title()))
         .with_inner_size(DEFAULT_SIZE)
         .with_min_inner_size(MIN_SIZE)
-        .with_app_id("superbackup");
+        .with_app_id("superbackup")
+        .with_icon(window_icon());
 
     // The window follows the OS theme until the user chooses otherwise; eframe
     // reports the system theme through `Visuals::dark_mode`, which `App` reads.
@@ -87,9 +109,8 @@ impl Window {
 impl eframe::App for Window {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Folders dropped onto the window are an additive affordance (L15).
-        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
-            i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect()
-        });
+        let dropped: Vec<std::path::PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         if !dropped.is_empty() {
             self.app.accept_dropped_folders(dropped);
         }

@@ -171,7 +171,8 @@ fn headline(ctx: &mut Ctx, snapshot: &StatusSnapshot, now: DateTime<Utc>) {
     if !snapshot.unlocked {
         because.push("the vault is locked, so scheduled backups cannot run".to_string());
     }
-    let failed = snapshot.jobs.values().filter(|s| s.last_status == Some(RunStatus::Failed)).count();
+    let failed =
+        snapshot.jobs.values().filter(|s| s.last_status == Some(RunStatus::Failed)).count();
     if failed > 0 {
         because.push(format!("{} failed", format::plural(failed, "job", "jobs")));
     }
@@ -484,9 +485,7 @@ pub fn run(ctx: &mut Ctx, args: RunArgs) -> CliResult<Outcome> {
             "\nNot waiting for {} to finish. Follow with `superbackup status`, or add --wait.",
             if started.len() == 1 { "it" } else { "them" }
         ));
-        return Outcome::data(
-            started.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(),
-        );
+        return Outcome::data(started.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>());
     }
 
     let mut results = Vec::new();
@@ -537,9 +536,7 @@ impl Followed {
 
     pub fn as_json(&self) -> serde_json::Value {
         match self {
-            Followed::Finished(run) => {
-                serde_json::to_value(run).unwrap_or(serde_json::Value::Null)
-            }
+            Followed::Finished(run) => serde_json::to_value(run).unwrap_or(serde_json::Value::Null),
             Followed::Unknown { run_id } => {
                 serde_json::json!({ "run_id": run_id, "status": "unknown" })
             }
@@ -655,9 +652,8 @@ pub fn follow_run(
         ctx.ui.line(format!("{job_name}: {}", status.title()));
         return Ok(Followed::Unknown { run_id });
     }
-    ctx.ui.warn(format!(
-        "{job_name} is no longer running, but no record of run {run_id} was found"
-    ));
+    ctx.ui
+        .warn(format!("{job_name} is no longer running, but no record of run {run_id} was found"));
     Ok(Followed::Unknown { run_id })
 }
 
@@ -785,11 +781,8 @@ pub fn pause(ctx: &mut Ctx, args: PauseArgs) -> CliResult<Outcome> {
     };
 
     let daemon = Daemon::connect(ctx, Start::Never)?;
-    let paused = reply!(
-        daemon,
-        Request::ControlPause { seconds, reason: args.reason.clone() },
-        Pause
-    )?;
+    let paused =
+        reply!(daemon, Request::ControlPause { seconds, reason: args.reason.clone() }, Pause)?;
 
     match paused.pause.until {
         Some(until) => ctx.ui.line(format!(
@@ -899,9 +892,7 @@ fn matches(item: &StreamItem, job: Option<&Job>, kinds: &[String]) -> bool {
             }
             // `--kind job` matches `job.started`, so a caller can follow a
             // family without listing every member.
-            kinds
-                .iter()
-                .any(|k| event.kind == *k || event.kind.starts_with(&format!("{k}.")))
+            kinds.iter().any(|k| event.kind == *k || event.kind.starts_with(&format!("{k}.")))
         }
         StreamItem::Progress { job_id, .. } => {
             // A progress item has no kind, so an explicit --kind filter is a

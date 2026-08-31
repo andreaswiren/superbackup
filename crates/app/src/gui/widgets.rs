@@ -14,8 +14,8 @@
 use std::sync::Arc;
 
 use egui::{
-    Align, Color32, CornerRadius, FontId, Galley, Id, Layout, Pos2, Rect, Response, Sense,
-    Stroke, StrokeKind, TextWrapMode, Ui, Vec2, WidgetInfo, WidgetType,
+    Align, Color32, CornerRadius, FontId, Galley, Id, Layout, Pos2, Rect, Response, Sense, Stroke,
+    StrokeKind, TextWrapMode, Ui, Vec2, WidgetInfo, WidgetType,
 };
 
 use super::icons::Icon;
@@ -106,13 +106,7 @@ pub fn elided(
 
 /// Text that elides if it must, but allocates only the width it uses — so an
 /// icon after a short name sits next to it rather than at the column edge.
-pub fn text_capped(
-    ui: &mut Ui,
-    value: &str,
-    ty: Type,
-    color: Color32,
-    max_width: f32,
-) -> Response {
+pub fn text_capped(ui: &mut Ui, value: &str, ty: Type, color: Color32, max_width: f32) -> Response {
     let shown = elide_to_width(ui, value, ty, max_width.min(ui.available_width()), false);
     let g = galley(ui, shown.clone(), ty, color);
     let (rect, response) = ui.allocate_exact_size(g.size(), Sense::hover());
@@ -131,7 +125,9 @@ pub fn text_capped(
 /// average glyph width.
 pub fn elide_to_width(ui: &Ui, value: &str, ty: Type, width: f32, from_left: bool) -> String {
     let font = ty.font();
-    let measure = |s: &str| ui.fonts(|f| f.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x);
+    let measure = |s: &str| {
+        ui.fonts(|f| f.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x)
+    };
     if measure(value) <= width {
         return value.to_string();
     }
@@ -322,8 +318,10 @@ impl<'a> Button<'a> {
             w = w.max(min);
         }
 
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(w, h), if self.enabled { Sense::click() } else { Sense::hover() });
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(w, h),
+            if self.enabled { Sense::click() } else { Sense::hover() },
+        );
 
         if ui.is_rect_visible(rect) {
             let hovered = response.hovered() && self.enabled;
@@ -345,8 +343,7 @@ impl<'a> Button<'a> {
                 x += icon_size + space::M;
             }
             let g = galley(ui, self.label, label_style, fg);
-            ui.painter()
-                .galley(Pos2::new(x, rect.center().y - g.size().y / 2.0), g, fg);
+            ui.painter().galley(Pos2::new(x, rect.center().y - g.size().y / 2.0), g, fg);
             if self.busy {
                 let sr = Rect::from_center_size(
                     Pos2::new(rect.right() - pad - 7.0, rect.center().y),
@@ -380,11 +377,9 @@ impl<'a> Button<'a> {
     fn colours(&self, t: &Tokens, hovered: bool, pressed: bool) -> (Color32, Stroke, Color32) {
         if !self.enabled {
             return match self.variant {
-                Variant::Primary | Variant::Danger => (
-                    t.bg_raised,
-                    Stroke::new(1.0_f32, t.border_subtle),
-                    t.text_disabled,
-                ),
+                Variant::Primary | Variant::Danger => {
+                    (t.bg_raised, Stroke::new(1.0_f32, t.border_subtle), t.text_disabled)
+                }
                 Variant::Secondary => (
                     theme::alpha(t.bg_raised, 0.5),
                     Stroke::new(1.0_f32, t.border_subtle),
@@ -424,11 +419,8 @@ impl<'a> Button<'a> {
                 } else {
                     t.bg_raised
                 };
-                let border = if hovered {
-                    theme::alpha(t.border_focus, 0.6)
-                } else {
-                    t.border_control
-                };
+                let border =
+                    if hovered { theme::alpha(t.border_focus, 0.6) } else { t.border_control };
                 (fill, Stroke::new(1.0_f32, border), t.text_primary)
             }
             Variant::Ghost => {
@@ -443,16 +435,8 @@ impl<'a> Button<'a> {
                 (fill, Stroke::NONE, fg)
             }
             Variant::DangerGhost => {
-                let fill = if hovered || pressed {
-                    t.danger.tint_bg
-                } else {
-                    Color32::TRANSPARENT
-                };
-                let fg = if hovered || pressed {
-                    t.danger.tint_text
-                } else {
-                    t.danger.mark
-                };
+                let fill = if hovered || pressed { t.danger.tint_bg } else { Color32::TRANSPARENT };
+                let fg = if hovered || pressed { t.danger.tint_text } else { t.danger.mark };
                 (fill, Stroke::NONE, fg)
             }
         }
@@ -471,8 +455,8 @@ pub fn icon_button_compact(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) 
 
 fn icon_button_sized(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, s: f32) -> Response {
     let t = theme::tokens(ui.ctx());
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::splat(s), if enabled { Sense::click() } else { Sense::hover() });
+    let (rect, response) = ui
+        .allocate_exact_size(Vec2::splat(s), if enabled { Sense::click() } else { Sense::hover() });
     if ui.is_rect_visible(rect) {
         let hovered = response.hovered() && enabled;
         let fill = if hovered { t.bg_raised } else { Color32::TRANSPARENT };
@@ -519,10 +503,7 @@ pub fn badge_spinning(
         ui.painter().rect_filled(rect, radius::BADGE, status.tint_bg);
         let mut x = rect.left() + 8.0;
         if let Some(icon) = icon {
-            let ir = Rect::from_min_size(
-                Pos2::new(x, rect.center().y - 7.0),
-                Vec2::splat(14.0),
-            );
+            let ir = Rect::from_min_size(Pos2::new(x, rect.center().y - 7.0), Vec2::splat(14.0));
             if spin {
                 let turns = ui.input(|i| i.time as f32) * 0.75;
                 icon.paint_rotated(ui.painter(), ir, status.tint_text, turns);
@@ -531,11 +512,7 @@ pub fn badge_spinning(
             }
             x += 14.0 + space::S;
         }
-        ui.painter().galley(
-            Pos2::new(x, rect.center().y - g.size().y / 2.0),
-            g,
-            status.tint_text,
-        );
+        ui.painter().galley(Pos2::new(x, rect.center().y - g.size().y / 2.0), g, status.tint_text);
     }
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
     response
@@ -582,7 +559,10 @@ pub fn destination_chip(
             Stroke::new(1.0_f32, t.border_subtle),
             StrokeKind::Inside,
         );
-        let ir = Rect::from_min_size(Pos2::new(rect.left() + 8.0, rect.center().y - 7.0), Vec2::splat(14.0));
+        let ir = Rect::from_min_size(
+            Pos2::new(rect.left() + 8.0, rect.center().y - 7.0),
+            Vec2::splat(14.0),
+        );
         icon.paint(ui.painter(), ir, t.text_muted);
         ui.painter().galley(
             Pos2::new(rect.left() + 8.0 + 14.0 + space::S, rect.center().y - g.size().y / 2.0),
@@ -590,7 +570,11 @@ pub fn destination_chip(
             t.text_secondary,
         );
         if let Some(s) = problem {
-            ui.painter().circle_filled(Pos2::new(rect.right() - 3.0, rect.top() + 3.0), 3.0, s.mark);
+            ui.painter().circle_filled(
+                Pos2::new(rect.right() - 3.0, rect.top() + 3.0),
+                3.0,
+                s.mark,
+            );
         }
     }
     let a11y = match problem {
@@ -644,6 +628,22 @@ pub fn card_tinted<R>(
         .stroke(Stroke::new(1.0_f32, border.unwrap_or(t.border_subtle)))
         .corner_radius(radius::CARD)
         .inner_margin(egui::Margin::same(16))
+        .show(ui, add)
+}
+
+/// A list row: the card treatment with the tighter padding a 56px row needs.
+/// A preset list of twelve items must not need three screens.
+pub fn row_card<R>(
+    ui: &mut Ui,
+    fill: Option<Color32>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let t = theme::tokens(ui.ctx());
+    egui::Frame::new()
+        .fill(fill.unwrap_or(t.bg_surface))
+        .stroke(Stroke::new(1.0_f32, t.border_subtle))
+        .corner_radius(radius::CONTROL)
+        .inner_margin(egui::Margin::symmetric(12, 9))
         .show(ui, add)
 }
 
@@ -767,11 +767,7 @@ pub fn banner<R>(
         });
     // An alert must be announced when it appears (§9.3.6).
     response.response.widget_info(|| {
-        WidgetInfo::labeled(
-            WidgetType::Label,
-            true,
-            format!("{title}. {}", body.unwrap_or("")),
-        )
+        WidgetInfo::labeled(WidgetType::Label, true, format!("{title}. {}", body.unwrap_or("")))
     });
     out
 }
@@ -814,8 +810,9 @@ pub fn progress_bar(
                 let phase = (ui.input(|i| i.time) % 1.6) as f32 / 1.6;
                 let band = rect.width() * 0.3;
                 let x = rect.left() + phase * (rect.width() + band) - band;
-                let band_rect = Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(band, height))
-                    .intersect(rect);
+                let band_rect =
+                    Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(band, height))
+                        .intersect(rect);
                 if band_rect.width() > 0.0 {
                     ui.painter().rect_filled(band_rect, cr, fill);
                 }
@@ -885,7 +882,10 @@ pub fn checkbox(
                     let fg = if enabled { t.text_primary } else { t.text_disabled };
                     let g = galley(ui, label, Type::Body, fg);
                     ui.painter().galley(
-                        Pos2::new(rect.left() + 16.0 + space::M, rect.center().y - g.size().y / 2.0),
+                        Pos2::new(
+                            rect.left() + 16.0 + space::M,
+                            rect.center().y - g.size().y / 2.0,
+                        ),
                         g,
                         fg,
                     );
@@ -945,16 +945,17 @@ fn checkbox_row(ui: &mut Ui, checked: &mut bool, label: &str, enabled: bool) -> 
         }
     }
     let is_checked = *checked;
-    response
-        .widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, is_checked, label));
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, is_checked, label));
     response
 }
 
 /// A tri-state box: `Some(true)`, `Some(false)`, or `None` for "some of the
 /// things below". Used by the restore browser's select-all.
 pub fn tri_checkbox(ui: &mut Ui, state: Option<bool>, label: &str, enabled: bool) -> Response {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::splat(16.0), if enabled { Sense::click() } else { Sense::hover() });
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::splat(16.0),
+        if enabled { Sense::click() } else { Sense::hover() },
+    );
     if ui.is_rect_visible(rect) {
         paint_check_box(ui, rect, state.unwrap_or(false), enabled, state.is_none());
         if response.has_focus() {
@@ -977,7 +978,13 @@ fn paint_check_box(ui: &Ui, rect: Rect, checked: bool, enabled: bool, partial: b
     let cr = CornerRadius::same(4);
     if checked || partial {
         let fill = if enabled { t.accent_fill } else { t.bg_raised };
-        ui.painter().rect(rect, cr, fill, Stroke::new(1.0_f32, if enabled { t.accent_fill_border } else { t.border_subtle }), StrokeKind::Inside);
+        ui.painter().rect(
+            rect,
+            cr,
+            fill,
+            Stroke::new(1.0_f32, if enabled { t.accent_fill_border } else { t.border_subtle }),
+            StrokeKind::Inside,
+        );
         let ink = if enabled { Color32::WHITE } else { t.text_disabled };
         if partial {
             // A filled square, not a tick: "everything inside" (R-3).
@@ -1018,7 +1025,10 @@ pub fn radio(
                                 c,
                                 8.0,
                                 if enabled { t.bg_input } else { t.bg_raised },
-                                Stroke::new(1.0_f32, if enabled { t.accent } else { t.border_subtle }),
+                                Stroke::new(
+                                    1.0_f32,
+                                    if enabled { t.accent } else { t.border_subtle },
+                                ),
                             );
                             ui.painter().circle_filled(
                                 c,
@@ -1030,7 +1040,10 @@ pub fn radio(
                                 c,
                                 8.0,
                                 if enabled { t.bg_input } else { t.bg_raised },
-                                Stroke::new(1.0_f32, if enabled { t.border_control } else { t.border_subtle }),
+                                Stroke::new(
+                                    1.0_f32,
+                                    if enabled { t.border_control } else { t.border_subtle },
+                                ),
                             );
                         }
                         if response.has_focus() {
@@ -1043,7 +1056,10 @@ pub fn radio(
                         let fg = if enabled { t.text_primary } else { t.text_disabled };
                         let g = galley(ui, label, Type::Body, fg);
                         ui.painter().galley(
-                            Pos2::new(rect.left() + 16.0 + space::M, rect.center().y - g.size().y / 2.0),
+                            Pos2::new(
+                                rect.left() + 16.0 + space::M,
+                                rect.center().y - g.size().y / 2.0,
+                            ),
                             g,
                             fg,
                         );
@@ -1115,12 +1131,16 @@ pub fn toggle(
                             Color32::WHITE,
                         );
                     } else {
-                        let fill = if enabled { t.bg_raised } else { theme::alpha(t.bg_raised, 0.5) };
+                        let fill =
+                            if enabled { t.bg_raised } else { theme::alpha(t.bg_raised, 0.5) };
                         ui.painter().rect(
                             track,
                             cr,
                             fill,
-                            Stroke::new(1.0_f32, if enabled { t.border_control } else { t.border_subtle }),
+                            Stroke::new(
+                                1.0_f32,
+                                if enabled { t.border_control } else { t.border_subtle },
+                            ),
                             StrokeKind::Inside,
                         );
                         let knob_x = if *on { track.right() - 10.0 } else { track.left() + 10.0 };
@@ -1136,14 +1156,18 @@ pub fn toggle(
                     let fg = if enabled { t.text_primary } else { t.text_disabled };
                     let g = galley(ui, label, Type::Body, fg);
                     ui.painter().galley(
-                        Pos2::new(rect.left() + 36.0 + space::M, rect.center().y - g.size().y / 2.0),
+                        Pos2::new(
+                            rect.left() + 36.0 + space::M,
+                            rect.center().y - g.size().y / 2.0,
+                        ),
                         g,
                         fg,
                     );
                 }
                 let is_on = *on;
-                response
-                    .widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, is_on, label));
+                response.widget_info(|| {
+                    WidgetInfo::selected(WidgetType::Checkbox, enabled, is_on, label)
+                });
                 response
             })
             .inner;
@@ -1292,11 +1316,17 @@ pub fn segmented_marked(
             }
             let fg = if is_selected { t.text_primary } else { t.text_secondary };
             let g = galley(ui, *label, Type::SmallStrong, fg);
-            ui.painter()
-                .galley(Pos2::new(seg.left() + pad, seg.center().y - g.size().y / 2.0), g, fg);
+            ui.painter().galley(
+                Pos2::new(seg.left() + pad, seg.center().y - g.size().y / 2.0),
+                g,
+                fg,
+            );
             if marked.contains(&i) {
-                ui.painter()
-                    .circle_filled(Pos2::new(seg.right() - pad + 2.0, seg.center().y), 3.0, t.accent);
+                ui.painter().circle_filled(
+                    Pos2::new(seg.right() - pad + 2.0, seg.center().y),
+                    3.0,
+                    t.accent,
+                );
             }
             let announce = if marked.contains(&i) {
                 super::copy::a11y_dirty_tab(label)
@@ -1452,7 +1482,8 @@ impl<'a> Field<'a> {
                 edit = edit.password(true);
             }
             if let Some(p) = self.placeholder {
-                edit = edit.hint_text(egui::RichText::new(p).color(t.text_muted).font(font.clone()));
+                edit =
+                    edit.hint_text(egui::RichText::new(p).color(t.text_muted).font(font.clone()));
             }
             if let Some(n) = self.char_limit {
                 edit = edit.char_limit(n);
@@ -1471,9 +1502,8 @@ impl<'a> Field<'a> {
                         theme::alpha(t.bg_raised, 0.5)
                     });
                 if let Some(p) = self.placeholder {
-                    multi = multi.hint_text(
-                        egui::RichText::new(p).color(t.text_muted).font(font.clone()),
-                    );
+                    multi = multi
+                        .hint_text(egui::RichText::new(p).color(t.text_muted).font(font.clone()));
                 }
                 ui.add_enabled(self.enabled, multi)
             } else {
@@ -1495,13 +1525,15 @@ impl<'a> Field<'a> {
             } else {
                 Stroke::new(1.0_f32, t.border_control)
             };
-            ui.painter()
-                .rect_stroke(r.rect, radius::CONTROL, stroke, StrokeKind::Inside);
+            ui.painter().rect_stroke(r.rect, radius::CONTROL, stroke, StrokeKind::Inside);
 
             if let Some(u) = self.unit {
                 let g = galley(ui, u, Type::Small, t.text_muted);
                 ui.painter().galley(
-                    Pos2::new(r.rect.right() - 10.0 - g.size().x, r.rect.center().y - g.size().y / 2.0),
+                    Pos2::new(
+                        r.rect.right() - 10.0 - g.size().x,
+                        r.rect.center().y - g.size().y / 2.0,
+                    ),
                     g,
                     t.text_muted,
                 );
@@ -1654,18 +1686,17 @@ pub fn combo_labelled(
         None => value,
     };
     ui.add_enabled_ui(enabled, |ui| {
-        egui::ComboBox::from_id_salt(id)
-            .selected_text(current)
-            .width(width)
-            .height(320.0)
-            .show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt(id).selected_text(current).width(width).height(320.0).show_ui(
+            ui,
+            |ui| {
                 for (i, option) in options.iter().enumerate() {
                     if ui.selectable_label(*selected == i, option).clicked() {
                         *selected = i;
                         changed = true;
                     }
                 }
-            });
+            },
+        );
     });
     changed
 }
@@ -1676,11 +1707,7 @@ pub fn combo_labelled(
 /// right border would otherwise be clipped the moment a list grew past the
 /// fold. Reserving the width here keeps every screen's right edge stable
 /// whether or not it scrolls.
-pub fn scroll_area<R>(
-    ui: &mut Ui,
-    id: impl std::hash::Hash,
-    add: impl FnOnce(&mut Ui) -> R,
-) -> R {
+pub fn scroll_area<R>(ui: &mut Ui, id: impl std::hash::Hash, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::ScrollArea::vertical()
         .id_salt(id)
         .auto_shrink([false, false])
@@ -1724,16 +1751,12 @@ pub fn empty_state(
         ui.add_space(space::XL);
         text(ui, empty.title, Type::H2, t.text_primary);
         ui.add_space(space::M);
-        ui.allocate_ui_with_layout(
-            Vec2::new(420.0, 0.0),
-            Layout::top_down(Align::Center),
-            |ui| {
-                let body = body_override.unwrap_or(empty.body);
-                let g = galley_wrapped(ui, body, Type::Body, t.text_secondary, 420.0);
-                let (rect, _) = ui.allocate_exact_size(g.size(), Sense::hover());
-                ui.painter().galley(rect.min, g, t.text_secondary);
-            },
-        );
+        ui.allocate_ui_with_layout(Vec2::new(420.0, 0.0), Layout::top_down(Align::Center), |ui| {
+            let body = body_override.unwrap_or(empty.body);
+            let g = galley_wrapped(ui, body, Type::Body, t.text_secondary, 420.0);
+            let (rect, _) = ui.allocate_exact_size(g.size(), Sense::hover());
+            ui.painter().galley(rect.min, g, t.text_secondary);
+        });
         if empty.primary.is_some() || empty.secondary.is_some() {
             ui.add_space(space::XXL);
             ui.horizontal(|ui| {
@@ -1871,17 +1894,18 @@ pub fn code_block(ui: &mut Ui, content: &str, max_height: f32, severity: Option<
                     ui.painter().rect_filled(bar, CornerRadius::same(1), s.mark);
                     ui.add_space(space::M);
                 }
-                egui::ScrollArea::both()
-                    .max_height(max_height)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
+                egui::ScrollArea::both().max_height(max_height).auto_shrink([false, true]).show(
+                    ui,
+                    |ui| {
                         ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
                         for line in content.lines() {
                             text(ui, line, Type::MonoSmall, t.text_primary);
                         }
-                    });
+                    },
+                );
                 ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                    if icon_button_compact(ui, Icon::Copy, super::copy::action::COPY, true).clicked()
+                    if icon_button_compact(ui, Icon::Copy, super::copy::action::COPY, true)
+                        .clicked()
                     {
                         ui.ctx().copy_text(content.to_owned());
                         copied = true;
@@ -2144,7 +2168,8 @@ pub fn modal<R>(
                     if !blocking {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.add_space(space::L);
-                            if icon_button(ui, Icon::X, super::copy::action::CLOSE, true).clicked() {
+                            if icon_button(ui, Icon::X, super::copy::action::CLOSE, true).clicked()
+                            {
                                 close = true;
                             }
                         });
@@ -2189,7 +2214,8 @@ pub fn inline_unlock(ui: &mut Ui) -> bool {
                 ui.add_space(space::M);
                 text(ui, super::copy::locked::INLINE_PROMPT, Type::Small, t.text_primary);
                 ui.add_space(space::L);
-                clicked = Button::secondary(super::copy::action::UNLOCK).compact().show(ui).clicked();
+                clicked =
+                    Button::secondary(super::copy::action::UNLOCK).compact().show(ui).clicked();
             });
         });
     clicked
@@ -2219,10 +2245,7 @@ pub fn link(ui: &mut Ui, label: &str) -> Response {
         ui.painter().galley(rect.min, g, t.text_link);
         if response.hovered() {
             ui.painter().line_segment(
-                [
-                    Pos2::new(rect.left(), rect.bottom()),
-                    Pos2::new(rect.right(), rect.bottom()),
-                ],
+                [Pos2::new(rect.left(), rect.bottom()), Pos2::new(rect.right(), rect.bottom())],
                 Stroke::new(1.0_f32, t.text_link),
             );
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -2264,9 +2287,7 @@ pub fn overflow_menu<R>(
             fg,
         );
     }
-    response
-        .response
-        .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, a11y));
+    response.response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, a11y));
     out
 }
 

@@ -29,7 +29,8 @@ fn temp_path(tag: &str) -> String {
 /// Create a destination through the CLI, which is also the fixture for
 /// everything that needs one.
 fn add_destination(harness: &Harness, name: &str) -> RunResult {
-    let result = run(harness, &["destination", "add", "--local", &temp_path("dest"), "--name", name]);
+    let result =
+        run(harness, &["destination", "add", "--local", &temp_path("dest"), "--name", name]);
     assert_eq!(result.code, exit::OK, "{}{}", result.stdout, result.stderr);
     result
 }
@@ -102,11 +103,7 @@ fn status_json_is_a_document_with_no_prose_in_it() {
 
     // The human words must be nowhere in the document.
     for prose in ["Up to date", "Never run", "Next:", "Jobs", "superbackup 0."] {
-        assert!(
-            !result.stdout.contains(prose),
-            "`{prose}` leaked into --json:\n{}",
-            result.stdout
-        );
+        assert!(!result.stdout.contains(prose), "`{prose}` leaked into --json:\n{}", result.stdout);
     }
 }
 
@@ -442,9 +439,8 @@ fn watch_with_json_stays_ndjson_and_gains_no_envelope() {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        publisher.publish(StreamItem::Event {
-            event: Box::new(Event::info("job.started", "started")),
-        });
+        publisher
+            .publish(StreamItem::Event { event: Box::new(Event::info("job.started", "started")) });
     });
 
     let result = run(&harness, &["watch", "--limit", "1", "--json"]);
@@ -544,7 +540,17 @@ fn encryption_flags_are_meaningless_on_a_mirror_and_say_so() {
     let path = temp_path("mirror");
     let result = run(
         &harness,
-        &["destination", "add", "--mirror", &path, "--name", "usb", "--encryption", "AES256-GCM-HMAC-SHA256", "--json"],
+        &[
+            "destination",
+            "add",
+            "--mirror",
+            &path,
+            "--name",
+            "usb",
+            "--encryption",
+            "AES256-GCM-HMAC-SHA256",
+            "--json",
+        ],
     );
     assert_eq!(result.code, exit::USAGE);
     assert!(result.error()["message"].as_str().unwrap_or_default().contains("folder mirror"));
@@ -616,10 +622,8 @@ fn unlock_reads_a_passphrase_from_a_file_and_never_from_argv() {
     let file = dir.join("pp");
     std::fs::write(&file, b"correct horse battery staple\n").expect("write");
 
-    let result = run(
-        &harness,
-        &["unlock", "--passphrase-file", &file.display().to_string(), "--json"],
-    );
+    let result =
+        run(&harness, &["unlock", "--passphrase-file", &file.display().to_string(), "--json"]);
     assert_eq!(result.code, exit::OK, "{}{}", result.stdout, result.stderr);
     assert_eq!(result.data()["unlocked"], true);
     assert_eq!(harness.handler.calls("vault.unlock"), 1);
@@ -644,10 +648,7 @@ fn there_is_no_way_to_pass_a_passphrase_on_the_command_line() {
         vec!["superbackup", "init", "--passphrase", "hunter2"],
         vec!["superbackup", "change-passphrase", "--passphrase", "hunter2"],
     ] {
-        assert!(
-            crate::cli::Cli::try_parse_from(&argv).is_err(),
-            "{argv:?} must not be accepted"
-        );
+        assert!(crate::cli::Cli::try_parse_from(&argv).is_err(), "{argv:?} must not be accepted");
     }
 }
 
@@ -735,11 +736,7 @@ fn an_unknown_setting_suggests_the_ones_that_exist() {
     let harness = Harness::start("config-unknown");
     let result = run(&harness, &["config", "get", "auto_lock", "--json"]);
     assert_eq!(result.code, exit::USAGE);
-    assert!(result
-        .error()["hint"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("auto_lock_minutes"));
+    assert!(result.error()["hint"].as_str().unwrap_or_default().contains("auto_lock_minutes"));
 }
 
 #[test]
@@ -796,11 +793,8 @@ fn doctor_diagnoses_a_missing_daemon_and_exits_nonzero() {
     ] {
         assert!(ids.contains(&expected), "`{expected}` is missing from {ids:?}");
     }
-    let daemon_check = checks
-        .iter()
-        .find(|c| c["id"] == "daemon.reachable")
-        .cloned()
-        .unwrap_or_default();
+    let daemon_check =
+        checks.iter().find(|c| c["id"] == "daemon.reachable").cloned().unwrap_or_default();
     assert_eq!(daemon_check["status"], "fail");
     assert!(!data["limitations"].as_array().cloned().unwrap_or_default().is_empty());
 }

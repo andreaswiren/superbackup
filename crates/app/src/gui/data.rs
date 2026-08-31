@@ -16,9 +16,7 @@ use uuid::Uuid;
 
 use superbackup_core::ipc::protocol::{ErrorPayload, Reply, ServiceReply, VersionReply};
 use superbackup_core::model::{Destination, DestinationKind, Job, Settings, StorageProvider};
-use superbackup_core::state::{
-    Event, Health, JobRun, JobSummary, RunStatus, StatusSnapshot,
-};
+use superbackup_core::state::{Event, Health, JobRun, JobSummary, RunStatus, StatusSnapshot};
 
 use super::copy;
 use super::daemon::{Incoming, Intent};
@@ -160,12 +158,8 @@ impl Data {
     /// Jobs that reach a provider through any of its destinations.
     pub fn jobs_via_provider(&self, provider: &Uuid) -> Vec<&Job> {
         let (inheriting, overriding) = self.destinations_using(provider);
-        let ids: Vec<Uuid> =
-            inheriting.iter().chain(overriding.iter()).map(|d| d.id).collect();
-        self.jobs
-            .iter()
-            .filter(|j| j.destination_ids.iter().any(|d| ids.contains(d)))
-            .collect()
+        let ids: Vec<Uuid> = inheriting.iter().chain(overriding.iter()).map(|d| d.id).collect();
+        self.jobs.iter().filter(|j| j.destination_ids.iter().any(|d| ids.contains(d))).collect()
     }
 
     pub fn stale_jobs(&self, now: DateTime<Utc>) -> Vec<&Job> {
@@ -175,9 +169,7 @@ impl Data {
         }
         self.jobs
             .iter()
-            .filter(|j| {
-                self.summary_for(&j.id).map(|s| s.is_stale(days, now)).unwrap_or(false)
-            })
+            .filter(|j| self.summary_for(&j.id).map(|s| s.is_stale(days, now)).unwrap_or(false))
             .collect()
     }
 
@@ -200,9 +192,7 @@ impl Data {
     /// declares. Never two reasons at once.
     pub fn health_reason(&self, now: DateTime<Utc>) -> String {
         match self.health() {
-            Health::Running => {
-                copy::dash_health_running(self.active_runs().len())
-            }
+            Health::Running => copy::dash_health_running(self.active_runs().len()),
             Health::Paused => match self.paused_until() {
                 Some(until) => {
                     let time = format::clock(until);
@@ -280,13 +270,7 @@ impl Data {
             .rev()
             .map(|back| {
                 let day = now - Duration::days(back);
-                DayOutcome {
-                    date: day,
-                    succeeded: 0,
-                    warned: 0,
-                    failed: 0,
-                    uploaded: 0,
-                }
+                DayOutcome { date: day, succeeded: 0, warned: 0, failed: 0, uploaded: 0 }
             })
             .collect();
         for run in &self.history {
@@ -668,9 +652,9 @@ mod tests {
     #[test]
     fn a_lagged_stream_sets_the_resynchronise_flag() {
         let mut d = data(true);
-        d.apply(Incoming::Stream(Box::new(
-            superbackup_core::ipc::protocol::StreamItem::Lagged { missed: 12 },
-        )));
+        d.apply(Incoming::Stream(Box::new(superbackup_core::ipc::protocol::StreamItem::Lagged {
+            missed: 12,
+        })));
         assert!(d.lagged);
     }
 

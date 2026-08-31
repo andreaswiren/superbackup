@@ -8,8 +8,8 @@ use uuid::Uuid;
 use superbackup_core::ipc::protocol::Request;
 use superbackup_core::model::Job;
 
-use crate::gui::copy;
 use crate::gui::app::App;
+use crate::gui::copy;
 use crate::gui::daemon::Intent;
 use crate::gui::data::Action;
 use crate::gui::format;
@@ -64,8 +64,7 @@ impl App {
             new_job = true;
         }
 
-        let filters: Vec<String> =
-            JobFilter::ALL.iter().map(|f| f.title().to_string()).collect();
+        let filters: Vec<String> = JobFilter::ALL.iter().map(|f| f.title().to_string()).collect();
         let mut filter_index =
             JobFilter::ALL.iter().position(|f| *f == self.screens.jobs.filter).unwrap_or(0);
         if widgets::combo_labelled(
@@ -201,9 +200,7 @@ impl App {
 
                 widgets::table_frame(ui, |ui| {
                     let state = &self.screens.jobs;
-                    let sorted = |key: SortKey| {
-                        (state.sort == key).then_some(state.descending)
-                    };
+                    let sorted = |key: SortKey| (state.sort == key).then_some(state.descending);
                     let mut builder = TableBuilder::new(ui)
                         .id_salt(("jobs", heading))
                         .striped(false)
@@ -293,13 +290,10 @@ impl App {
                                 let Some((job, view)) = rows.get(index) else {
                                     return;
                                 };
-                                let selected =
-                                    self.screens.jobs.selected.contains(&job.id);
+                                let selected = self.screens.jobs.selected.contains(&job.id);
                                 row.set_selected(selected);
-                                let summary =
-                                    self.data.summary_for(&job.id).unwrap_or_default();
-                                let disabled =
-                                    matches!(view.state, CardState::Disabled { .. });
+                                let summary = self.data.summary_for(&job.id).unwrap_or_default();
+                                let disabled = matches!(view.state, CardState::Disabled { .. });
                                 let dim = if disabled { 0.6 } else { 1.0 };
 
                                 row.col(|ui| {
@@ -413,79 +407,64 @@ impl App {
                                     });
                                 }
                                 row.col(|ui| {
-                                    ui.with_layout(
-                                        Layout::right_to_left(Align::Center),
-                                        |ui| {
-                                            widgets::overflow_menu(
-                                                ui,
-                                                ("job-row", job.id),
-                                                "More actions",
-                                                |ui| {
-                                                    if widgets::menu_item(
-                                                        ui,
-                                                        copy::action::EDIT,
-                                                        true,
-                                                    ) {
-                                                        menu = Some(("edit", job.id));
-                                                    }
-                                                    if widgets::menu_item(
-                                                        ui,
-                                                        "View history",
-                                                        true,
-                                                    ) {
-                                                        menu = Some(("history", job.id));
-                                                    }
-                                                    if widgets::menu_item(
-                                                        ui,
-                                                        if job.enabled {
-                                                            copy::action::DISABLE
-                                                        } else {
-                                                            copy::action::ENABLE
-                                                        },
-                                                        true,
-                                                    ) {
-                                                        menu = Some(("toggle", job.id));
-                                                    }
-                                                    widgets::divider(ui);
-                                                    if widgets::menu_item_danger(
-                                                        ui,
-                                                        copy::action::DELETE,
-                                                        true,
-                                                    ) {
-                                                        menu = Some(("delete", job.id));
-                                                    }
-                                                },
-                                            );
-                                            let gate = self.data.gate(Action::RunJob);
-                                            let running = matches!(
-                                                view.state,
-                                                CardState::Running { .. }
-                                            );
-                                            let label = if running {
-                                                copy::action::STOP
-                                            } else {
-                                                copy::action::RUN_NOW
-                                            };
-                                            let mut button = Button::ghost(label)
-                                                .compact()
-                                                .a11y(format!(
-                                                    "{label} job \"{}\"",
-                                                    job.name
-                                                ));
-                                            if let Some(reason) = gate.reason() {
-                                                button = button.disabled_because(reason);
-                                            } else if !job.enabled {
-                                                button = button.enabled(false);
-                                            }
-                                            if button.show(ui).clicked() {
-                                                if running {
-                                                    menu = Some(("stop", job.id));
-                                                } else {
-                                                    run = Some((*job).clone());
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        widgets::overflow_menu(
+                                            ui,
+                                            ("job-row", job.id),
+                                            "More actions",
+                                            |ui| {
+                                                if widgets::menu_item(ui, copy::action::EDIT, true)
+                                                {
+                                                    menu = Some(("edit", job.id));
                                                 }
+                                                if widgets::menu_item(ui, "View history", true) {
+                                                    menu = Some(("history", job.id));
+                                                }
+                                                if widgets::menu_item(
+                                                    ui,
+                                                    if job.enabled {
+                                                        copy::action::DISABLE
+                                                    } else {
+                                                        copy::action::ENABLE
+                                                    },
+                                                    true,
+                                                ) {
+                                                    menu = Some(("toggle", job.id));
+                                                }
+                                                widgets::divider(ui);
+                                                if widgets::menu_item_danger(
+                                                    ui,
+                                                    copy::action::DELETE,
+                                                    true,
+                                                ) {
+                                                    menu = Some(("delete", job.id));
+                                                }
+                                            },
+                                        );
+                                        let gate = self.data.gate(Action::RunJob);
+                                        let running =
+                                            matches!(view.state, CardState::Running { .. });
+                                        let label = if running {
+                                            copy::action::STOP
+                                        } else {
+                                            copy::action::RUN_NOW
+                                        };
+                                        let mut button = Button::ghost(label)
+                                            .compact()
+                                            .a11y(format!("{label} job \"{}\"", job.name));
+                                        if let Some(reason) = gate.reason() {
+                                            button = button.disabled_because(reason);
+                                        } else if !job.enabled {
+                                            button = button.enabled(false);
+                                        }
+                                        if button.show(ui).clicked() {
+                                            if running {
+                                                menu = Some(("stop", job.id));
+                                            } else {
+                                                run = Some((*job).clone());
                                             }
-                                        },
-                                    );
+                                        }
+                                    });
                                 });
 
                                 let response = row.response();
@@ -497,11 +476,7 @@ impl App {
                                     view.meta
                                 );
                                 response.widget_info(|| {
-                                    egui::WidgetInfo::labeled(
-                                        egui::WidgetType::Label,
-                                        true,
-                                        &cells,
-                                    )
+                                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &cells)
                                 });
                                 if response.clicked() {
                                     open = Some(job.id);
@@ -604,10 +579,7 @@ impl App {
                 "run" => self.request_run(&job),
                 "enable" | "disable" => self.ask(
                     Intent::SaveJob(job.name.clone()),
-                    Request::JobSetEnabled {
-                        job: id.to_string(),
-                        enabled: action == "enable",
-                    },
+                    Request::JobSetEnabled { job: id.to_string(), enabled: action == "enable" },
                 ),
                 "delete" => self.ask(
                     Intent::DeleteJob(job.name.clone()),

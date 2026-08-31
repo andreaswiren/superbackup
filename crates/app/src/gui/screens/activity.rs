@@ -84,11 +84,7 @@ impl App {
             .placeholder(copy::activity::SEARCH)
             .show(ui, &mut self.screens.activity.filters.search);
         let mut tab = usize::from(self.screens.activity.events_view);
-        widgets::segmented(
-            ui,
-            &mut tab,
-            &[copy::activity::TAB_RUNS, copy::activity::TAB_EVENTS],
-        );
+        widgets::segmented(ui, &mut tab, &[copy::activity::TAB_RUNS, copy::activity::TAB_EVENTS]);
         self.screens.activity.events_view = tab == 1;
         if export {
             self.open_modal(Modal::Export);
@@ -503,14 +499,7 @@ impl App {
                                 .job_id
                                 .map(|id| self.data.job_name(&id))
                                 .unwrap_or_else(|| "—".to_string());
-                            widgets::elided(
-                                ui,
-                                &name,
-                                Type::Small,
-                                t.text_muted,
-                                118.0,
-                                false,
-                            );
+                            widgets::elided(ui, &name, Type::Small, t.text_muted, 118.0, false);
                         });
                         if row.response().clicked() {
                             expand = Some(event.id);

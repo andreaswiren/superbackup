@@ -434,7 +434,7 @@ impl Default for NotificationSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BandwidthSettings {
     /// Upload ceiling in kilobytes per second. `None` = unlimited.
@@ -442,12 +442,6 @@ pub struct BandwidthSettings {
     pub download_kbps: Option<u32>,
     /// Optional lower ceiling applied inside a daily window (e.g. work hours).
     pub schedule: Option<BandwidthWindow>,
-}
-
-impl Default for BandwidthSettings {
-    fn default() -> Self {
-        BandwidthSettings { upload_kbps: None, download_kbps: None, schedule: None }
-    }
 }
 
 impl BandwidthSettings {

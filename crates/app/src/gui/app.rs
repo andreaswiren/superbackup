@@ -71,11 +71,7 @@ pub struct App {
 
 impl App {
     /// A window talking to a real daemon.
-    pub fn new(
-        ctx: &Context,
-        endpoint: String,
-        timeout: Duration,
-    ) -> App {
+    pub fn new(ctx: &Context, endpoint: String, timeout: Duration) -> App {
         let daemon: Arc<dyn Daemon> = Arc::new(daemon::IpcDaemon::new(endpoint, timeout));
         App::new_with_daemon(ctx, daemon)
     }
@@ -235,7 +231,10 @@ impl App {
                 } else {
                     self.toasts.danger(
                         name,
-                        probe.detail.clone().unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.into()),
+                        probe
+                            .detail
+                            .clone()
+                            .unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.into()),
                     );
                 }
                 self.ask(Intent::Destinations, Request::DestinationList {});
@@ -306,15 +305,11 @@ impl App {
             _ => match intent {
                 // Errors that belong to a screen are rendered by that screen.
                 Intent::TestProvider(id) => self.screens.provider_editor.probe_failed(id, payload),
-                Intent::TestDestination(id) => {
-                    self.screens.destinations.probe_failed(id, payload)
-                }
+                Intent::TestDestination(id) => self.screens.destinations.probe_failed(id, payload),
                 Intent::CreateRepository(_) => {
                     self.screens.destination_editor.repository_failed(payload)
                 }
-                Intent::Snapshots(_) | Intent::Browse(_, _) => {
-                    self.screens.restore.failed(payload)
-                }
+                Intent::Snapshots(_) | Intent::Browse(_, _) => self.screens.restore.failed(payload),
                 _ => {
                     let title = payload.message.clone();
                     let body = payload.hint.clone().unwrap_or_default();
@@ -335,10 +330,8 @@ impl App {
                 false
             }
             Gate::NeedsDaemon => {
-                self.toasts.danger(
-                    copy::err::DAEMON_UNREACHABLE,
-                    copy::err::DAEMON_UNREACHABLE_ACTION,
-                );
+                self.toasts
+                    .danger(copy::err::DAEMON_UNREACHABLE, copy::err::DAEMON_UNREACHABLE_ACTION);
                 false
             }
         }
@@ -397,10 +390,7 @@ impl App {
         let encryption = self.data.destination(&destination).and_then(|d| d.encryption.clone());
         self.ask(
             Intent::CreateRepository(destination),
-            Request::DestinationRepoCreate {
-                destination: destination.to_string(),
-                encryption,
-            },
+            Request::DestinationRepoCreate { destination: destination.to_string(), encryption },
         );
     }
 
@@ -558,7 +548,10 @@ impl App {
             )
             .show(ctx, |ui| {
                 ui.painter().rect_filled(
-                    Rect::from_min_size(ui.max_rect().left_top() - Vec2::new(12.0, 0.0), Vec2::new(ui.max_rect().width() + 24.0, 1.0)),
+                    Rect::from_min_size(
+                        ui.max_rect().left_top() - Vec2::new(12.0, 0.0),
+                        Vec2::new(ui.max_rect().width() + 24.0, 1.0),
+                    ),
                     0,
                     t.border_subtle,
                 );
@@ -588,9 +581,7 @@ impl App {
                     egui::Pos2::new(full.right() - pad, full.bottom() - pad),
                 );
                 let mut content_ui = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(content)
-                        .layout(Layout::top_down(Align::Min)),
+                    egui::UiBuilder::new().max_rect(content).layout(Layout::top_down(Align::Min)),
                 );
                 content_ui.set_clip_rect(content);
                 self.banners(&mut content_ui);
@@ -620,7 +611,8 @@ impl App {
                 .collect();
             let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
             ui.painter().rect_filled(rect, radius::CONTROL, t.bg_raised);
-            let g = widgets::galley(ui, initials.to_uppercase(), Type::SmallStrong, t.text_secondary);
+            let g =
+                widgets::galley(ui, initials.to_uppercase(), Type::SmallStrong, t.text_secondary);
             let size = g.size();
             ui.painter().galley(rect.center() - size / 2.0, g, t.text_secondary);
             let label = format!("{} ({})", self.data.machine_label(), self.data.machine_slug());
@@ -628,10 +620,8 @@ impl App {
                 self.go(Route::Settings(SettingsSection::General));
             }
         } else {
-            let (rect, response) = ui.allocate_exact_size(
-                Vec2::new(ui.available_width(), 36.0),
-                Sense::click(),
-            );
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::click());
             let mut child = ui.new_child(
                 egui::UiBuilder::new().max_rect(rect).layout(Layout::top_down(Align::Min)),
             );
@@ -689,11 +679,9 @@ impl App {
 
     fn section_needs_attention(&self, section: Section) -> bool {
         match section {
-            Section::Destinations => self
-                .data
-                .destinations
-                .iter()
-                .any(|d| self.screens.destinations.failed_probe(d.id)),
+            Section::Destinations => {
+                self.data.destinations.iter().any(|d| self.screens.destinations.failed_probe(d.id))
+            }
             Section::Activity => self
                 .data
                 .events
@@ -823,13 +811,15 @@ impl App {
                         let top = rect.center().y - total / 2.0;
                         let gy = g.size().y;
                         ui.painter().galley(egui::Pos2::new(x, top), g, text_colour);
-                        ui.painter()
-                            .galley(egui::Pos2::new(x, top + gy), sg, t.text_muted);
+                        ui.painter().galley(egui::Pos2::new(x, top + gy), sg, t.text_muted);
                     }
                     None => {
                         let h = g.size().y;
-                        ui.painter()
-                            .galley(egui::Pos2::new(x, rect.center().y - h / 2.0), g, text_colour);
+                        ui.painter().galley(
+                            egui::Pos2::new(x, rect.center().y - h / 2.0),
+                            g,
+                            text_colour,
+                        );
                     }
                 }
             }
@@ -839,9 +829,8 @@ impl App {
         } else {
             copy::A11Y_VAULT_LOCKED.to_string()
         };
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &announce)
-        });
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &announce));
         if response.clicked() {
             if unlocked {
                 self.lock();
@@ -958,10 +947,8 @@ impl App {
                     &body,
                     Some(copy::set::PAUSE_BODY),
                     |ui| {
-                        resume = Button::secondary(copy::set::PAUSE_RESUME)
-                            .compact()
-                            .show(ui)
-                            .clicked();
+                        resume =
+                            Button::secondary(copy::set::PAUSE_RESUME).compact().show(ui).clicked();
                     },
                 );
                 ui.add_space(space::XL);

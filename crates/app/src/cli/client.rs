@@ -47,10 +47,8 @@ impl Daemon {
         // smallest sane wait rather than as a hang.
         let timeout = Duration::from_secs(ctx.global.timeout.max(1));
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
+        let runtime =
+            tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| {
                 CliError::new(ErrorCode::Internal, format!("could not start a runtime: {e}"))
             })?;
 
@@ -118,7 +116,9 @@ fn unreachable_error(e: Error, endpoint: &str) -> CliError {
     match e {
         Error::DaemonUnreachable => CliError::new(
             ErrorCode::DaemonUnreachable,
-            format!("nothing is listening on {endpoint}, so there is no superbackup instance to ask"),
+            format!(
+                "nothing is listening on {endpoint}, so there is no superbackup instance to ask"
+            ),
         )
         .with_hint(
             "Start it with `superbackup daemon`, open the tray application, or run \

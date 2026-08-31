@@ -245,9 +245,8 @@ impl Runtime {
     /// The engine handle, as an error when the engine is not running — which
     /// is what every IPC method that needs it wants.
     pub fn require_scheduler(&self) -> superbackup_core::Result<SchedulerHandle> {
-        self.scheduler().ok_or_else(|| {
-            superbackup_core::Error::Internal("the scheduler is not running".into())
-        })
+        self.scheduler()
+            .ok_or_else(|| superbackup_core::Error::Internal("the scheduler is not running".into()))
     }
 
     pub fn set_kopia(&self, binary: Option<KopiaBinary>) {
@@ -375,7 +374,8 @@ impl Runtime {
     ) {
         let mut active = recover(&self.active);
         let Some(run) = active.get_mut(run_id) else { return };
-        if let Some(dest) = run.destinations.iter_mut().find(|d| &d.destination_id == destination_id)
+        if let Some(dest) =
+            run.destinations.iter_mut().find(|d| &d.destination_id == destination_id)
         {
             dest.progress = progress.clone();
             if !final_update && dest.status == RunStatus::Preparing {
@@ -411,8 +411,7 @@ impl Runtime {
     /// a machine that must back up unattended, so it disarms rather than
     /// picking a default.
     pub fn arm_auto_lock(&self, minutes: u32) {
-        let deadline =
-            (minutes > 0).then(|| Utc::now() + ChronoDuration::minutes(minutes as i64));
+        let deadline = (minutes > 0).then(|| Utc::now() + ChronoDuration::minutes(minutes as i64));
         *recover(&self.auto_lock_at) = deadline;
     }
 
@@ -471,10 +470,7 @@ impl Runtime {
 
     /// Destinations whose repository is still on the old password.
     pub fn migration_pending(&self) -> BTreeSet<Uuid> {
-        recover(&self.migration)
-            .as_ref()
-            .map(|m| m.destinations.clone())
-            .unwrap_or_default()
+        recover(&self.migration).as_ref().map(|m| m.destinations.clone()).unwrap_or_default()
     }
 
     // ------------------------------------------------------------------
@@ -493,10 +489,7 @@ impl Runtime {
     // Storage stats cache
     // ------------------------------------------------------------------
 
-    pub fn cache_stats(
-        &self,
-        reply: superbackup_core::ipc::protocol::StorageStatsReply,
-    ) {
+    pub fn cache_stats(&self, reply: superbackup_core::ipc::protocol::StorageStatsReply) {
         recover(&self.stats).insert(reply.destination_id, reply);
     }
 
@@ -745,9 +738,9 @@ pub fn resolve_destination<'a>(
         config.destinations.iter().filter(|d| d.name.to_lowercase().starts_with(&lower)).collect();
     match matches.len() {
         1 => Ok(matches[0]),
-        0 => Err(superbackup_core::Error::Validation(format!(
-            "no destination matching `{needle}`"
-        ))),
+        0 => {
+            Err(superbackup_core::Error::Validation(format!("no destination matching `{needle}`")))
+        }
         _ => Err(superbackup_core::Error::Validation(format!(
             "`{needle}` matches {} destinations; use the full name or the id",
             matches.len()
@@ -943,7 +936,10 @@ mod tests {
         assert_eq!(resolve_job(&config, &id.to_string()).map(|j| j.id).ok(), Some(id));
         assert_eq!(resolve_job(&config, "dev code").map(|j| j.id).ok(), Some(id));
         assert_eq!(resolve_job(&config, "dev").map(|j| j.id).ok(), Some(id));
-        assert_eq!(resolve_job(&config, "PHOT").map(|j| j.name.clone()).ok(), Some("photos".into()));
+        assert_eq!(
+            resolve_job(&config, "PHOT").map(|j| j.name.clone()).ok(),
+            Some("photos".into())
+        );
     }
 
     #[test]
