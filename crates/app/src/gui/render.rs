@@ -332,6 +332,73 @@ pub fn gallery() -> Vec<Shot> {
             },
         },
         Shot {
+            name: "33-settings-kopia",
+            size: [1100.0, 720.0],
+            dark: true,
+            setup: |app| {
+                app.screens.settings.kopia_probe = Some(sample_kopia_probe());
+                app.go(Route::Settings(SettingsSection::Kopia));
+            },
+        },
+        Shot {
+            name: "34-settings-kopia-light",
+            size: [1100.0, 720.0],
+            dark: false,
+            setup: |app| {
+                app.screens.settings.kopia_probe = Some(sample_kopia_probe());
+                app.go(Route::Settings(SettingsSection::Kopia));
+            },
+        },
+        Shot {
+            name: "35-job-preview",
+            size: [1100.0, 720.0],
+            dark: true,
+            setup: |app| {
+                let run = sample_preview_run();
+                let run_id = run.run_id;
+                app.data.history.insert(0, run);
+                app.screens.preview.started(fixtures::JOB_DEV, "Dev folders".into());
+                app.screens.preview.accepted(fixtures::JOB_DEV, run_id);
+                app.go(Route::Preview(fixtures::JOB_DEV));
+            },
+        },
+        Shot {
+            name: "36-export-encryption-keys",
+            size: [1100.0, 720.0],
+            dark: true,
+            setup: |app| {
+                app.go(Route::Settings(SettingsSection::Security));
+                app.open_modal(super::modals::Modal::ExportKeys(
+                    super::modals::ExportKeysState::default(),
+                ));
+            },
+        },
+        Shot {
+            name: "37-export-encryption-keys-ready",
+            size: [1100.0, 720.0],
+            dark: true,
+            setup: |app| {
+                app.go(Route::Settings(SettingsSection::Security));
+                let mut state = super::modals::ExportKeysState::default();
+                state.document_arrived(sample_key_export());
+                app.open_modal(super::modals::Modal::ExportKeys(state));
+            },
+        },
+        Shot {
+            name: "38-destination-key-check",
+            // Taller than the rest on purpose: the encryption panel this shot
+            // is about sits below the folder and validation sections.
+            size: [1100.0, 1500.0],
+            dark: true,
+            setup: |app| {
+                app.screens.destination_editor.key_check = Some((
+                    fixtures::DEST_LOCAL,
+                    super::screens::destination_editor::KeyCheckOutcome::Opened,
+                ));
+                app.go(Route::DestinationEditor(fixtures::DEST_LOCAL));
+            },
+        },
+        Shot {
             name: "32-daemon-unreachable",
             size: [1100.0, 720.0],
             dark: true,
@@ -344,6 +411,174 @@ pub fn gallery() -> Vec<Shot> {
             },
         },
     ]
+}
+
+/// A kopia probe that found a system binary and ran both commands.
+fn sample_kopia_probe() -> superbackup_core::ipc::protocol::KopiaProbeReply {
+    use superbackup_core::ipc::protocol::{
+        KopiaInvocation, KopiaProbeReply, KopiaProvenance, KopiaRoute,
+    };
+    let exe =
+        if cfg!(windows) { r"C:\Program Files\kopia\kopia.exe" } else { "/usr/local/bin/kopia" };
+    KopiaProbeReply {
+        path: Some(exe.to_string()),
+        provenance: KopiaProvenance::SystemPath,
+        version: Some("0.21.1".into()),
+        banner: Some("0.21.1 build: 8f0e1c2d from: kopia/kopia".into()),
+        routes: vec![
+            KopiaRoute {
+                provenance: KopiaProvenance::Configured,
+                path: None,
+                outcome: "No path is pinned in Settings, so discovery continues.".into(),
+                chosen: false,
+            },
+            KopiaRoute {
+                provenance: KopiaProvenance::SystemPath,
+                path: Some(exe.to_string()),
+                outcome: "Found on PATH, and preferred over the managed build.".into(),
+                chosen: true,
+            },
+            KopiaRoute {
+                provenance: KopiaProvenance::Bundled,
+                path: Some(if cfg!(windows) {
+                    r"C:\Users\andreas\AppData\Local\superbackup\kopia\kopia.exe".into()
+                } else {
+                    "/home/andreas/.local/share/superbackup/kopia/kopia".to_string()
+                }),
+                outcome: "Not installed yet.".into(),
+                chosen: false,
+            },
+        ],
+        managed_path: if cfg!(windows) {
+            r"C:\Users\andreas\AppData\Local\superbackup\kopia\kopia.exe".into()
+        } else {
+            "/home/andreas/.local/share/superbackup/kopia/kopia".to_string()
+        },
+        managed_version: None,
+        update_policy: "notify".into(),
+        update_available: None,
+        update_summary: Some("kopia 0.21.1 is up to date.".into()),
+        minimum_version: "0.17.0".into(),
+        invocations: vec![
+            KopiaInvocation {
+                label: "--version".into(),
+                command_line: format!("\"{exe}\" --version"),
+                secret_env: vec![],
+                exit_code: Some(0),
+                stdout: "0.21.1 build: 8f0e1c2d from: kopia/kopia".into(),
+                stderr: String::new(),
+                duration_ms: 38,
+                ok: true,
+            },
+            KopiaInvocation {
+                label: "repository status".into(),
+                command_line: format!(
+                    "\"{exe}\" --config-file=repository.config --log-level=warning \
+                     --persist-credentials=false repository status --json"
+                ),
+                secret_env: vec!["KOPIA_PASSWORD".into()],
+                exit_code: Some(0),
+                stdout: "{\n  \"configFile\": \"repository.config\",\n  \"uniqueId\": \
+                         \"5f2a9c31de4f0a8c\",\n  \"hash\": \"BLAKE2B-256-128\",\n  \
+                         \"encryption\": \"AES256-GCM-HMAC-SHA256\",\n  \"splitter\": \
+                         \"DYNAMIC-4M-BUZHASH\",\n  \"formatVersion\": \"3\"\n}"
+                    .into(),
+                stderr: String::new(),
+                duration_ms: 412,
+                ok: true,
+            },
+        ],
+        detail: None,
+    }
+}
+
+/// A finished rehearsal over three destinations, including one that could not
+/// be rehearsed — the case the screen must not round off.
+fn sample_preview_run() -> superbackup_core::state::JobRun {
+    use superbackup_core::state::{DestinationRun, JobRun, Progress, RunError, RunStatus, Trigger};
+    let destination = |id, name: &str, status, progress, error: Option<&str>| DestinationRun {
+        destination_id: id,
+        destination_name: name.to_string(),
+        status,
+        started_at: Some(chrono::Utc::now() - chrono::Duration::seconds(40)),
+        finished_at: Some(chrono::Utc::now()),
+        progress,
+        snapshot_id: None,
+        error: error.map(|message| RunError {
+            code: superbackup_core::error::ErrorCode::RepoNotConnected,
+            message: message.to_string(),
+            hint: None,
+            detail: None,
+            occurred_at: chrono::Utc::now(),
+        }),
+        warnings: vec![],
+        replicated_from: None,
+        skipped_reason: None,
+    };
+    JobRun {
+        run_id: uuid::Uuid::new_v4(),
+        job_id: fixtures::JOB_DEV,
+        job_name: "Dev folders".into(),
+        trigger: Trigger::Preview,
+        status: RunStatus::SucceededWithWarnings,
+        started_at: chrono::Utc::now() - chrono::Duration::seconds(40),
+        finished_at: Some(chrono::Utc::now()),
+        destinations: vec![
+            destination(
+                fixtures::DEST_LOCAL,
+                "Local repository",
+                RunStatus::Succeeded,
+                Progress {
+                    files_processed: 118_402,
+                    files_total: Some(118_402),
+                    bytes_processed: 9_770_000_000,
+                    bytes_total: Some(9_770_000_000),
+                    ..Progress::default()
+                },
+                None,
+            ),
+            destination(
+                fixtures::DEST_MIRROR,
+                "External drive mirror",
+                RunStatus::Succeeded,
+                Progress {
+                    files_processed: 118_402,
+                    files_cached: 112_884,
+                    bytes_processed: 9_770_000_000,
+                    bytes_uploaded: 431_000_000,
+                    ..Progress::default()
+                },
+                None,
+            ),
+            destination(
+                fixtures::DEST_S3,
+                "StorJ offsite",
+                RunStatus::Failed,
+                Progress::default(),
+                Some("There is no repository at \"StorJ offsite\" yet."),
+            ),
+        ],
+    }
+}
+
+fn sample_key_export() -> superbackup_core::ipc::protocol::KeyExportReply {
+    superbackup_core::ipc::protocol::KeyExportReply {
+        document: "SUPERBACKUP - REPOSITORY ENCRYPTION KEYS\n\
+                   =========================================\n\n\
+                   READ THIS FIRST\n\n\
+                   This file contains the encryption keys for the backups made by the computer\n\
+                   named below. Anyone who has this file AND can reach the storage listed in it\n\
+                   can read every file in those backups. Treat it exactly as you would treat the\n\
+                   backed-up files themselves: a locked drawer, a safe, or a password manager.\n"
+            .into(),
+        destinations: 2,
+        omitted: vec![
+            "External drive mirror: a folder mirror holds plain copies and has no encryption key"
+                .into(),
+        ],
+        suggested_file_name: "superbackup-encryption-keys-andreas-pc-20260831.txt".into(),
+        generated_at: chrono::Utc::now(),
+    }
 }
 
 fn sample_snapshots() -> Vec<superbackup_core::ipc::protocol::SnapshotInfo> {

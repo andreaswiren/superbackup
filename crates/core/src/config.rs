@@ -160,6 +160,7 @@ pub fn validate(config: &Config) -> ValidationReport {
     validate_identity(config, &mut report);
     validate_providers(config, &mut report);
     validate_destinations(config, &mut report);
+    validate_replication(config, &mut report);
     validate_jobs(config, &mut report);
     validate_remote(config, &mut report);
 
@@ -279,7 +280,14 @@ fn validate_destinations(config: &Config, report: &mut ValidationReport) {
             }
         }
 
-        if destination.kind.is_repository() && destination.encryption.is_none() {
+        // A replica has no encryption settings *by construction* — it inherits
+        // the format blob, and therefore the cipher suite, of the repository it
+        // is copied from. Warning about it here would be telling the user to
+        // fix something the validator forbids them from setting.
+        if destination.kind.is_repository()
+            && destination.encryption.is_none()
+            && !destination.is_replica()
+        {
             report.warn(
                 format!("destinations[{name}].encryption"),
                 "no encryption settings; kopia defaults will be used",
@@ -295,6 +303,141 @@ fn validate_destinations(config: &Config, report: &mut ValidationReport) {
             report.warn(format!("destinations[{name}]"), "no job writes to this destination");
         }
     }
+}
+
+/// Rules for chained destinations.
+///
+/// Every one of these exists because breaking it produces an offsite copy that
+/// either cannot be written or cannot be opened — and the user finds out at
+/// restore time. The two that matter most:
+///
+/// * **A replica cannot have its own key.** `kopia repository sync-to` copies
+///   the source's `kopia.repository` format blob into an empty destination and
+///   refuses a destination whose format blob has a different unique id. The
+///   replica therefore *is* the source repository, opened with the source's
+///   passphrase. A configuration that says otherwise is describing something
+///   kopia will not do, and the belief it encodes — "my offsite copy has a
+///   separate key" — is precisely the belief that gets someone hurt.
+/// * **The chain must be a DAG.** A cycle would leave the runner with a set of
+///   destinations none of which can go first.
+fn validate_replication(config: &Config, report: &mut ValidationReport) {
+    for destination in &config.destinations {
+        let Some(source_id) = destination.replicate_from else { continue };
+        let name = &destination.name;
+        let location = format!("destinations[{name}].replicate_from");
+
+        if source_id == destination.id {
+            report.error(&location, "a destination cannot be replicated from itself");
+            continue;
+        }
+
+        if !destination.kind.is_repository() {
+            report.error(
+                &location,
+                format!(
+                    "{name:?} is a folder mirror, which holds plain files rather than \
+                     repository blobs; only a repository destination can be a replica"
+                ),
+            );
+            continue;
+        }
+
+        let Some(source) = config.destination(&source_id) else {
+            report.error(&location, format!("no destination with id {source_id}"));
+            continue;
+        };
+
+        if !source.kind.is_repository() {
+            report.error(
+                &location,
+                format!(
+                    "{:?} is a folder mirror, so it has no repository blobs to replicate; \
+                     a chain must start from a repository destination",
+                    source.name
+                ),
+            );
+            continue;
+        }
+
+        // Walk up. `replication_chain` returns an empty vector for a broken or
+        // cyclic chain, which is exactly the case that needs naming here.
+        let chain = config.replication_chain(destination);
+        if chain.is_empty() {
+            match cycle_path(config, destination) {
+                Some(path) => report.error(
+                    &location,
+                    format!(
+                        "these destinations replicate from each other in a cycle ({path}); \
+                         a chain has to start somewhere that is backed up from the sources"
+                    ),
+                ),
+                None => report.error(
+                    &location,
+                    format!(
+                        "the replication chain above {name:?} is broken or longer than \
+                         {} hops",
+                        model::MAX_REPLICATION_DEPTH
+                    ),
+                ),
+            }
+            continue;
+        }
+
+        if destination.passphrase_ref.is_some() || destination.encryption.is_some() {
+            let root = chain.first().map(|d| d.name.as_str()).unwrap_or("its source");
+            report.error(
+                format!("destinations[{name}].passphrase_ref"),
+                format!(
+                    "{name:?} is replicated from {root:?}, so it is the same kopia repository \
+                     and opens with {root:?}'s passphrase and encryption settings — it cannot \
+                     have its own. Remove them, or back this destination up from the sources \
+                     instead of chaining it."
+                ),
+            );
+        }
+
+        // Cross-account S3 → S3 is legal but subtle: kopia takes the *source*
+        // repository's credentials from its stored connection profile and the
+        // *destination's* from the environment, so the two must not be
+        // assumed interchangeable. Worth saying once; not worth refusing.
+        if let (DestinationKind::S3 { .. }, DestinationKind::S3 { .. }) =
+            (&source.kind, &destination.kind)
+        {
+            let source_provider = source.kind.provider_id();
+            let replica_provider = destination.kind.provider_id();
+            if source_provider != replica_provider {
+                report.warn(
+                    format!("destinations[{name}]"),
+                    format!(
+                        "{name:?} replicates from {:?} across two different storage providers; \
+                         kopia reads the source through its stored connection profile and the \
+                         destination through this destination's credentials, so both sets have \
+                         to stay valid",
+                        source.name
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Render the cycle `destination` sits in as `a -> b -> a`, or `None` when the
+/// chain is broken rather than cyclic.
+fn cycle_path(config: &Config, destination: &Destination) -> Option<String> {
+    let mut names: Vec<&str> = vec![destination.name.as_str()];
+    let mut ids: Vec<Uuid> = vec![destination.id];
+    let mut current = destination;
+    for _ in 0..=model::MAX_REPLICATION_DEPTH {
+        let parent_id = current.replicate_from?;
+        let parent = config.destination(&parent_id)?;
+        names.push(parent.name.as_str());
+        if ids.contains(&parent_id) {
+            return Some(names.join(" -> "));
+        }
+        ids.push(parent_id);
+        current = parent;
+    }
+    None
 }
 
 fn validate_jobs(config: &Config, report: &mut ValidationReport) {
@@ -355,6 +498,7 @@ fn validate_jobs(config: &Config, report: &mut ValidationReport) {
             }
         }
 
+        validate_replication_within_job(config, job, report);
         validate_schedule(job, report);
         validate_no_self_nesting(config, job, report);
     }
@@ -436,6 +580,38 @@ fn check_times(times: &[model::TimeOfDay], location: &str, report: &mut Validati
 ///
 /// Only local paths participate: an S3 prefix cannot contain a filesystem
 /// source.
+/// A job that writes to a replica must also write to what the replica is
+/// copied from.
+///
+/// The replication step reads the source repository *after this run has
+/// updated it*; that ordering is the entire benefit of chaining. If the source
+/// is not part of the same run, the offsite copy would replicate whatever
+/// happened to be there — quite possibly a week old — while reporting a fresh
+/// success. Requiring both in one job is what makes "the offsite copy is as
+/// new as the local one" true rather than merely likely.
+fn validate_replication_within_job(config: &Config, job: &Job, report: &mut ValidationReport) {
+    for destination_id in &job.destination_ids {
+        let Some(destination) = config.destination(destination_id) else { continue };
+        let Some(source_id) = destination.replicate_from else { continue };
+        if job.destination_ids.contains(&source_id) {
+            continue;
+        }
+        let source_name = config
+            .destination(&source_id)
+            .map(|d| format!("{:?}", d.name))
+            .unwrap_or_else(|| source_id.to_string());
+        report.error(
+            format!("jobs[{}].destination_ids", job.name),
+            format!(
+                "{:?} is replicated from {source_name}, which this job does not back up; \
+                 add it to the job, or the offsite copy would be made from whatever this \
+                 run did not update",
+                destination.name
+            ),
+        );
+    }
+}
+
 fn validate_no_self_nesting(config: &Config, job: &Job, report: &mut ValidationReport) {
     for destination_id in &job.destination_ids {
         let Some(destination) = config.destination(destination_id) else { continue };
@@ -575,6 +751,10 @@ pub fn migrate(mut value: Value) -> Result<(Value, Vec<String>)> {
                 migrate_0_to_1(&mut value, &mut notes)?;
                 version = 1;
             }
+            1 => {
+                migrate_1_to_2(&mut value)?;
+                version = 2;
+            }
             other => {
                 return Err(Error::Config(format!(
                     "no migration is defined from schema version {other}"
@@ -641,6 +821,29 @@ fn migrate_0_to_1(value: &mut Value, notes: &mut Vec<String>) -> Result<()> {
         notes.push(format!("{normalised} S3 prefix(es) were normalised"));
     }
 
+    Ok(())
+}
+
+/// Schema 1 to 2: chained destinations.
+///
+/// Structurally there is nothing to repair — every schema-1 destination is
+/// written from the job's sources, which is exactly what an absent
+/// `replicate_from` means. The key is written out explicitly anyway so the
+/// saved document states the answer rather than implying it, and no note is
+/// produced because nothing happened that a user needs to be told about.
+///
+/// The version bump itself is the point: see [`CONFIG_SCHEMA_VERSION`].
+fn migrate_1_to_2(value: &mut Value) -> Result<()> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| Error::Config("config.json does not contain a JSON object".into()))?;
+    let Some(Value::Array(destinations)) = object.get_mut("destinations") else {
+        return Ok(());
+    };
+    for destination in destinations.iter_mut() {
+        let Some(fields) = destination.as_object_mut() else { continue };
+        fields.entry("replicate_from".to_string()).or_insert(Value::Null);
+    }
     Ok(())
 }
 
@@ -1161,6 +1364,23 @@ impl Store {
 /// [`model::PassphraseSource`] and dispatches accordingly.
 pub fn destination_passphrase(store: &Store, destination: &Destination) -> Result<Secret> {
     use model::PassphraseSource::*;
+    // A replica is the *same kopia repository* as the destination it is
+    // synchronised from — `sync-to` copies the format blob — so it opens with
+    // that repository's passphrase and never with one of its own. Resolving
+    // the chain here rather than at every call site is what keeps the
+    // guarantee in one place: connect, verify, restore and browse all arrive
+    // through this function.
+    let destination = match store.config().replication_root(destination) {
+        Some(root) => root,
+        None if destination.is_replica() => {
+            return Err(Error::Config(format!(
+                "destination {:?} is replicated from a destination that no longer exists, \
+                 or from a chain that loops; its passphrase cannot be resolved",
+                destination.name
+            )))
+        }
+        None => destination,
+    };
     let source = destination.encryption.as_ref().map(|e| e.passphrase_source).unwrap_or(Generated);
     match source {
         DerivedFromMaster => store.vault().derive_repo_passphrase(&destination.id),

@@ -12,6 +12,51 @@ rather than mangling it.
 
 ## [Unreleased]
 
+### Added
+
+- **A real Kopia page in Settings.** It shows the full resolved path of the
+  binary in use, its version, and which of the four resolution routes produced
+  it — with every route listed, chosen or not, so "why this kopia?" has an
+  answer on screen. A "Run the checks" action executes `kopia --version` and
+  `repository status` against a chosen destination and shows the exact command
+  line, the exit code and both output streams verbatim. The command line is
+  safe to display and worth displaying: secrets reach kopia through the
+  environment and never through `argv`, and the names of those variables are
+  shown while their values are not. New IPC command: `kopia.probe`.
+- **Job preview (dry run) in the interface.** The engine has supported
+  rehearsals end to end for some time and none of it was reachable from the
+  window. A Preview action now exists on the jobs list, the job editor and the
+  dashboard job card, and opens a screen with one card per destination — the
+  fan-out is never flattened — showing what would be copied, what is already up
+  to date, and, where a figure genuinely cannot be known, saying so instead of
+  printing a zero. A rehearsal is recorded with its own `Trigger::Preview`, so
+  the history can never mistake it for a backup.
+- **Encryption keys: validate and export.** A "Check the stored key" action on
+  a repository destination opens the repository with the key and reports what
+  happened — a real connect attempt, not a format check (`dest.check_key`). An
+  export writes every repository encryption key, its destination, location,
+  algorithms and the `kopia repository connect` command that opens it, to a
+  plain-text file the user chooses, so a repository can be recovered years
+  later with the kopia CLI alone (`vault.export_keys`).
+- **A machine manifest next to the backups.** Every run now writes or refreshes
+  `_superbackup/machines/<id>.json` and a human-readable README at each
+  destination with a local path, so a drive holding several computers' backups
+  can be understood during a recovery. On by default, switchable off, and
+  reported honestly as unavailable for object storage. The destination editor
+  lists the computers that have backed up to a destination.
+
+### Changed
+
+- `vault.export_keys` is the first and only IPC command that returns secret
+  material. It requires an unlocked vault *and* the master passphrase
+  re-presented, is rate limited, is logged, and writes no file itself. The
+  "no plaintext secret over IPC" rule in `THREAT_MODEL.md` §A7 has been
+  rewritten to record the exception, its bounds and its residual risk rather
+  than quietly ceasing to be true.
+- The vault badge in the sidebar is sized to its content. It was a fixed 32px
+  with two lines of text inside it, so "Locked / Schedules are blocked" ran to
+  the edge and read as clipped.
+
 ## [0.1.0] - 2026-08-31
 
 **First testing release.** Security updates until at least August 2031; see

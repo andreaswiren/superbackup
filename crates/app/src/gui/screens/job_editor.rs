@@ -177,6 +177,7 @@ impl App {
         let mut save = false;
         let mut cancel = false;
         let mut run = false;
+        let mut preview = false;
         let mut menu: Option<&'static str> = None;
 
         let mut button = Button::primary(copy::action::SAVE_CHANGES).enabled(dirty && report.ok());
@@ -205,6 +206,16 @@ impl App {
             }
         });
         let gate = self.data.gate(Action::RunJob);
+        let mut preview_button = Button::ghost(copy::preview::ACTION)
+            .icon(Icon::Search)
+            .tooltip(copy::preview::TOOLTIP)
+            .a11y(format!("Preview job \"{}\" without writing anything", job.name));
+        if let Some(reason) = gate.reason() {
+            preview_button = preview_button.disabled_because(reason);
+        }
+        if preview_button.show(ui).clicked() {
+            preview = true;
+        }
         let mut run_button = Button::secondary(copy::action::RUN_NOW)
             .icon(Icon::Play)
             .a11y(format!("Run job \"{}\" now", job.name));
@@ -223,6 +234,9 @@ impl App {
         }
         if run {
             self.request_run(&job);
+        }
+        if preview {
+            self.request_preview(&job);
         }
         match menu {
             Some("delete") => {

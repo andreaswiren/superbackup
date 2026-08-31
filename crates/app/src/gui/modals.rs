@@ -321,6 +321,54 @@ pub struct ChangePassphraseState {
     pub error: Option<String>,
 }
 
+/// Exporting the repository encryption keys.
+///
+/// The one place in the window that holds plaintext key material, and it holds
+/// it for as long as the modal is open and not one frame longer: the document
+/// is never copied into `Data`, never written anywhere automatic, and dropped
+/// when the modal closes. See `vault.export_keys` in
+/// `crates/core/src/ipc/protocol.rs` for why the command exists at all.
+#[derive(Debug, Clone, Default)]
+pub struct ExportKeysState {
+    pub passphrase: String,
+    pub revealed: bool,
+    pub busy: bool,
+    pub error: Option<String>,
+    /// The document, once the daemon has returned it. `Some` means this modal
+    /// is holding secret material.
+    pub document: Option<String>,
+    pub destinations: u32,
+    pub omitted: Vec<String>,
+    pub suggested_file_name: String,
+    /// Set after a successful save, so the modal can confirm rather than
+    /// leaving the user wondering whether the dialog did anything.
+    pub saved_to: Option<String>,
+}
+
+impl ExportKeysState {
+    pub fn document_arrived(&mut self, reply: superbackup_core::ipc::protocol::KeyExportReply) {
+        self.busy = false;
+        self.error = None;
+        self.destinations = reply.destinations;
+        self.omitted = reply.omitted;
+        self.suggested_file_name = reply.suggested_file_name;
+        self.document = Some(reply.document);
+        // The passphrase has done its job; there is no reason to keep it in a
+        // `String` for the life of the dialog.
+        self.passphrase.clear();
+    }
+
+    pub fn fail(&mut self, message: String) {
+        self.busy = false;
+        self.error = Some(message);
+    }
+
+    /// True once the keys are in this process's memory.
+    pub fn holds_secret(&self) -> bool {
+        self.document.is_some()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UnsavedState {
     pub what: String,
@@ -352,6 +400,7 @@ pub enum Modal {
     Rotate(RotateState),
     RestoreOptions(Box<RestoreOptionsState>),
     ChangePassphrase(ChangePassphraseState),
+    ExportKeys(ExportKeysState),
     Unsaved(UnsavedState),
     NewProject(NewProjectState),
     CronHelp,
@@ -367,6 +416,7 @@ impl Modal {
             Modal::Connect(s) => s.busy,
             Modal::Rotate(s) => s.verifying,
             Modal::ChangePassphrase(s) => s.busy,
+            Modal::ExportKeys(s) => s.busy,
             Modal::RestoreOptions(s) => s.running,
             _ => false,
         }
@@ -415,6 +465,7 @@ impl Modal {
                 then: Box::new(super::nav::Route::Jobs),
             }),
             Modal::NewProject(NewProjectState::default()),
+            Modal::ExportKeys(ExportKeysState::default()),
             Modal::CronHelp,
             Modal::Export,
         ]
@@ -539,6 +590,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
             .map(Box::new)
             .map(Modal::RestoreOptions),
         Modal::ChangePassphrase(state) => show_change_passphrase(app, ctx, state),
+        Modal::ExportKeys(state) => show_export_keys(app, ctx, state),
         Modal::Unsaved(state) => show_unsaved(app, ctx, state),
         Modal::NewProject(state) => show_new_project(app, ctx, state),
         Modal::CronHelp => show_cron_help(ctx),
@@ -1533,6 +1585,207 @@ fn show_export(app: &mut App, ctx: &egui::Context) -> Option<Modal> {
     } else {
         Some(Modal::Export)
     }
+}
+
+/// `Export repository encryption keys`.
+///
+/// Two steps in one modal, never nested: prove who you are, then choose where
+/// the file goes. The warning is on both, because the second is where the user
+/// is about to create a file that is worth as much as the backups.
+///
+/// The daemon deliberately does not write the file. It hands back the document
+/// and the *user* picks the location here, through the platform dialog. That
+/// keeps an arbitrary path out of a daemon that may be running as SYSTEM, and
+/// it means nothing is ever written anywhere the user did not choose: no
+/// default into the config directory, no temporary file left behind.
+fn show_export_keys(
+    app: &mut App,
+    ctx: &egui::Context,
+    mut state: ExportKeysState,
+) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let mut request = false;
+    let mut save = false;
+    let mut copy_text = false;
+    let mut done = false;
+
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-export-keys",
+        ModalSize::Medium,
+        copy::keys::EXPORT_TITLE,
+        Some((Icon::KeyRound, t.danger.mark)),
+        false,
+        |m| {
+            m.body(|ui| {
+                widgets::paragraph(ui, copy::keys::EXPORT_LEAD, Type::Body, t.text_secondary);
+                ui.add_space(space::L);
+                widgets::banner(
+                    ui,
+                    widgets::BannerKind::Danger,
+                    copy::keys::EXPORT_WARN_TITLE,
+                    Some(copy::keys::EXPORT_WARN_BODY),
+                    |_| {},
+                );
+                ui.add_space(space::XL);
+
+                match &state.document {
+                    None => {
+                        let mut revealed = state.revealed;
+                        widgets::passphrase_field(
+                            ui,
+                            &mut state.passphrase,
+                            copy::keys::EXPORT_CONFIRM,
+                            &mut revealed,
+                            state.error.as_deref(),
+                            400.0,
+                        );
+                        state.revealed = revealed;
+                    }
+                    Some(document) => {
+                        if let Some(path) = &state.saved_to {
+                            widgets::banner(
+                                ui,
+                                widgets::BannerKind::Success,
+                                &copy::keys_export_saved(path),
+                                None,
+                                |_| {},
+                            );
+                            ui.add_space(space::L);
+                        }
+                        if state.destinations == 0 {
+                            widgets::text(
+                                ui,
+                                copy::keys::EXPORT_EMPTY,
+                                Type::Body,
+                                t.text_secondary,
+                            );
+                        } else {
+                            widgets::kv(
+                                ui,
+                                copy::keys::EXPORT_PREVIEW,
+                                &copy::keys_export_count(state.destinations),
+                                false,
+                            );
+                        }
+                        if !state.omitted.is_empty() {
+                            ui.add_space(space::M);
+                            widgets::text(
+                                ui,
+                                copy::keys::EXPORT_OMITTED,
+                                Type::BodyStrong,
+                                t.warning.mark,
+                            );
+                            for line in &state.omitted {
+                                widgets::paragraph_at(
+                                    ui,
+                                    line,
+                                    Type::Small,
+                                    t.text_secondary,
+                                    520.0,
+                                );
+                            }
+                        }
+                        ui.add_space(space::L);
+                        // Deliberately no preview of the document itself. The
+                        // keys are in it, and putting them on screen would put
+                        // them into a screenshot, a screen recording and a
+                        // shoulder-surfer's view for no benefit at all: the
+                        // file is the deliverable, not the dialog.
+                        widgets::paragraph(
+                            ui,
+                            copy::keys::EXPORT_NOT_SHOWN,
+                            Type::Small,
+                            t.text_muted,
+                        );
+                        let _ = document;
+                        if let Some(error) = &state.error {
+                            ui.add_space(space::M);
+                            widgets::text(ui, error, Type::Small, t.danger.mark);
+                        }
+                    }
+                }
+            });
+            m.footer(|ui| {
+                if state.document.is_some() {
+                    if Button::primary(copy::keys::EXPORT_SAVE)
+                        .icon(Icon::Download)
+                        .enabled(state.destinations > 0)
+                        .show(ui)
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                    if Button::secondary(copy::keys::EXPORT_COPY)
+                        .enabled(state.destinations > 0)
+                        .show(ui)
+                        .clicked()
+                    {
+                        copy_text = true;
+                    }
+                    if Button::ghost(copy::action::DONE).show(ui).clicked() {
+                        done = true;
+                    }
+                    return;
+                }
+                if Button::danger(copy::keys::EXPORT_SAVE)
+                    .busy(state.busy)
+                    .enabled(!state.busy && !state.passphrase.is_empty())
+                    .show(ui)
+                    .clicked()
+                {
+                    request = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    done = true;
+                }
+            });
+        },
+    );
+
+    if request {
+        state.busy = true;
+        let passphrase = std::mem::take(&mut state.passphrase);
+        app.request_key_export(passphrase);
+        return Some(Modal::ExportKeys(state));
+    }
+    if copy_text {
+        if let Some(document) = &state.document {
+            ctx.copy_text(document.clone());
+            app.toasts.warning(copy::keys::EXPORT_COPIED);
+        }
+    }
+    if save {
+        if let Some(document) = state.document.clone() {
+            match rfd::FileDialog::new()
+                .set_file_name(&state.suggested_file_name)
+                .add_filter("Text file", &["txt"])
+                .save_file()
+            {
+                Some(path) => {
+                    // `write_atomic` creates the file with owner-only
+                    // permissions before a byte of it exists, rather than
+                    // widening and then narrowing — and leaves the old file
+                    // intact if the write fails.
+                    match superbackup_core::paths::write_atomic(&path, document.as_bytes()) {
+                        Ok(()) => {
+                            state.saved_to = Some(path.display().to_string());
+                            state.error = None;
+                            app.toasts
+                                .warning(copy::keys_export_saved(&path.display().to_string()));
+                        }
+                        Err(e) => state.error = Some(e.to_string()),
+                    }
+                }
+                None => app.toasts.info(copy::keys::EXPORT_CANCELLED),
+            }
+        }
+    }
+    if done || close {
+        // Dropping the state is what forgets the keys.
+        return None;
+    }
+    Some(Modal::ExportKeys(state))
 }
 
 /// The probe result a destination editor and the rotation modal both consume.

@@ -633,6 +633,25 @@ pub fn write_manifest_for_destinations(
         .collect()
 }
 
+/// Every machine that has left a record at one destination.
+///
+/// The read half of [`write_manifest_for_destinations`], and the reason the
+/// destination screen can say "this holds backups from three computers" rather
+/// than showing a folder full of opaque names.
+///
+/// An object-storage destination has no filesystem root to read, so it answers
+/// with an empty list rather than an error: the question was answerable and the
+/// answer is "none recorded here". The interface is responsible for saying
+/// *why* it is empty — see the note beside the setting.
+pub fn list_machines_for(destination: &Destination) -> Result<Vec<MachineRecord>> {
+    match &destination.kind {
+        DestinationKind::LocalRepository { path }
+        | DestinationKind::OneDrive { path, .. }
+        | DestinationKind::LocalMirror { path } => list_machines(path),
+        DestinationKind::S3 { .. } => Ok(Vec::new()),
+    }
+}
+
 /// A one-line summary for the GUI's destination card.
 pub fn describe_occupancy(machines: &[MachineRecord], me: &Uuid) -> String {
     let foreign = machines.iter().filter(|m| m.is_foreign(me)).count();

@@ -100,7 +100,10 @@ pub async fn start(runtime: &Arc<Runtime>, job: Job) -> Result<StartedReply> {
         job: Arc::new(job.clone()),
         destinations,
         settings: Arc::new(config.settings.clone()),
-        trigger: Trigger::Manual,
+        // `Preview`, not `Manual`. The run lands in the history like any
+        // other, and a history that cannot tell a rehearsal from a real backup
+        // would let a user believe a destination holds data it does not.
+        trigger: Trigger::Preview,
         dry_run: true,
         // A child of the engine's token where there is one, so shutting the
         // daemon down stops a rehearsal too.

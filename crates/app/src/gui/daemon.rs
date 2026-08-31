@@ -61,6 +61,17 @@ pub enum Intent {
     Restore,
     /// A job run was requested; the name is carried so the toast can say which.
     RunJob(String),
+    /// A rehearsal was requested. Distinct from [`Intent::RunJob`] so the
+    /// window can open the preview screen on the run id it comes back with,
+    /// and so no toast ever says "backing up" about a run that writes nothing.
+    PreviewJob(uuid::Uuid, String),
+    /// The kopia binary was interrogated: where it is, and what it printed.
+    KopiaProbe,
+    /// A repository encryption key was checked against its repository.
+    CheckKey(uuid::Uuid),
+    /// The encryption keys were exported. The reply carries secret material
+    /// and is never stored in `Data`; only the export modal sees it.
+    ExportKeys,
     StopRun,
     SaveJob(String),
     DeleteJob(String),
@@ -76,7 +87,10 @@ pub enum Intent {
 /// One message from the worker to the UI thread.
 #[derive(Debug)]
 pub enum Incoming {
-    Reply(Intent, Reply),
+    /// Boxed because [`Reply`] is by far the largest thing that crosses this
+    /// channel, and an unboxed variant would make every `Link` and `Failed`
+    /// message pay for it.
+    Reply(Intent, Box<Reply>),
     Failed(Intent, ErrorPayload),
     Stream(Box<StreamItem>),
     /// The link came up or went down. Drives the `DaemonUnreachable` banner.
@@ -222,7 +236,7 @@ fn worker(
                     if !matches!(intent, Intent::Fire) {
                         let _ = results.send(Incoming::Link { up: true, detail: None });
                     }
-                    let _ = results.send(Incoming::Reply(intent, reply));
+                    let _ = results.send(Incoming::Reply(intent, Box::new(reply)));
                 }
                 Err(e) => {
                     let payload = ErrorPayload::from_error(&e);
@@ -482,7 +496,10 @@ mod tests {
         let mut got = false;
         while std::time::Instant::now() < deadline && !got {
             for msg in bridge.drain() {
-                if let Incoming::Reply(Intent::Status, Reply::Status(_)) = msg {
+                if let Incoming::Reply(Intent::Status, reply) = msg {
+                    if !matches!(*reply, Reply::Status(_)) {
+                        continue;
+                    }
                     got = true;
                 }
             }

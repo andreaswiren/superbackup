@@ -348,6 +348,20 @@ pub struct Settings {
     pub log_retention_days: u32,
     /// Concurrent job executions. Kopia parallelises within a single snapshot.
     pub max_parallel_jobs: u32,
+    /// Write a small identifying manifest next to the backups at every
+    /// destination that has a local path.
+    ///
+    /// On by default. It costs a few hundred bytes and it is the difference,
+    /// during a disaster recovery, between a drive full of opaque folders and
+    /// a drive that says which computer each folder came from and when it was
+    /// last written. See
+    /// [`crate::platform::identity::write_manifest`].
+    ///
+    /// It contains no secret and no file names — a label, a hostname, an OS
+    /// version, and timestamps — but it is *identifying*, which is why it can
+    /// be switched off.
+    #[serde(default = "default_true")]
+    pub write_machine_manifest: bool,
 }
 
 impl Default for Settings {
@@ -370,6 +384,7 @@ impl Default for Settings {
             log_level: LogLevel::Info,
             log_retention_days: 30,
             max_parallel_jobs: 1,
+            write_machine_manifest: true,
         }
     }
 }

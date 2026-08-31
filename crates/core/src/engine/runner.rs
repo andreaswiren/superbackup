@@ -13,6 +13,26 @@
 //! the limit is three times the limit). Sequential is slower on paper and
 //! faster in practice, and it makes the progress stream comprehensible.
 //!
+//! # Chained destinations
+//!
+//! A destination may be a **replica** of another
+//! ([`crate::model::Destination::replicate_from`]): rather than reading the
+//! sources a second time, its contents are copied from a destination this same
+//! run has just written. That imposes an order, and the order is computed once
+//! per run by [`plan_destinations`] rather than being left to the sequence the
+//! user happened to list.
+//!
+//! Two rules follow, and both are about telling the truth afterwards:
+//!
+//! * A replica whose source did not succeed is **skipped, not failed**, and
+//!   carries [`DestinationRun::skipped_reason`] saying which destination let it
+//!   down. Marking it failed would put a red mark on a destination that is
+//!   perfectly healthy and bury the one that actually broke.
+//! * The fan-out is never flattened. A replica is still its own
+//!   [`DestinationRun`], with its own status, progress and error, tagged with
+//!   [`DestinationRun::replicated_from`] so a reader can tell it was copied
+//!   rather than backed up.
+//!
 //! # Concurrency invariants
 //!
 //! * Each destination attempt runs in its own `tokio::spawn`. This is what
@@ -32,7 +52,7 @@ use crate::engine::cancel::{CancelReason, CancelToken};
 use crate::engine::clock::Clock;
 use crate::engine::executor::{
     BackupExecutor, ExecutorError, ExecutorResult, PrepareRequest, ProgressSink, ProgressUpdate,
-    SnapshotOutcome, SnapshotRequest,
+    ReplicateRequest, SnapshotOutcome, SnapshotRequest,
 };
 use crate::engine::hooks::{HookContext, HookKind, HookOutcome, HookRunner};
 use crate::engine::mirror::{MirrorEngine, MirrorOptions, MirrorRequest};
@@ -42,10 +62,11 @@ use crate::engine::EngineEvent;
 use crate::error::ErrorCode;
 use crate::model::{Destination, DestinationKind, Job, RetentionPolicy, Settings};
 use crate::state::{
-    DestinationRun, Event, JobRun, PersistedState, Progress, RunStatus, Severity, Trigger,
+    DestinationRun, Event, JobRun, PersistedState, Progress, ReplicationOrigin, RunStatus,
+    Severity, Trigger,
 };
 use chrono::{DateTime, Duration, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -80,6 +101,155 @@ pub struct RunRequest {
     /// a "dry run" that wrote gigabytes. The mirror engine is told here
     /// instead, so the guarantee holds for every destination kind.
     pub dry_run: bool,
+}
+
+/// One destination in the order the runner will attempt it.
+#[derive(Debug, Clone)]
+pub struct PlannedDestination {
+    pub destination: Arc<Destination>,
+    /// Index **within this plan** of the destination whose success this one
+    /// requires. `None` for a destination written from the job's sources.
+    pub depends_on: Option<usize>,
+    /// Where this destination's contents come from, when it is a replica.
+    /// Recorded verbatim into [`DestinationRun::replicated_from`].
+    pub origin: Option<ReplicationOrigin>,
+    /// Set when the dependency can never be satisfied inside this run — the
+    /// chain source is not one of the job's destinations, or the declarations
+    /// form a cycle. The string is the reason a user will read.
+    ///
+    /// Both cases are rejected by [`crate::config::validate`]. They are handled
+    /// here anyway because the daemon can be started on a leniently loaded
+    /// configuration that the user is still repairing, and "the run hung" or
+    /// "the run panicked" are not acceptable answers to a broken document.
+    pub blocked: Option<String>,
+}
+
+impl PlannedDestination {
+    /// True when this destination is filled by replication.
+    pub fn is_replica(&self) -> bool {
+        self.destination.is_replica()
+    }
+}
+
+/// Order a job's destinations so that every replica follows the destination it
+/// is copied from.
+///
+/// A stable topological sort: the user's declared order is preserved wherever
+/// the dependencies allow it, so a job whose destinations already happen to be
+/// listed in a workable order runs in exactly that order and the run detail
+/// looks like the job editor. Only a replica listed before its source moves.
+///
+/// Total by construction. A cycle, or a replica whose source is not part of
+/// the run, yields a plan entry with [`PlannedDestination::blocked`] set rather
+/// than a missing entry: every destination the job asked for gets a
+/// [`DestinationRun`], including the ones that cannot run, because a
+/// destination that silently vanishes from a run report is how a user comes to
+/// believe a backup happened.
+pub fn plan_destinations(destinations: &[Arc<Destination>]) -> Vec<PlannedDestination> {
+    let in_run: HashSet<Uuid> = destinations.iter().map(|d| d.id).collect();
+    let mut plan: Vec<PlannedDestination> = Vec::with_capacity(destinations.len());
+    let mut placed: HashMap<Uuid, usize> = HashMap::new();
+    let mut remaining: Vec<usize> = (0..destinations.len()).collect();
+
+    while !remaining.is_empty() {
+        let mut deferred: Vec<usize> = Vec::new();
+        let mut progressed = false;
+
+        for &index in &remaining {
+            let destination = Arc::clone(&destinations[index]);
+            let entry = match destination.replicate_from {
+                None => Some(PlannedDestination {
+                    destination,
+                    depends_on: None,
+                    origin: None,
+                    blocked: None,
+                }),
+                // Self-reference: rejected by validation, and there is no order
+                // that satisfies it.
+                Some(source_id) if source_id == destination.id => Some(PlannedDestination {
+                    blocked: Some(format!(
+                        "\"{}\" is configured to replicate from itself, which cannot be done.",
+                        destination.name
+                    )),
+                    origin: Some(ReplicationOrigin {
+                        destination_id: source_id,
+                        destination_name: destination.name.clone(),
+                    }),
+                    destination,
+                    depends_on: None,
+                }),
+                Some(source_id) => match placed.get(&source_id) {
+                    Some(&source_index) => {
+                        let source: &PlannedDestination = &plan[source_index];
+                        Some(PlannedDestination {
+                            depends_on: Some(source_index),
+                            origin: Some(ReplicationOrigin {
+                                destination_id: source_id,
+                                destination_name: source.destination.name.clone(),
+                            }),
+                            destination,
+                            blocked: None,
+                        })
+                    }
+                    None if !in_run.contains(&source_id) => Some(PlannedDestination {
+                        blocked: Some(format!(
+                            "\"{}\" is replicated from a destination this job does not back \
+                             up, so there was nothing for it to copy.",
+                            destination.name
+                        )),
+                        origin: Some(ReplicationOrigin {
+                            destination_id: source_id,
+                            destination_name: source_id.to_string(),
+                        }),
+                        destination,
+                        depends_on: None,
+                    }),
+                    // The source is in this run but has not been placed yet.
+                    None => None,
+                },
+            };
+
+            match entry {
+                Some(entry) => {
+                    placed.insert(entry.destination.id, plan.len());
+                    plan.push(entry);
+                    progressed = true;
+                }
+                None => deferred.push(index),
+            }
+        }
+
+        if !progressed {
+            // Nothing could be placed, so everything left is waiting on
+            // something else that is also waiting: a cycle. Emit them in the
+            // declared order, blocked, so the run still reports on each.
+            for &index in &deferred {
+                let destination = Arc::clone(&destinations[index]);
+                let origin = destination.replicate_from.map(|id| ReplicationOrigin {
+                    destination_id: id,
+                    destination_name: destinations
+                        .iter()
+                        .find(|d| d.id == id)
+                        .map(|d| d.name.clone())
+                        .unwrap_or_else(|| id.to_string()),
+                });
+                plan.push(PlannedDestination {
+                    blocked: Some(format!(
+                        "\"{}\" is part of a loop of destinations that replicate from each \
+                         other, so none of them can go first.",
+                        destination.name
+                    )),
+                    destination,
+                    depends_on: None,
+                    origin,
+                });
+            }
+            break;
+        }
+        remaining = deferred;
+    }
+
+    plan
 }
 
 /// Executes runs. One instance is shared by the scheduler and by every manual
@@ -136,6 +306,10 @@ impl Runner {
     /// inventing a second, worse status enum.
     pub async fn execute(&self, request: RunRequest) -> JobRun {
         let started_at = self.clock.now_utc();
+        // Computed once, before anything runs, so that `run.destinations` and
+        // the execution order are the same list. A replica listed before its
+        // source moves here and nowhere else.
+        let plan = plan_destinations(&request.destinations);
         let mut run = JobRun {
             run_id: request.run_id,
             job_id: request.job.id,
@@ -144,11 +318,7 @@ impl Runner {
             status: RunStatus::Running,
             started_at,
             finished_at: None,
-            destinations: request
-                .destinations
-                .iter()
-                .map(|d| new_destination_run(d.as_ref()))
-                .collect(),
+            destinations: plan.iter().map(new_destination_run).collect(),
         };
 
         self.emit(EngineEvent::RunStarted { run: run.clone() });
@@ -226,14 +396,32 @@ impl Runner {
                 .await;
         }
 
-        for index in 0..run.destinations.len() {
+        for index in 0..plan.len() {
             if request.cancel.is_cancelled() {
                 self.mark_remaining(&mut run, index, RunStatus::Cancelled);
                 break;
             }
-            let destination = Arc::clone(&request.destinations[index]);
+            let planned = &plan[index];
+
+            // A chained destination only makes sense after the destination it
+            // copies from has actually been updated by this run. When that did
+            // not happen, skipping is the honest outcome: nothing about *this*
+            // destination is broken, and reporting it as failed would point the
+            // user at the wrong thing.
+            if let Some(reason) = self.replication_blocker(&run, planned) {
+                self.apply_skip(&mut run, index, reason);
+                continue;
+            }
+
+            let source = planned.depends_on.map(|i| Arc::clone(&plan[i].destination));
             let outcome = self
-                .run_destination(&request, &destination, &progress_tx, Arc::clone(&latest))
+                .run_destination(
+                    &request,
+                    &planned.destination,
+                    source.as_ref(),
+                    &progress_tx,
+                    Arc::clone(&latest),
+                )
                 .await;
             self.apply_destination_outcome(&mut run, index, outcome);
 
@@ -262,11 +450,62 @@ impl Runner {
         .await
     }
 
+    /// Why a chained destination cannot run, or `None` when it can.
+    ///
+    /// Only ever consulted for a replica: a destination written from the
+    /// sources has nothing to wait for.
+    fn replication_blocker(&self, run: &JobRun, planned: &PlannedDestination) -> Option<String> {
+        if let Some(reason) = &planned.blocked {
+            return Some(reason.clone());
+        }
+        let source_index = planned.depends_on?;
+        let source = run.destinations.get(source_index)?;
+        if matches!(source.status, RunStatus::Succeeded | RunStatus::SucceededWithWarnings) {
+            return None;
+        }
+        let what_happened = match source.status {
+            RunStatus::Failed => "failed",
+            RunStatus::Cancelled => "was cancelled",
+            RunStatus::Skipped => "was skipped",
+            _ => "did not finish",
+        };
+        Some(format!(
+            "\"{}\" is replicated from \"{}\", which {what_happened} in this run. Nothing was \
+             copied, and the copy that is already there was left untouched.",
+            planned.destination.name, source.destination_name
+        ))
+    }
+
+    /// Record a destination as skipped, with the reason a user will read.
+    fn apply_skip(&self, run: &mut JobRun, index: usize, reason: String) {
+        let now = self.clock.now_utc();
+        let Some(dest) = run.destinations.get_mut(index) else { return };
+        dest.status = RunStatus::Skipped;
+        // `started_at` stays `None`: nothing was attempted. That matches
+        // `mark_remaining`, so every skipped destination in the history looks
+        // the same whatever caused the skip.
+        dest.finished_at = Some(now);
+        dest.skipped_reason = Some(reason.clone());
+        let dest = dest.clone();
+        self.log(
+            Event::new(Severity::Warning, "job.destination", reason)
+                .with_job(run.job_id)
+                .with_run(run.run_id)
+                .with_destination(dest.destination_id),
+        );
+        self.emit(EngineEvent::DestinationFinished {
+            run_id: run.run_id,
+            job_id: run.job_id,
+            destination: Box::new(dest),
+        });
+    }
+
     /// Run one destination, including the retry loop.
     async fn run_destination(
         &self,
         request: &RunRequest,
         destination: &Arc<Destination>,
+        source: Option<&Arc<Destination>>,
         progress_tx: &tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
         latest: Arc<std::sync::Mutex<HashMap<Uuid, Progress>>>,
     ) -> DestinationOutcome {
@@ -300,8 +539,9 @@ impl Runner {
                 Arc::clone(&self.clock),
             );
 
-            let result =
-                self.attempt_destination(request, destination, bandwidth, sink, attempt).await;
+            let result = self
+                .attempt_destination(request, destination, source, bandwidth, sink, attempt)
+                .await;
 
             match result {
                 Ok(outcome) => return DestinationOutcome::Succeeded(Box::new(outcome)),
@@ -358,14 +598,17 @@ impl Runner {
         }
     }
 
-    /// One attempt against one destination: prepare, then snapshot (or mirror).
+    /// One attempt against one destination: replicate, or prepare and snapshot,
+    /// or mirror.
     ///
     /// The work is spawned so that a driver ignoring its cancel token cannot
     /// wedge the run; see [`CANCEL_GRACE_SECONDS`].
+    #[allow(clippy::too_many_arguments)]
     async fn attempt_destination(
         &self,
         request: &RunRequest,
         destination: &Arc<Destination>,
+        source: Option<&Arc<Destination>>,
         bandwidth: crate::engine::throttle::ResolvedBandwidth,
         sink: ProgressSink,
         attempt: u32,
@@ -373,6 +616,7 @@ impl Runner {
         let cancel = request.cancel.clone();
         let job = Arc::clone(&request.job);
         let destination = Arc::clone(destination);
+        let source = source.map(Arc::clone);
         let run_id = request.run_id;
         let executor = Arc::clone(&self.executor);
         let mirror = self.mirror.clone();
@@ -380,6 +624,36 @@ impl Runner {
         let dry_run = request.dry_run;
 
         let mut handle = tokio::spawn(async move {
+            if let Some(source) = source {
+                // A replica is never `prepare`d. `prepare` connects and, when
+                // the repository is missing, *creates* one — which would mint a
+                // repository with a different unique id, and every `sync-to`
+                // from then on would be refused by kopia as incompatible data.
+                // Replication brings its own storage location with it.
+                let outcome = executor
+                    .replicate(ReplicateRequest {
+                        run_id,
+                        job_id: job.id,
+                        job_name: job.name.clone(),
+                        destination: Arc::clone(&destination),
+                        source,
+                        bandwidth,
+                        progress: sink,
+                        cancel,
+                        attempt,
+                        dry_run,
+                    })
+                    .await?;
+                // Folded into the shared shape so that every destination in a
+                // run is reported through one type. A replication creates no
+                // snapshot of its own — the snapshots it copies already have
+                // ids, recorded against the destination they were made in.
+                return Ok(SnapshotOutcome {
+                    snapshot_id: None,
+                    progress: outcome.progress,
+                    warnings: outcome.warnings,
+                });
+            }
             if destination.kind.is_repository() {
                 let prepared = executor
                     .prepare(PrepareRequest {
@@ -729,10 +1003,10 @@ enum DestinationOutcome {
     Cancelled(Progress),
 }
 
-fn new_destination_run(destination: &Destination) -> DestinationRun {
+fn new_destination_run(planned: &PlannedDestination) -> DestinationRun {
     DestinationRun {
-        destination_id: destination.id,
-        destination_name: destination.name.clone(),
+        destination_id: planned.destination.id,
+        destination_name: planned.destination.name.clone(),
         status: RunStatus::Queued,
         started_at: None,
         finished_at: None,
@@ -740,6 +1014,8 @@ fn new_destination_run(destination: &Destination) -> DestinationRun {
         snapshot_id: None,
         error: None,
         warnings: Vec::new(),
+        replicated_from: planned.origin.clone(),
+        skipped_reason: None,
     }
 }
 

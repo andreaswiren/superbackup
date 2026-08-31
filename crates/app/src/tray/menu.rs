@@ -583,6 +583,8 @@ mod tests {
                 snapshot_id: None,
                 error: None,
                 warnings: vec![],
+                replicated_from: None,
+                skipped_reason: None,
             }],
         }
     }

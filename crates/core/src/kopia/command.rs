@@ -329,6 +329,16 @@ impl KopiaCommand {
         self
     }
 
+    /// A bare application-level flag with no value, before the subcommand.
+    ///
+    /// Exists for `--version`, which kingpin implements as a flag on the
+    /// application rather than as a subcommand, and which rejects the
+    /// `--flag=value` form [`KopiaCommand::global_bool`] produces.
+    pub fn global_switch(&mut self, flag: &str) -> &mut Self {
+        self.global_args.push(OsString::from(format!("--{flag}")));
+        self
+    }
+
     /// Append one word of the subcommand path.
     pub fn command(&mut self, word: impl Into<String>) -> &mut Self {
         self.command.push(word.into());
@@ -388,6 +398,31 @@ impl KopiaCommand {
         self
     }
 
+    /// Stage a secret under `name`, discarding anything already staged there.
+    ///
+    /// `repository sync-to` is the one command that addresses **two** storage
+    /// locations at once, and kopia binds both to the same variables
+    /// (`AWS_ACCESS_KEY_ID` and friends). The source repository is opened from
+    /// its stored connection profile, which carries its own credentials, so the
+    /// environment belongs to the *destination* — and the source's credentials,
+    /// staged by the driver's `base()`, have to be genuinely replaced rather
+    /// than shadowed. Overwriting by insertion order would work but would leave
+    /// two live copies of a secret in the builder and two entries in
+    /// [`KopiaCommand::secret_env_names`], which is not a thing to be casual
+    /// about.
+    pub fn replace_secret_env(&mut self, name: impl Into<String>, value: &Secret) -> &mut Self {
+        let name = name.into();
+        self.secret_env.retain(|(k, _)| k != &name);
+        self.secret_env.push((name, value.clone()));
+        self
+    }
+
+    /// Drop any secret staged under `name`.
+    pub fn clear_secret_env(&mut self, name: &str) -> &mut Self {
+        self.secret_env.retain(|(k, _)| k != name);
+        self
+    }
+
     /// A stable, credential-free label for logs and errors: `repository create s3`.
     pub fn label(&self) -> String {
         if self.command.is_empty() {
@@ -405,6 +440,34 @@ impl KopiaCommand {
         v.extend(self.command.iter().map(OsString::from));
         v.extend(self.args.iter().cloned());
         v
+    }
+
+    /// The exact command line this will execute, for showing to a user.
+    ///
+    /// **Safe to display, and worth displaying.** No secret can appear here:
+    /// secrets travel in the child's environment, [`KopiaCommand::arg`] does
+    /// not accept a [`Secret`], and [`KopiaCommand::audit_argv`] refuses the
+    /// spawn if one ever did. Showing the invocation verbatim is what lets a
+    /// user reproduce it in their own terminal and satisfy themselves that
+    /// superbackup is doing what it says.
+    ///
+    /// Arguments containing whitespace are quoted so the line can be pasted
+    /// into a shell. Non-UTF-8 arguments are rendered lossily; this is a
+    /// display string, never something to re-parse.
+    pub fn display_command_line(&self) -> String {
+        let quote = |s: &str| -> String {
+            if s.is_empty() || s.contains([' ', '\t', '"']) {
+                format!("\"{}\"", s.replace('"', "\\\""))
+            } else {
+                s.to_string()
+            }
+        };
+        let mut out = quote(&self.program.to_string_lossy());
+        for arg in self.argv() {
+            out.push(' ');
+            out.push_str(&quote(&arg.to_string_lossy()));
+        }
+        out
     }
 
     /// The names of the environment variables that will carry secrets. Exposed

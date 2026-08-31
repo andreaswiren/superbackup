@@ -98,6 +98,10 @@ pub fn trigger(t: superbackup_core::state::Trigger) -> &'static str {
         T::FileChange => "File change",
         T::CatchUp => "Catch-up",
         T::Retry => "Retry",
+        // Named for what it is, not for what started it: the one thing a
+        // reader of the history has to know about this run is that nothing
+        // was written.
+        T::Preview => "Preview (nothing written)",
     }
 }
 
@@ -314,6 +318,27 @@ pub struct Empty {
 
 pub mod empty {
     use super::Empty;
+
+    pub const PREVIEW_WAITING: Empty = Empty {
+        title: "Working out what would be copied",
+        body: "superbackup is asking each destination what a backup would cost. Nothing is being \
+               written.",
+        primary: None,
+        secondary: None,
+    };
+    pub const PREVIEW_NONE: Empty = Empty {
+        title: "No preview yet",
+        body: "Run a preview and the result appears here, one card per destination.",
+        primary: None,
+        secondary: None,
+    };
+    pub const MACHINES: Empty = Empty {
+        title: "No computer has left a record here",
+        body: "A record appears the first time a backup runs to this destination, so a human \
+               opening the drive later can tell whose backups these are.",
+        primary: None,
+        secondary: None,
+    };
 
     pub const JOBS: Empty = Empty {
         title: "No backup jobs yet",
@@ -1580,6 +1605,201 @@ pub fn set_remote_changes(count: usize) -> String {
 }
 pub fn set_adv_cache_size(size: u64) -> String {
     format!("Currently {}.", format::bytes(size))
+}
+
+// ---------------------------------------------------------------------------
+// 11b. Kopia binary — "prove it works"
+// ---------------------------------------------------------------------------
+
+/// The Kopia settings page. Every string here exists so a user can check the
+/// application's claims rather than take them on trust, which is why the raw
+/// command line and the raw output are shown and labelled as such.
+pub mod kopia {
+    pub const WHERE_TITLE: &str = "Which kopia is being used";
+    pub const WHERE_LEAD: &str =
+        "superbackup does not do the backing up itself. Kopia does, and this is the exact copy of \
+         it being run.";
+    pub const PATH: &str = "Full path";
+    pub const VERSION: &str = "Version";
+    pub const PROVENANCE: &str = "Found by";
+    pub const BANNER: &str = "Reports itself as";
+    pub const MINIMUM: &str = "Minimum accepted";
+    pub const REVEAL: &str = "Show in folder";
+    pub const REVEAL_FAILED: &str = "This system could not open a file browser at that folder.";
+    pub const NOT_FOUND: &str = "No usable kopia was found";
+    pub const NOT_FOUND_BODY: &str =
+        "Until one is available, repository destinations cannot be created, connected to, or \
+         backed up. Folder mirrors still work.";
+
+    pub const ROUTES_TITLE: &str = "Where superbackup looked";
+    pub const ROUTES_LEAD: &str =
+        "In this order. The first one that produces a working kopia new enough to drive is the \
+         one used.";
+    pub const ROUTE_CHOSEN: &str = "In use";
+
+    pub const VERIFY_TITLE: &str = "Check it for yourself";
+    pub const VERIFY_LEAD: &str =
+        "This runs kopia now and shows you everything it printed. Nothing is written and no \
+         backup is started.";
+    pub const VERIFY_BUTTON: &str = "Run the checks";
+    pub const VERIFY_AGAINST: &str = "Check a repository as well";
+    pub const VERIFY_AGAINST_NONE: &str = "Version only";
+    pub const VERIFY_RUNNING: &str = "Running kopia…";
+    pub const VERIFY_EMPTY: &str =
+        "Nothing has been run yet. Press the button and the exact command, its exit code and its \
+         output appear here.";
+    pub const COMMAND_LINE: &str = "Command";
+    pub const COMMAND_LINE_NOTE: &str =
+        "Safe to show and safe to paste into a terminal: encryption keys and storage keys are \
+         passed to kopia through environment variables, never on the command line.";
+    pub const SECRET_ENV: &str = "Secrets passed in";
+    pub const EXIT_CODE: &str = "Exit code";
+    pub const STDOUT: &str = "Output";
+    pub const STDERR: &str = "Errors";
+    pub const NO_OUTPUT: &str = "(nothing printed)";
+    pub const NOT_ATTEMPTED: &str = "Not run";
+
+    pub const MANAGED_TITLE: &str = "The build superbackup manages";
+    pub const MANAGED_LEAD: &str =
+        "When no kopia is installed, superbackup downloads one from Kopia's own releases and \
+         checks it against the SHA-256 published with it.";
+    pub const MANAGED_PATH: &str = "Kept at";
+    pub const MANAGED_VERSION: &str = "Installed version";
+    pub const MANAGED_NONE: &str = "Not installed";
+    pub const UPDATE_POLICY: &str = "When a newer kopia is released";
+    pub const UPDATE_OFF: &str = "Do nothing";
+    pub const UPDATE_NOTIFY: &str = "Tell me, and let me decide";
+    pub const UPDATE_AUTOMATIC: &str = "Install it";
+    pub const UPDATE_CHECK: &str = "Check for an update now";
+    pub const UPDATE_NONE: &str = "No update check has been made in this window yet.";
+    pub const PREFER_SYSTEM: &str = "Prefer a kopia already installed on this computer";
+}
+
+pub fn kopia_update_available(version: &str) -> String {
+    format!("kopia {version} is available.")
+}
+pub fn kopia_ran_in(ms: u64) -> String {
+    format!("{ms} ms")
+}
+
+// ---------------------------------------------------------------------------
+// 11c. Encryption keys — validate and back up
+// ---------------------------------------------------------------------------
+
+pub mod keys {
+    pub const CHECK: &str = "Check this key";
+    pub const CHECK_STORED: &str = "Check the stored key";
+    pub const CHECKING: &str = "Opening the repository…";
+    pub const CHECK_OK: &str = "The repository opened with this key.";
+    pub const CHECK_BAD: &str = "The repository did not accept this key.";
+    pub const CHECK_NONE: &str =
+        "There is no repository here yet, so there is nothing to check the key against.";
+    pub const CHECK_NOTE: &str =
+        "This is not a format check. superbackup opens the repository with the key and tells you \
+         what happened.";
+
+    pub const EXPORT_TITLE: &str = "Back up your encryption keys";
+    pub const EXPORT_LEAD: &str =
+        "A repository encryption key that is lost cannot be recovered by anyone, including us. \
+         Write these somewhere safe.";
+    pub const EXPORT_WARN_TITLE: &str = "This file is worth as much as the backups";
+    pub const EXPORT_WARN_BODY: &str =
+        "It is not encrypted. Anyone holding it can read your backups. A password manager, a \
+         safe, or paper — not Downloads, and not email.";
+    pub const EXPORT_NOT_SHOWN: &str =
+        "The keys are not shown here on purpose. They go straight into the file you choose, so \
+         they never appear on your screen.";
+    pub const EXPORT_CONFIRM: &str = "Enter your master passphrase to continue";
+    pub const EXPORT_SAVE: &str = "Choose a file and save";
+    pub const EXPORT_COPY: &str = "Copy as text instead";
+    pub const EXPORT_COPIED: &str = "Copied. Your clipboard now holds your encryption keys.";
+    pub const EXPORT_CANCELLED: &str = "Nothing was saved.";
+    pub const EXPORT_OMITTED: &str = "Not included";
+    pub const EXPORT_EMPTY: &str =
+        "There are no repository encryption keys to export yet. Create a repository first.";
+    pub const EXPORT_PREVIEW: &str = "What the file will contain";
+}
+
+pub fn keys_export_saved(path: &str) -> String {
+    format!("Encryption keys written to {path}. Move it somewhere safe now.")
+}
+pub fn keys_export_count(count: u32) -> String {
+    match count {
+        1 => "1 repository".to_string(),
+        n => format!("{n} repositories"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 11d. Machine manifest
+// ---------------------------------------------------------------------------
+
+pub mod machines {
+    pub const SETTING: &str = "Leave a note next to the backups saying which computer wrote them";
+    pub const SETTING_BODY: &str =
+        "Writes a small `_superbackup` folder at each destination holding this computer's label, \
+         host name, operating system and the date it last backed up, plus a plain-text README. It \
+         is what makes a shared drive readable during a recovery. It contains no file names and \
+         no keys.";
+    pub const SETTING_S3: &str =
+        "Object storage cannot hold it. A bucket has no folder superbackup can write to outside \
+         the repository kopia manages, so S3 and StorJ destinations get no note.";
+    pub const TITLE: &str = "Computers backing up here";
+    pub const EMPTY: &str = "No computer has left a record at this destination yet.";
+    pub const UNSUPPORTED: &str = "Not recorded for object storage.";
+    pub const THIS_PC: &str = "This computer";
+    pub const LAST_SEEN: &str = "Last backed up";
+    pub const REFRESH: &str = "Look again";
+    pub const UNREADABLE: &str = "That location could not be read from this window.";
+}
+
+pub fn machines_last_seen(when: &str) -> String {
+    format!("Last backed up {when}")
+}
+
+// ---------------------------------------------------------------------------
+// 11e. Dry run / preview
+// ---------------------------------------------------------------------------
+
+pub mod preview {
+    pub const ACTION: &str = "Preview";
+    pub const TITLE: &str = "Preview";
+    pub const TOOLTIP: &str = "See what this job would copy, without copying anything";
+    pub const NOTHING_WRITTEN: &str = "Nothing was written. This was a rehearsal.";
+    pub const NOTHING_WRITTEN_BODY: &str =
+        "No file was copied, no snapshot was created and nothing was deleted at any destination. \
+         The figures below are what a real run would have produced.";
+    pub const RUNNING: &str = "Working out what would be copied…";
+    pub const EMPTY: &str = "Run a preview and the result appears here, one card per destination.";
+    pub const PER_DESTINATION: &str =
+        "One card per destination. superbackup never adds these together: a job that reached two \
+         destinations out of three has not backed up.";
+    pub const FILES: &str = "Files";
+    pub const TOTAL_SIZE: &str = "Total size";
+    pub const WOULD_COPY: &str = "Would be copied";
+    pub const UNCHANGED: &str = "Already up to date";
+    pub const UNKNOWN_SPLIT: &str =
+        "kopia estimates the whole source and does not say how much of it is already stored, so \
+         the new-versus-unchanged split is not available for a repository.";
+    pub const NO_PATHS: &str = "Individual paths are not available";
+    pub const NO_PATHS_REPO: &str =
+        "`kopia snapshot estimate` reports totals only; it does not list the files it counted.";
+    pub const NO_PATHS_MIRROR: &str =
+        "The mirror rehearsal counts every file as it walks the tree but does not keep the list, \
+         so there is nothing to show.";
+    pub const NOT_REHEARSABLE: &str = "This destination could not be rehearsed";
+    pub const RERUN: &str = "Preview again";
+    pub const RUN_FOR_REAL: &str = "Back up now";
+}
+
+pub fn preview_title(job: &str) -> String {
+    format!("Preview of {job}")
+}
+pub fn preview_and_more(count: usize) -> String {
+    format!("and {count} more")
+}
+pub fn preview_started(job: &str) -> String {
+    format!("Working out what \"{job}\" would copy. Nothing is being written.")
 }
 
 pub mod doctor {

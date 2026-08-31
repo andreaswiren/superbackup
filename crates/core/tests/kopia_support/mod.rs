@@ -26,6 +26,10 @@ use superbackup_core::paths::Paths;
 /// * `ok` (default) — exit 0, optionally printing `stdout` / `stdout_file`.
 /// * `snapshot` — replay recorded `\r`-delimited progress frames and an ignored
 ///   -error line on stderr, then the `--json` manifest on stdout.
+/// * `sync` — replay `repository sync-to`'s own progress renderer: the
+///   "…to copy" inventory line followed by "Copied N blobs" frames.
+/// * `synctruncated` — the same, stopping before the final frame, which is what
+///   kopia's rate-limited sync output does most of the time.
 /// * `hang` — run until killed, appending to `heartbeat.txt` so a test can see
 ///   whether the process is still alive.
 /// * `flood` — write 20 000 progress frames as fast as possible, to prove a
@@ -147,6 +151,29 @@ fn main() {
                 let _ = write!(e, " * 0 hashing, 15316 hashed (4.4 GB), 1201 cached (2.1 GB), uploaded 1.9 GB (1 errors ignored), estimated 6.5 GB (100.0%) 0s left\r\n");
                 let _ = e.flush();
             }
+            emit_stdout(&ctl);
+        }
+        "sync" => {
+            let e = std::io::stderr();
+            let mut e = e.lock();
+            let _ = write!(e, "\r  Found 41230 BLOBs (88.1 GB) in the source repository, 512 (1.2 GB) to copy");
+            let _ = e.flush();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let _ = write!(e, "\r  Copied 214 blobs (612.4 MB), Speed: 18.1 MB/s, ETA: 42s");
+            let _ = e.flush();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let _ = write!(e, "\r  Copied 512 blobs (1.2 GB), Speed: 19.0 MB/s, ETA: 0s      \n");
+            let _ = e.flush();
+            emit_stdout(&ctl);
+        }
+        "synctruncated" => {
+            let e = std::io::stderr();
+            let mut e = e.lock();
+            let _ = write!(e, "\r  Found 41230 BLOBs (88.1 GB) in the source repository, 512 (1.2 GB) to copy");
+            let _ = e.flush();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let _ = write!(e, "\r  Copied 214 blobs (612.4 MB), Speed: 18.1 MB/s, ETA: 42s");
+            let _ = e.flush();
             emit_stdout(&ctl);
         }
         "fail" => {

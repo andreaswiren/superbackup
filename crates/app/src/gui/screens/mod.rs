@@ -13,6 +13,7 @@ pub mod destinations;
 pub mod job_editor;
 pub mod jobs;
 pub mod onboarding;
+pub mod preview;
 pub mod provider_editor;
 pub mod providers;
 pub mod restore;
@@ -32,6 +33,7 @@ pub struct Screens {
     pub activity: activity::State,
     pub restore: restore::State,
     pub settings: settings::State,
+    pub preview: preview::State,
     pub run_detail: run_detail::State,
 }
 
@@ -50,5 +52,6 @@ impl Screens {
             || self.provider_editor.busy()
             || self.restore.busy()
             || self.settings.busy()
+            || self.preview.busy()
     }
 }

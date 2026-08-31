@@ -1489,6 +1489,16 @@ impl<'a> Field<'a> {
                 edit = edit.char_limit(n);
             }
 
+            // Both the widget's own response rect and the rect its frame was
+            // drawn at are needed. `TextEdit` reports the *content* rect, but
+            // draws its frame at the outer rect that includes the margin — so
+            // painting our border at the response rect put it a few pixels
+            // inside egui's, and the field appeared to have a second rounded
+            // ring floating inside it. The border must go on the outer rect.
+            // Declared without a value: both branches below assign it, and an
+            // initialiser here would be a dead store that clippy is right to
+            // object to.
+            let frame_rect;
             let r = if let Some(rows) = self.multiline_rows {
                 let mut multi = egui::TextEdit::multiline(value)
                     .desired_width(self.width)
@@ -1505,18 +1515,24 @@ impl<'a> Field<'a> {
                     multi = multi
                         .hint_text(egui::RichText::new(p).color(t.text_muted).font(font.clone()));
                 }
-                ui.scope(|ui| {
-                    suppress_builtin_frame_stroke(ui);
-                    ui.add_enabled(self.enabled, multi)
-                })
-                .inner
+                {
+                    let scoped = ui.scope(|ui| {
+                        suppress_builtin_frame_stroke(ui);
+                        ui.add_enabled(self.enabled, multi)
+                    });
+                    frame_rect = Some(scoped.response.rect);
+                    scoped.inner
+                }
             } else {
-                ui.scope(|ui| {
-                    ui.set_min_height(size::CONTROL_H);
-                    suppress_builtin_frame_stroke(ui);
-                    ui.add_enabled(self.enabled, edit)
-                })
-                .inner
+                {
+                    let scoped = ui.scope(|ui| {
+                        ui.set_min_height(size::CONTROL_H);
+                        suppress_builtin_frame_stroke(ui);
+                        ui.add_enabled(self.enabled, edit)
+                    });
+                    frame_rect = Some(scoped.response.rect);
+                    scoped.inner
+                }
             };
 
             // The border: 2px danger on error, 2px focus inset when focused —
@@ -1530,7 +1546,8 @@ impl<'a> Field<'a> {
             } else {
                 Stroke::new(1.0_f32, t.border_control)
             };
-            ui.painter().rect_stroke(r.rect, radius::CONTROL, stroke, StrokeKind::Inside);
+            let border_rect = frame_rect.unwrap_or(r.rect);
+            ui.painter().rect_stroke(border_rect, radius::CONTROL, stroke, StrokeKind::Inside);
 
             if let Some(u) = self.unit {
                 let g = galley(ui, u, Type::Small, t.text_muted);

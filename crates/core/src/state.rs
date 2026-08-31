@@ -165,6 +165,40 @@ pub struct DestinationRun {
     /// Non-fatal problems: unreadable files, skipped paths.
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Set when this destination was filled by **replicating** another
+    /// destination's repository rather than by backing up the job's sources.
+    ///
+    /// The fan-out is never flattened: a replica is still its own
+    /// `DestinationRun`, with its own status, progress and error. This field is
+    /// what lets a reader tell the two apart, and it carries the source's name
+    /// as it stood at run time so a later rename cannot make the history lie.
+    #[serde(default)]
+    pub replicated_from: Option<ReplicationOrigin>,
+    /// Why a [`RunStatus::Skipped`] destination was skipped, in words a user
+    /// can act on.
+    ///
+    /// Separate from `error` on purpose. "Your offsite copy was not made
+    /// because the local backup it copies from failed" is not itself a
+    /// failure of the offsite destination, and recording it as one would put a
+    /// red error on a destination that is fine and hide the destination that
+    /// actually broke.
+    #[serde(default)]
+    pub skipped_reason: Option<String>,
+}
+
+impl DestinationRun {
+    /// True when this destination was replicated from another rather than
+    /// backed up from the job's sources.
+    pub fn is_replica(&self) -> bool {
+        self.replicated_from.is_some()
+    }
+}
+
+/// The destination a replica was copied from, as it was named at run time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplicationOrigin {
+    pub destination_id: Uuid,
+    pub destination_name: String,
 }
 
 /// A failure, in a form safe to show in a notification and to log.
@@ -249,6 +283,24 @@ pub enum Trigger {
     CatchUp,
     /// Retry after a previous failure.
     Retry,
+    /// A rehearsal: the run was asked for with `dry_run`, so it reports what it
+    /// would have copied and wrote nothing anywhere.
+    ///
+    /// Carried on the run rather than inferred by the caller because the
+    /// distinction outlives the request. A preview lands in the history like
+    /// any other run, and a history that cannot tell a rehearsal from a real
+    /// backup would let a user believe a destination holds data it does not.
+    Preview,
+}
+
+impl Trigger {
+    /// True when nothing was written by the run this trigger started.
+    ///
+    /// The one predicate every screen that renders a run should consult before
+    /// it says "backed up".
+    pub fn is_rehearsal(&self) -> bool {
+        matches!(self, Trigger::Preview)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +532,8 @@ mod tests {
             snapshot_id: None,
             error: None,
             warnings: vec![],
+            replicated_from: None,
+            skipped_reason: None,
         }
     }
 

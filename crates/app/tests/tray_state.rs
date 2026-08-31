@@ -99,6 +99,8 @@ fn running(job_id: Uuid, name: &str) -> JobRun {
             snapshot_id: None,
             error: None,
             warnings: vec![],
+            replicated_from: None,
+            skipped_reason: None,
         }],
     }
 }

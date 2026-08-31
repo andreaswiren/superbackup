@@ -66,6 +66,12 @@ pub const STREAM_CAPACITY: usize = 1024;
 /// time. Five seconds is imperceptible to a human watching a service start.
 const SERVICE_STATUS_TTL_SECONDS: i64 = 5;
 
+/// Minimum gap between two `vault.export_keys` calls.
+///
+/// See [`Runtime::export_cooldown_remaining`] for why a minute is the right
+/// order of magnitude and what it is and is not defending against.
+const KEY_EXPORT_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Take a `std` lock, recovering from poison.
 ///
 /// A poisoned lock means some other task panicked while holding it. The
@@ -175,6 +181,13 @@ pub struct Runtime {
     /// vault locks, and has no path to any reply, log line or notification.
     master: Mutex<Option<superbackup_core::secret::Secret>>,
 
+    /// When the last `vault.export_keys` succeeded.
+    ///
+    /// The rate limit that keeps the protocol's one secret-returning command
+    /// from being an oracle. A `std::time::Instant` rather than a wall clock
+    /// so that moving the system time backwards cannot lift it.
+    last_key_export: Mutex<Option<std::time::Instant>>,
+
     shutdown: broadcast::Sender<ShutdownRequest>,
     shutting_down: AtomicBool,
     started_at: DateTime<Utc>,
@@ -221,6 +234,7 @@ impl Runtime {
             blocked_by_lock: Mutex::new(BTreeSet::new()),
             event_log: Mutex::new(None),
             master: Mutex::new(None),
+            last_key_export: Mutex::new(None),
             shutdown,
             shutting_down: AtomicBool::new(false),
             started_at: Utc::now(),
@@ -231,6 +245,24 @@ impl Runtime {
     // ------------------------------------------------------------------
     // Scheduler and kopia handles
     // ------------------------------------------------------------------
+
+    /// How long until another encryption key export is allowed, if it is not
+    /// allowed yet.
+    ///
+    /// One minute is not a defence against a determined local attacker who has
+    /// the master passphrase — nothing at this layer could be. It is a
+    /// defence against the socket becoming a convenient oracle: a script
+    /// harvesting keys has to hold the passphrase and wait a minute per
+    /// attempt, which turns a silent loop into something a user notices.
+    pub fn export_cooldown_remaining(&self) -> Option<std::time::Duration> {
+        let last = (*recover(&self.last_key_export))?;
+        KEY_EXPORT_COOLDOWN.checked_sub(last.elapsed())
+    }
+
+    /// Record that an export just happened, starting the cooldown.
+    pub fn note_export(&self) {
+        *recover(&self.last_key_export) = Some(std::time::Instant::now());
+    }
 
     pub fn set_scheduler(&self, handle: SchedulerHandle) {
         *recover_write(&self.scheduler) = Some(handle);

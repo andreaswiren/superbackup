@@ -49,7 +49,7 @@ pub mod single_instance;
 #[cfg(windows)]
 mod win32;
 
-pub use identity::{list_machines, write_manifest, MachineRecord};
+pub use identity::{list_machines, list_machines_for, write_manifest, MachineRecord};
 pub use notify::{Notification, NotificationKind, Notifier, NotifyOutcome};
 pub use onedrive::{OneDriveAccount, OneDriveKind, SyncState, Validation, ValidationIssue};
 pub use power::{Metered, PowerSource, PowerStatus, WakeDetector};
@@ -356,6 +356,37 @@ pub fn platform_info() -> PlatformInfo {
     }
 }
 
+/// Does the user's taskbar use the light theme?
+///
+/// Windows keeps this in
+/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`.
+/// Every other platform is assumed dark, matching the design system's
+/// "Linux: full colour, dark-taskbar variant".
+///
+/// This lives here rather than in the tray because the tray crate cannot reach
+/// `win32::RegKey`, and its workaround was to shell out to `reg.exe` — a
+/// **console** application — from inside the animation tick. At a 120 ms tick
+/// that spawned roughly eight console windows a second for as long as a backup
+/// was running, which is precisely the "windows keep appearing and
+/// disappearing" a user reports. A registry read must never cost a process.
+pub fn system_uses_light_theme() -> bool {
+    #[cfg(windows)]
+    {
+        win32::RegKey::open(
+            win32::Hive::CurrentUser,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        )
+        .and_then(|k| k.dword("SystemUsesLightTheme"))
+        .map(|v| v != 0)
+        // Windows omits the value on some editions; dark is the modern default.
+        .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,36 +475,5 @@ mod tests {
         if cfg!(windows) {
             assert!(info.os_version.starts_with("Windows"), "{}", info.os_version);
         }
-    }
-}
-
-/// Does the user's taskbar use the light theme?
-///
-/// Windows keeps this in
-/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`.
-/// Every other platform is assumed dark, matching the design system's
-/// "Linux: full colour, dark-taskbar variant".
-///
-/// This lives here rather than in the tray because the tray crate cannot reach
-/// `win32::RegKey`, and its workaround was to shell out to `reg.exe` — a
-/// **console** application — from inside the animation tick. At a 120 ms tick
-/// that spawned roughly eight console windows a second for as long as a backup
-/// was running, which is precisely the "windows keep appearing and
-/// disappearing" a user reports. A registry read must never cost a process.
-pub fn system_uses_light_theme() -> bool {
-    #[cfg(windows)]
-    {
-        win32::RegKey::open(
-            win32::Hive::CurrentUser,
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-        )
-        .and_then(|k| k.dword("SystemUsesLightTheme"))
-        .map(|v| v != 0)
-        // Windows omits the value on some editions; dark is the modern default.
-        .unwrap_or(false)
-    }
-    #[cfg(not(windows))]
-    {
-        false
     }
 }

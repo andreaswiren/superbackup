@@ -121,6 +121,10 @@ async fn every_command_answers_or_refuses_cleanly() {
     run!("version", Request::Version {});
     run!("health", Request::Health {});
     run!("doctor", Request::Doctor { fix: false });
+    // No kopia is installed in the harness, so this reports "not found" and
+    // lists the routes it tried. Answering rather than failing is the point:
+    // the page exists so a user can see *why* nothing was found.
+    run!("kopia.probe", Request::KopiaProbe { destination: None, check_for_update: false });
 
     // -- jobs -------------------------------------------------------------
     run!("job.list", Request::JobList { include_disabled: true });
@@ -160,6 +164,12 @@ async fn every_command_answers_or_refuses_cleanly() {
     edited.enabled = true;
     run!("dest.update", Request::DestinationUpdate { destination: Box::new(edited) });
     run!("dest.test", Request::DestinationTest { destination: mirror_id.to_string() });
+    // A folder mirror has no encryption key at all, so this must refuse with a
+    // sentence rather than pretend to check one.
+    run!(
+        "dest.check_key",
+        Request::DestinationCheckKey { destination: mirror_id.to_string(), key: None }
+    );
     run!(
         "dest.stats",
         Request::DestinationStats { destination: mirror_id.to_string(), refresh: true }
@@ -244,6 +254,15 @@ async fn every_command_answers_or_refuses_cleanly() {
         Request::VaultSetSecret {
             secret_ref: SecretRef::new("test-handle", &uuid::Uuid::new_v4()),
             value: SecretString::from_string("a value".into()),
+        }
+    );
+    // The one command that returns secret material. Exercised here for the
+    // same reason as everything else — it must answer or refuse cleanly — and
+    // the assertion that it does not leak is in the protocol's own tests.
+    run!(
+        "vault.export_keys",
+        Request::VaultExportKeys {
+            passphrase: SecretString::from_string("wrong-on-purpose".into())
         }
     );
     // `vault.change_passphrase` is exercised on its own, below, because it
@@ -426,6 +445,91 @@ async fn malformed_input_is_refused_and_the_daemon_survives() {
         .unlock(SecretString::from_string(PASSPHRASE.to_string()))
         .await
         .expect("the vault must be undamaged by refused rotations");
+
+    drop(client);
+    harness.shutdown().await.expect("clean shutdown");
+}
+
+/// The one command that returns secret material, and the bounds on it.
+///
+/// This is the protocol's single exception to "secrets go in, never out"
+/// (`THREAT_MODEL.md` §A7). The properties asserted here are the ones the
+/// exception is justified by: a locked vault refuses it, a wrong passphrase
+/// refuses it even when the vault is open, it returns a document a human could
+/// act on, and it will not answer twice in quick succession.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn exporting_encryption_keys_is_gated_logged_and_rate_limited() {
+    let mut harness = Harness::start("export", |config, home| {
+        let destination = mirror("copy", home.join("mirror"));
+        config.jobs.push(job("docs", seed_tree(home, 1), vec![destination.id]));
+        config.destinations.push(destination);
+    })
+    .await;
+    let client = harness.client().await;
+
+    // Locked: refused before the passphrase is even considered.
+    let error = client
+        .request(Request::VaultExportKeys {
+            passphrase: SecretString::from_string(PASSPHRASE.to_string()),
+        })
+        .await
+        .expect_err("a locked vault must refuse the export");
+    assert_eq!(error.code(), ErrorCode::Locked);
+
+    client
+        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
+        .await
+        .expect("unlock the vault");
+
+    // Unlocked but the wrong passphrase: still refused. Reaching the socket
+    // with an open vault is deliberately not enough.
+    let error = client
+        .request(Request::VaultExportKeys {
+            passphrase: SecretString::from_string("not-the-passphrase".to_string()),
+        })
+        .await
+        .expect_err("a wrong passphrase must refuse the export");
+    assert_eq!(error.code(), ErrorCode::BadPassphrase);
+
+    // The real thing.
+    let Reply::KeyExport(export) = client
+        .request(Request::VaultExportKeys {
+            passphrase: SecretString::from_string(PASSPHRASE.to_string()),
+        })
+        .await
+        .expect("the export must succeed with the right passphrase")
+    else {
+        panic!("expected a key_export reply")
+    };
+    // The fixture holds one folder mirror, which has no encryption key: it must
+    // be listed as omitted rather than silently missing.
+    assert_eq!(export.destinations, 0);
+    assert!(export.omitted.iter().any(|o| o.contains("copy")), "{:?}", export.omitted);
+    assert!(export.document.contains("READ THIS FIRST"), "{}", export.document);
+    assert!(export.suggested_file_name.ends_with(".txt"));
+    assert!(
+        !export.suggested_file_name.contains('/') && !export.suggested_file_name.contains('\\'),
+        "the suggested name must be a file name, never a path: {}",
+        export.suggested_file_name
+    );
+
+    // Immediately again: refused by the cooldown, so the socket is not an
+    // oracle to be hammered.
+    let error = client
+        .request(Request::VaultExportKeys {
+            passphrase: SecretString::from_string(PASSPHRASE.to_string()),
+        })
+        .await
+        .expect_err("a second export must be rate limited");
+    assert_eq!(error.code(), ErrorCode::Validation);
+
+    // And it left a trace: that it happened, never what it contained.
+    let events = harness.runtime.recent_events();
+    let logged = events
+        .iter()
+        .find(|e| e.kind == "vault.keys_exported")
+        .expect("an export must be recorded in the activity log");
+    assert!(!logged.message.contains(PASSPHRASE));
 
     drop(client);
     harness.shutdown().await.expect("clean shutdown");

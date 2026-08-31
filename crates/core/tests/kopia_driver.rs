@@ -60,6 +60,7 @@ fn local_destination(path: &Path) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }
@@ -101,6 +102,7 @@ fn s3_destination(provider: &StorageProvider) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }
@@ -1176,4 +1178,274 @@ fn a_mirror_destination_is_refused_at_construction() {
     };
     let err = KopiaDriver::new(s.binary(), &paths, &dest, None, secrets()).expect_err("refuses");
     assert!(err.message.contains("folder mirror"), "{}", err.message);
+}
+
+// ---------------------------------------------------------------------------
+// Chained backups: `repository sync-to`
+// ---------------------------------------------------------------------------
+
+/// A second S3 destination on its own provider, standing in for the offsite
+/// leg of a chain whose first leg is the local (or OneDrive) repository.
+fn offsite_provider() -> StorageProvider {
+    let id = uuid::Uuid::new_v4();
+    StorageProvider {
+        id,
+        name: "StorJ us-1".into(),
+        kind: ProviderKind::S3 {
+            endpoint: "https://gateway.us1.storjshare.io".into(),
+            region: "us-1".into(),
+            credentials: S3Credentials::for_provider(&id),
+            tls: true,
+            path_style: false,
+            flavour: S3Flavour::Storj,
+        },
+        notes: String::new(),
+        created_at: chrono::Utc::now(),
+        last_verified_at: None,
+    }
+}
+
+const OFFSITE_ACCESS_KEY: &str = "AKIAOFFSITEKEY0000042";
+const OFFSITE_SECRET_KEY: &str = "0ffs1te/Sup3r+Secret/AccessKey987654321";
+
+fn offsite_destination(provider: &StorageProvider, source: uuid::Uuid) -> Destination {
+    Destination {
+        id: uuid::Uuid::new_v4(),
+        name: "StorJ replica".into(),
+        kind: DestinationKind::S3 {
+            provider_id: provider.id,
+            bucket: "andreas-offsite".into(),
+            prefix: normalise_prefix("superbackup/workstation"),
+            credential_override: None,
+        },
+        // A replica has neither of these: it is the same repository as its
+        // source and opens with the source's key.
+        encryption: None,
+        passphrase_ref: None,
+        retention: RetentionPolicy::default(),
+        enabled: true,
+        auto_discovered: false,
+        bandwidth: None,
+        replicate_from: Some(source),
+        created_at: chrono::Utc::now(),
+        last_verified_at: None,
+    }
+}
+
+fn offsite_target(provider: &StorageProvider, source: uuid::Uuid) -> SyncTarget {
+    let dest = offsite_destination(provider, source);
+    SyncTarget::new(
+        &dest,
+        Some(provider),
+        DestinationSecrets::default()
+            .with_s3(Secret::from_str(OFFSITE_ACCESS_KEY), Secret::from_str(OFFSITE_SECRET_KEY)),
+    )
+    .expect("sync target")
+}
+
+#[tokio::test]
+async fn sync_to_addresses_the_replica_with_its_own_storage_flags() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("syncto");
+    let driver = local_driver(&s);
+    let provider = offsite_provider();
+    let target = offsite_target(&provider, *driver.destination_id());
+
+    driver
+        .sync_to(&target, &SyncOptions::default(), &RunContext::new())
+        .await
+        .expect("sync-to succeeds");
+
+    let inv = s.only();
+    assert_eq!(inv.words(), vec!["repository", "sync-to", "s3"]);
+    // The replica's location, not the source's.
+    assert_eq!(inv.flag_value("--bucket").as_deref(), Some("andreas-offsite"));
+    assert_eq!(inv.flag_value("--endpoint").as_deref(), Some("gateway.us1.storjshare.io"));
+    assert_eq!(inv.flag_value("--region").as_deref(), Some("us-1"));
+    assert_eq!(inv.flag_value("--prefix").as_deref(), Some("superbackup/workstation/"));
+    // The source repository is still addressed by its own config file.
+    assert!(inv.has_flag("--config-file"));
+    // Progress must be forced on: kopia suppresses `outputSyncProgress`
+    // entirely when stdout is not a terminal, and it never is here.
+    assert_eq!(inv.flag_value("--progress").as_deref(), Some("true"));
+    assert_eq!(inv.flag_value("--parallel").as_deref(), Some("8"));
+    // Deletions never propagate from the source to the replica.
+    assert!(!inv.has_flag("--delete"), "sync-to must not delete by default");
+}
+
+#[tokio::test]
+async fn sync_to_sends_the_replicas_credentials_and_never_puts_them_in_argv() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("syncsecrets");
+    let driver = local_driver(&s);
+    let provider = offsite_provider();
+    let target = offsite_target(&provider, *driver.destination_id());
+
+    driver
+        .sync_to(&target, &SyncOptions::default(), &RunContext::new())
+        .await
+        .expect("sync-to succeeds");
+
+    let inv = s.only();
+    let line = inv.joined();
+    for secret in [PASSPHRASE, ACCESS_KEY, SECRET_KEY, OFFSITE_ACCESS_KEY, OFFSITE_SECRET_KEY] {
+        assert!(!line.contains(secret), "a secret reached the command line: {line}");
+    }
+    // The environment belongs to the *replica*: kopia opens the source from its
+    // stored connection profile, and binds the `sync-to s3` credential flags to
+    // exactly these variables. The source's own keys must not be left behind to
+    // be used against the wrong bucket.
+    assert_eq!(inv.env.get("AWS_ACCESS_KEY_ID").map(String::as_str), Some(OFFSITE_ACCESS_KEY));
+    assert_eq!(inv.env.get("AWS_SECRET_ACCESS_KEY").map(String::as_str), Some(OFFSITE_SECRET_KEY));
+    // The passphrase is the source repository's, because that is the repository
+    // being opened — and it is the replica's too, by construction.
+    assert_eq!(inv.env.get("KOPIA_PASSWORD").map(String::as_str), Some(PASSPHRASE));
+}
+
+#[tokio::test]
+async fn a_dry_run_sync_also_passes_must_exist_so_it_cannot_create_the_replica() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("syncdry");
+    let driver = local_driver(&s);
+    let provider = offsite_provider();
+    let target = offsite_target(&provider, *driver.destination_id());
+
+    let options = SyncOptions { dry_run: true, ..SyncOptions::default() };
+    let outcome =
+        driver.sync_to(&target, &options, &RunContext::new()).await.expect("dry run succeeds");
+    assert!(outcome.dry_run);
+
+    let inv = s.only();
+    assert!(inv.has_flag("--dry-run"));
+    // This is the load-bearing half. `runSyncWithStorage` calls
+    // `ensureRepositoriesHaveSameFormatBlob` *before* it checks --dry-run, and
+    // that function writes the source format blob into a destination that has
+    // none. Without --must-exist a "rehearsal" would initialise the offsite
+    // repository.
+    assert!(
+        inv.has_flag("--must-exist"),
+        "a dry run without --must-exist would create the replica: {}",
+        inv.joined()
+    );
+}
+
+#[tokio::test]
+async fn sync_to_reports_the_replication_progress_kopia_printed() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("syncprogress");
+    s.script(&[("mode", "sync")]);
+    let driver = local_driver(&s);
+    let provider = offsite_provider();
+    let target = offsite_target(&provider, *driver.destination_id());
+
+    let outcome = driver
+        .sync_to(&target, &SyncOptions::default(), &RunContext::new())
+        .await
+        .expect("sync-to succeeds");
+
+    assert_eq!(outcome.blobs_copied, 512);
+    assert_eq!(outcome.bytes_copied, 1_200_000_000);
+    assert_eq!(outcome.progress.files_total, Some(512));
+    assert_eq!(outcome.progress.bytes_total, Some(1_200_000_000));
+    assert_eq!(outcome.progress.estimated_seconds_remaining, Some(0));
+}
+
+#[tokio::test]
+async fn a_folder_mirror_can_never_be_a_replication_target() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("syncmirror");
+    let dest = Destination {
+        kind: DestinationKind::LocalMirror { path: s.root.join("plain") },
+        ..local_destination(&s.root.join("plain"))
+    };
+    let err = SyncTarget::new(&dest, None, DestinationSecrets::default()).expect_err("refuses");
+    assert!(err.message.contains("folder mirror"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn cancelling_a_sync_kills_the_child_and_leaves_nothing_running() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("synccancel");
+    s.script(&[("mode", "hang")]);
+    let driver = local_driver(&s);
+    let provider = offsite_provider();
+    let target = offsite_target(&provider, *driver.destination_id());
+    let heartbeat = s.heartbeat();
+
+    let (handle, token) = cancellation();
+    let ctx = RunContext::new().with_cancel(token);
+    let d = driver.clone();
+    let task = tokio::spawn(async move { d.sync_to(&target, &SyncOptions::default(), &ctx).await });
+
+    assert!(wait_for(&heartbeat, Duration::from_secs(20)).await, "the fake kopia never started");
+    handle.cancel();
+
+    let result = tokio::time::timeout(Duration::from_secs(15), task)
+        .await
+        .expect("cancellation must not hang")
+        .expect("task must not panic");
+    let err = result.expect_err("a cancelled sync must not report success");
+    assert_eq!(err.failure, KopiaFailure::Cancelled);
+
+    // A half-finished replication that left kopia running would hold the
+    // offsite location open and keep spending the user's bandwidth after they
+    // pressed Stop.
+    let after_kill = size_of(&heartbeat);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        size_of(&heartbeat),
+        after_kill,
+        "the child was still running after cancellation returned"
+    );
+}
+
+#[tokio::test]
+async fn a_replica_refuses_to_have_a_repository_created_in_it() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("syncnocreate");
+    let paths = s.paths();
+    let source_id = uuid::Uuid::new_v4();
+    let replica = Destination {
+        replicate_from: Some(source_id),
+        encryption: None,
+        ..local_destination(&s.root.join("replica"))
+    };
+    let driver =
+        KopiaDriver::new(s.binary(), &paths, &replica, None, secrets()).expect("driver builds");
+
+    // The refusal lives in the driver rather than at the call sites because one
+    // of the call sites is a button. `repository create` would mint a fresh
+    // unique id, and every later `sync-to` would be refused by kopia as
+    // incompatible data — silently, until the next backup ran.
+    let err = driver.create_repository(&RunContext::new()).await.expect_err("must refuse");
+    assert!(err.message.contains("copy of another destination"), "{}", err.message);
+    assert!(s.record().is_empty(), "kopia must not be launched at all");
+
+    // Everything else a replica needs still works: it is the same repository,
+    // so connecting to it (to restore, verify or browse) is ordinary.
+    driver.connect_repository(&RunContext::new()).await.expect("connecting is fine");
+    assert_eq!(s.only().words(), vec!["repository", "connect", "filesystem"]);
+}
+
+#[tokio::test]
+async fn a_sync_whose_last_progress_frame_was_throttled_still_reports_complete() {
+    let _ = fake_or_skip!();
+    let s = Scenario::new("synctruncated");
+    // kopia rate-limits its sync progress line, so the frame covering the last
+    // blobs is routinely never printed. There is no `--json` summary to correct
+    // it with, and a finished replication parked at 42% in the run history is a
+    // report the user cannot act on.
+    s.script(&[("mode", "synctruncated")]);
+    let driver = local_driver(&s);
+    let provider = offsite_provider();
+    let target = offsite_target(&provider, *driver.destination_id());
+
+    let outcome = driver
+        .sync_to(&target, &SyncOptions::default(), &RunContext::new())
+        .await
+        .expect("sync-to succeeds");
+
+    assert_eq!(outcome.blobs_copied, 512, "a succeeded sync copied everything it listed");
+    assert_eq!(outcome.bytes_copied, 1_200_000_000);
+    assert_eq!(outcome.progress.fraction(), Some(1.0));
 }

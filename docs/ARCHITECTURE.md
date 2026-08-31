@@ -158,9 +158,18 @@ from any language, and read by a human when something goes wrong.
 
 The endpoint is a privilege boundary and is treated as one: restricted to the
 owning user, remote clients rejected, line length capped, connections capped and
-rate-limited. **There is no request that returns a plaintext secret.** The
-protocol offers `SetSecret` and not `GetSecret`, so extracting a key from
-superbackup requires the passphrase and is not something the protocol does.
+rate-limited. **No request returns a secret by handle.** The protocol offers
+`SetSecret` and not `GetSecret`.
+
+There is exactly one exception, and it is bounded rather than general:
+`vault.export_keys` returns the repository encryption keys — nothing else — as
+one document, so a user can put them in a password manager or on paper. A
+repository key that is lost is a backup that no longer exists, and a product
+that will not let its user write that key down has not protected their data. It
+requires an unlocked vault *and* the master passphrase re-presented, is rate
+limited, is logged, and writes no file itself. See
+[`compliance/THREAT_MODEL.md`](compliance/THREAT_MODEL.md) §A7 for the full
+bounds and the residual risk.
 
 The protocol also serves a machine-readable description of itself, generated
 from the same definitions the dispatcher uses. That is what makes the CLI

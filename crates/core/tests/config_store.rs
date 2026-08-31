@@ -120,6 +120,7 @@ fn save_then_load_round_trips_and_normalises() {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     });
@@ -248,6 +249,47 @@ fn a_pre_versioning_document_is_migrated_forward() {
     let config: Config = serde_json::from_value(migrated).expect("deserialise");
     assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
     assert_eq!(config.destinations.len(), 1);
+}
+
+#[test]
+fn a_schema_1_document_is_migrated_to_chained_destinations() {
+    // Everything a 0.1 install wrote: no `replicate_from` anywhere, because
+    // chaining did not exist. Absence means "written from the job's sources",
+    // which is exactly what every schema-1 destination was.
+    let provider_id = Uuid::new_v4();
+    let raw = serde_json::json!({
+        "schema_version": 1,
+        "machine": serde_json::to_value(MachineIdentity::default()).expect("identity"),
+        "providers": [],
+        "projects": [],
+        "jobs": [],
+        "destinations": [{
+            "id": Uuid::new_v4(),
+            "name": "Offsite",
+            "kind": {
+                "type": "s3",
+                "provider_id": provider_id,
+                "bucket": "backups",
+                "prefix": "superbackup/pc-1/"
+            },
+            "created_at": "2024-01-01T00:00:00Z"
+        }]
+    });
+
+    let (migrated, notes) = migrate(raw).expect("migrate");
+    assert_eq!(migrated["schema_version"], CONFIG_SCHEMA_VERSION);
+    // The key is written out explicitly so the saved document states the
+    // answer rather than implying it.
+    assert_eq!(migrated["destinations"][0]["replicate_from"], serde_json::Value::Null);
+    // Nothing happened that the user needs to be told about.
+    assert!(
+        notes.is_empty(),
+        "a structural migration must not invent user-facing notes: {notes:?}"
+    );
+
+    let config: Config = serde_json::from_value(migrated).expect("deserialise");
+    assert_eq!(config.destinations.len(), 1);
+    assert!(!config.destinations[0].is_replica(), "an old destination is never a replica");
 }
 
 #[test]
@@ -447,6 +489,7 @@ fn gc_fixture(home: &Home) -> (Store, Uuid, Uuid) {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     });

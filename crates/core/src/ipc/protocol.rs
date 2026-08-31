@@ -78,11 +78,11 @@
 //!
 //! Two rules, both load-bearing.
 //!
-//! **Secrets go in, never out.** There is deliberately no `GetSecret`. The
-//! daemon can be asked to *store* a secret ([`Request::VaultSetSecret`]) and
-//! to *use* one, but there is no request that returns plaintext credential
-//! material, and none will be added. The consequences are worth stating
-//! plainly:
+//! **Secrets go in, never out — with exactly one bounded exception.** There is
+//! deliberately no `GetSecret`. The daemon can be asked to *store* a secret
+//! ([`Request::VaultSetSecret`]) and to *use* one, but there is no request
+//! that returns credential material by handle, and none will be added. The
+//! consequences are worth stating plainly:
 //!
 //! * A GUI cannot show the user their own S3 secret key. That is intentional.
 //!   Reading it back is not a feature the user needs and it is the single
@@ -92,8 +92,16 @@
 //!   process environment or stdin. The secret never crosses the IPC boundary
 //!   in that direction.
 //! * The vault file itself is sealed and is the supported way to move secrets
-//!   between machines. Exporting is an explicit, passphrase-gated file
-//!   operation, not an IPC call.
+//!   between machines.
+//!
+//! The exception is [`Request::VaultExportKeys`], which returns the repository
+//! encryption keys — and nothing else — as one document, so a user can put
+//! them in a password manager or on paper. A repository key that is lost is a
+//! backup that no longer exists, and a product that will not let its user
+//! write that key down has not protected their data. It requires an unlocked
+//! vault *and* the master passphrase re-presented, is rate-limited, is logged,
+//! and does not write any file itself. The full reasoning and bounds are next
+//! to the command in the table below, and recorded in `THREAT_MODEL.md` §A7.
 //!
 //! **Secrets that come in are typed as secrets.** Passphrases and keys are
 //! [`SecretString`], which deserialises straight into [`crate::secret::Secret`]
@@ -957,6 +965,156 @@ pub struct RemoteStatusReply {
     pub detail: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// kopia.probe
+// ---------------------------------------------------------------------------
+
+/// Which of the four resolution routes produced the kopia executable in use.
+///
+/// Mirrors [`crate::kopia::KopiaSource`] plus the case that type cannot
+/// express — nothing was found. Restated here rather than re-exported because
+/// this module deliberately depends on nothing below the model layer, and a
+/// wire enum that moved when the driver refactored would be a protocol break
+/// nobody noticed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KopiaProvenance {
+    /// `Settings::kopia_path`, set explicitly by the user.
+    Configured,
+    /// Found on `PATH`.
+    SystemPath,
+    /// The build superbackup downloaded and manages itself.
+    Bundled,
+    /// No usable kopia was found by any route.
+    None,
+}
+
+impl KopiaProvenance {
+    /// A short phrase for an interface: "found on PATH".
+    pub fn title(&self) -> &'static str {
+        match self {
+            KopiaProvenance::Configured => "configured in Settings",
+            KopiaProvenance::SystemPath => "found on PATH",
+            KopiaProvenance::Bundled => "managed by superbackup",
+            KopiaProvenance::None => "not found",
+        }
+    }
+}
+
+/// One route discovery considered, whether or not it won.
+///
+/// Shown in full so a user can see *why* they got the kopia they got, rather
+/// than being told the answer and asked to believe it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KopiaRoute {
+    pub provenance: KopiaProvenance,
+    /// Where this route looked, when it had somewhere to look.
+    pub path: Option<String>,
+    /// What happened: a version, "not present", or why it was rejected.
+    pub outcome: String,
+    /// True for the route that produced the binary actually in use.
+    pub chosen: bool,
+}
+
+/// One kopia invocation, reported verbatim.
+///
+/// `command_line` is safe to display: secrets reach kopia through the child's
+/// environment and never through `argv`, and the command builder proves it
+/// before every spawn. `secret_env` names the variables that carried them and
+/// never their values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KopiaInvocation {
+    /// Short label, e.g. `repository status`.
+    pub label: String,
+    pub command_line: String,
+    #[serde(default)]
+    pub secret_env: Vec<String>,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub duration_ms: u64,
+    pub ok: bool,
+}
+
+/// Everything the Settings screen needs to prove kopia works.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KopiaProbeReply {
+    /// Full resolved path of the executable in use.
+    pub path: Option<String>,
+    pub provenance: KopiaProvenance,
+    pub version: Option<String>,
+    /// The raw `--version` banner, build hash and all.
+    pub banner: Option<String>,
+    /// Every route discovery considered, in priority order.
+    #[serde(default)]
+    pub routes: Vec<KopiaRoute>,
+    /// Where the managed build lives, whether or not it is installed.
+    pub managed_path: String,
+    pub managed_version: Option<String>,
+    /// The `UpdatePolicy` currently in force, as a wire string.
+    pub update_policy: String,
+    /// A newer release, when one was looked for and found.
+    pub update_available: Option<String>,
+    /// One line about the update check, including why it was skipped.
+    pub update_summary: Option<String>,
+    /// The version floor in force, which is the configured minimum raised to
+    /// the driver's own hard requirement.
+    pub minimum_version: String,
+    /// The commands that were run, in order.
+    #[serde(default)]
+    pub invocations: Vec<KopiaInvocation>,
+    /// Why no binary was found, when `provenance` is `none`.
+    pub detail: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Encryption keys
+// ---------------------------------------------------------------------------
+
+/// Whether a repository encryption key actually opens a repository.
+///
+/// A key that does not open it is a *successful* request with `valid: false` —
+/// the daemon answered the question. An error response means the question
+/// could not be asked (no such destination, vault locked, no kopia).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyCheckReply {
+    pub destination_id: Uuid,
+    /// True only when the repository opened with the key that was checked.
+    pub valid: bool,
+    /// True when the location is reachable but holds no repository, so there
+    /// was nothing to check against. `valid` is false and the caller must say
+    /// "nothing to check", not "wrong key".
+    pub no_repository: bool,
+    /// Kopia's repository id, once it opened.
+    pub repository_id: Option<String>,
+    /// Scrubbed detail from kopia.
+    pub detail: Option<String>,
+}
+
+/// A plain-text record of every repository encryption key.
+///
+/// **This is the one reply in the protocol that carries secret material**, and
+/// the only one that ever will. See `vault.export_keys` in the command table
+/// for the reasoning and the bounds, and `THREAT_MODEL.md` §A7 for the
+/// recorded exception.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyExportReply {
+    /// The whole document, ready to be written to a file the *user* chooses.
+    /// The daemon does not write it: it may be running as SYSTEM, and taking a
+    /// path from a caller would make this an arbitrary-file-write primitive.
+    pub document: String,
+    /// How many destinations the document describes.
+    pub destinations: u32,
+    /// Destinations that were skipped, and why — a folder mirror has no key,
+    /// and a repository whose key is missing from the vault cannot be
+    /// exported. Never silently omitted.
+    #[serde(default)]
+    pub omitted: Vec<String>,
+    /// A file name to offer in the save dialog. Not a path.
+    pub suggested_file_name: String,
+    pub generated_at: DateTime<Utc>,
+}
+
 /// What a `remote.apply` would change.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteDiffReply {
@@ -1074,6 +1232,12 @@ replies! {
         "The outcome of a connectivity test."
     "repository" Repository(RepositoryReply)
         "The state of a destination's kopia repository."
+    "kopia_probe" KopiaProbe(KopiaProbeReply)
+        "Where kopia is, which route found it, and the raw output of running it."
+    "key_check" KeyCheck(KeyCheckReply)
+        "Whether a repository encryption key actually opens the repository."
+    "key_export" KeyExport(KeyExportReply)
+        "A plain-text record of every repository encryption key."
     "storage_stats" StorageStats(StorageStatsReply)
         "Space accounting for one destination."
     "used_by" UsedBy(UsedByReply)
@@ -1145,6 +1309,26 @@ impl Reply {
                 }
             }
             Reply::Service(r) => scrub_opt(&mut r.detail),
+            Reply::KeyCheck(r) => scrub_opt(&mut r.detail),
+            Reply::KopiaProbe(r) => {
+                // The invocations carry kopia's own bytes, already scrubbed
+                // where they were captured. Scrubbing again is free and
+                // idempotent, and this is the last place it can be forgotten.
+                for run in &mut r.invocations {
+                    scrub_in_place(&mut run.stdout);
+                    scrub_in_place(&mut run.stderr);
+                }
+                scrub_opt(&mut r.detail);
+                scrub_opt(&mut r.update_summary);
+            }
+            // `KeyExport` is deliberately absent. Its whole payload is
+            // repository encryption keys, and `scrub` exists precisely to
+            // destroy strings that look like those — running it here would
+            // hand the user a file full of `[redacted]` and they would not
+            // find out until the day they needed it. The command that produces
+            // this reply is the protocol's one sanctioned secret path; see its
+            // entry in the command table.
+            //
             // The rest carry only values this process authored: ids, counts,
             // timestamps, and configuration the user typed themselves.
             _ => {}
@@ -1460,6 +1644,14 @@ protocol! {
                 fix: bool = "Attempt the repairs that are marked fixable, instead of only reporting them.",
             }
 
+        "kopia.probe" KopiaProbe => kopia_probe -> KopiaProbe(KopiaProbeReply)
+            flags [elevated]
+            doc "Resolve the kopia binary, report which of the four routes found it, and run it for real: `--version`, plus `repository status` against a destination. Returns the exact command lines, exit codes and output."
+            params {
+                destination: Option<String> = "Destination to run `repository status` against. Needs an unlocked vault; omit to run only the version check, which does not.",
+                check_for_update: bool = "Also ask the upstream release feed whether a newer kopia exists. Costs a network round trip.",
+            }
+
         // ---------------------------------------------------------------- jobs
         "job.list" JobList => list_jobs -> Jobs(JobsReply)
             flags []
@@ -1594,6 +1786,14 @@ protocol! {
             doc "Drop the local connection to a repository. The repository and its data are untouched."
             params {
                 destination: String = "Destination id, or a unique prefix of its name.",
+            }
+
+        "dest.check_key" DestinationCheckKey => check_encryption_key -> KeyCheck(KeyCheckReply)
+            flags [mutating, needs_unlock, elevated]
+            doc "Prove a repository encryption key opens the repository, by opening it. Not a format check."
+            params {
+                destination: String = "Destination id, or a unique prefix of its name.",
+                key: Option<SecretString> = "The key to try; omit to test the one already in the vault. Never stored by this call.",
             }
 
         "dest.stats" DestinationStats => destination_stats -> StorageStats(StorageStatsReply)
@@ -1740,6 +1940,49 @@ protocol! {
             flags [needs_unlock]
             doc "List the handles the vault holds, so the GUI can show which credentials are set. Values are never returned."
             params {}
+
+        // ---------------------------------------------------------------
+        // The one command that returns secret material.
+        //
+        // Everything else in this protocol obeys "secrets go in, never out"
+        // (see the module documentation, and THREAT_MODEL.md A7). This is a
+        // deliberate, bounded exception, and the reasoning belongs next to the
+        // command rather than in a commit message:
+        //
+        // * A repository encryption key that is lost is a backup that no
+        //   longer exists. There is no recovery, by design — that is what
+        //   makes the encryption worth having. A product that seals a user's
+        //   only copy of their data behind a key it will not let them write
+        //   down has not protected them, it has taken their data hostage.
+        // * The alternative — no export — does not keep the key secret. It
+        //   pushes the user to screenshot the "write it down" dialog, or to
+        //   keep the master passphrase in a text file, which is strictly
+        //   worse for exactly the attacker this rule guards against.
+        //
+        // The bounds that keep it an exception rather than a hole:
+        //
+        // 1. It is *one* command, returning *one* document. There is still no
+        //    general `GetSecret`: no S3 key, no session token, no master
+        //    passphrase, and no way to ask for one secret by handle.
+        // 2. It requires the vault to be unlocked **and** re-presentation of
+        //    the master passphrase, verified against the sealed vault. Reaching
+        //    the socket is not enough, which matters because the daemon may be
+        //    running as SYSTEM while the caller is not.
+        // 3. It is rate-limited in the daemon, so the socket is not an oracle
+        //    to be hammered.
+        // 4. Every call is written to the event log — that it happened, never
+        //    what it contained.
+        // 5. The daemon does not write the file. It hands the document back
+        //    and the *caller* saves it where the user chose. A path parameter
+        //    would have made an elevated daemon into an arbitrary-file-write
+        //    primitive, which is a far worse hole than the one this opens.
+        // ---------------------------------------------------------------
+        "vault.export_keys" VaultExportKeys => export_encryption_keys -> KeyExport(KeyExportReply)
+            flags [needs_unlock, elevated, kdf]
+            doc "Return every repository encryption key as a plain-text document, so the user can print it or put it in a password manager. The only command that returns secret material; read its entry in protocol.rs before adding another."
+            params {
+                passphrase: SecretString = "The master passphrase, re-presented and verified. An unlocked vault alone is not enough.",
+            }
 
         // ------------------------------------------------------------- control
         "control.pause" ControlPause => pause -> Pause(PauseReply)

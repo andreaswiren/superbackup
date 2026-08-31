@@ -303,7 +303,7 @@ impl Data {
                 self.last_error = Some((intent, payload));
             }
             Incoming::Stream(item) => self.apply_stream(*item),
-            Incoming::Reply(intent, reply) => self.apply_reply(intent, reply),
+            Incoming::Reply(intent, reply) => self.apply_reply(intent, *reply),
         }
     }
 
@@ -616,6 +616,8 @@ mod tests {
                     snapshot_id: None,
                     error: None,
                     warnings: vec![],
+                    replicated_from: None,
+                    skipped_reason: None,
                 })
                 .collect(),
         }
@@ -697,6 +699,7 @@ mod tests {
             enabled: true,
             auto_discovered: false,
             bandwidth: None,
+            replicate_from: None,
             created_at: Utc::now(),
             last_verified_at: None,
         };

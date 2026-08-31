@@ -73,11 +73,12 @@ pub use cancel::{CancelReason, CancelToken};
 pub use clock::{Clock, SystemClock, TestClock};
 pub use executor::{
     BackupExecutor, ExecutorError, ExecutorResult, PrepareOutcome, PrepareRequest, ProgressSink,
-    ProgressUpdate, Retryable, SnapshotOutcome, SnapshotRequest, VerifyOutcome, VerifyRequest,
+    ProgressUpdate, ReplicateOutcome, ReplicateRequest, Retryable, SnapshotOutcome,
+    SnapshotRequest, VerifyOutcome, VerifyRequest,
 };
 pub use mirror::{MirrorEngine, MirrorOptions, MirrorRequest};
 pub use retry::RetryPolicy;
-pub use runner::{RunRequest, Runner};
+pub use runner::{plan_destinations, PlannedDestination, RunRequest, Runner};
 pub use schedule::{catch_up_due, describe, next_occurrence, next_occurrence_in, Zone};
 pub use scheduler::{evaluate_gates, Scheduler, SchedulerHandle, SchedulerStatus, SkipReason};
 pub use throttle::{resolve_bandwidth, BandwidthSource, ResolvedBandwidth, TokenBucket};

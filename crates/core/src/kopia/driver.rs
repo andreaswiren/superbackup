@@ -75,6 +75,11 @@ pub struct KopiaDriver {
     provider: Option<StorageProvider>,
     encryption: EncryptionSettings,
     secrets: DestinationSecrets,
+    /// True when this destination is a replica of another. Everything else a
+    /// driver does is identical for a replica — connecting, listing, restoring,
+    /// verifying — so this exists for exactly one purpose: refusing
+    /// [`KopiaDriver::create_repository`]. See the note there.
+    is_replica: bool,
     config_file: PathBuf,
     cache_dir: PathBuf,
     log_dir: PathBuf,
@@ -119,6 +124,7 @@ impl KopiaDriver {
             provider: provider.cloned(),
             encryption: destination.encryption.clone().unwrap_or_default(),
             secrets,
+            is_replica: destination.is_replica(),
             config_file: paths.kopia_config_for(&destination.id),
             // Per destination, because kopia's cache is keyed to one
             // repository's content ids and sharing it across repositories is
@@ -233,50 +239,7 @@ impl KopiaDriver {
     /// Append the storage subcommand and its flags for `repository create` and
     /// `repository connect`, which share an identical storage flag set.
     fn storage_args(&self, cmd: &mut KopiaCommand) -> KopiaResult<()> {
-        match &self.kind {
-            DestinationKind::LocalRepository { path } | DestinationKind::OneDrive { path, .. } => {
-                cmd.command("filesystem").flag("path", path);
-            }
-            DestinationKind::S3 { bucket, prefix, .. } => {
-                let Some(StorageProvider {
-                    kind: ProviderKind::S3 { endpoint, region, tls, .. },
-                    ..
-                }) = &self.provider
-                else {
-                    return Err(KopiaError::local(
-                        "repository",
-                        KopiaFailure::Unusable,
-                        Some("the destination's storage provider is missing".into()),
-                    ));
-                };
-                let (host, scheme_disables_tls) = s3_endpoint_host(endpoint);
-                if host.is_empty() {
-                    return Err(KopiaError::local("repository", KopiaFailure::Unusable, None)
-                        .with_message(
-                            "The storage provider has no endpoint. StorJ's is \
-                         https://gateway.storjshare.io.",
-                        ));
-                }
-                cmd.command("s3").flag("bucket", bucket).flag("endpoint", &host);
-                if !region.is_empty() {
-                    cmd.flag("region", region);
-                }
-                if !prefix.is_empty() {
-                    cmd.flag("prefix", prefix);
-                }
-                // `--disable-tls` means plain HTTP. Only ever set when the user
-                // asked for it or wrote an http:// endpoint: silently
-                // downgrading a backup to cleartext would be indefensible.
-                if !*tls || scheme_disables_tls {
-                    cmd.switch("disable-tls");
-                }
-            }
-            DestinationKind::LocalMirror { .. } => {
-                return Err(KopiaError::local("repository", KopiaFailure::Unusable, None)
-                    .with_message("A folder mirror has no kopia repository."));
-            }
-        }
-        Ok(())
+        append_storage_args(cmd, &self.kind, self.provider.as_ref())
     }
 
     /// Cache and client flags shared by `repository create` and
@@ -303,6 +266,22 @@ impl KopiaDriver {
     /// greater than zero — `--ecc` alone is inert — so both are set together or
     /// neither is set at all.
     pub async fn create_repository(&self, ctx: &RunContext) -> KopiaResult<()> {
+        // A replica must never be created, and the refusal lives here rather
+        // than at each call site because the call sites include a button in the
+        // GUI. Creating a repository mints a fresh unique id in its format
+        // blob, and `repository sync-to` refuses a destination whose format
+        // blob does not match the source's — so one press of "Create
+        // repository" would permanently break the chain, and would do it
+        // silently until the next backup ran.
+        if self.is_replica {
+            return Err(KopiaError::local("repository create", KopiaFailure::Unusable, None)
+                .with_message(format!(
+                    "\"{}\" is a copy of another destination's repository, so it is created by \
+                     the first backup that replicates into it, not here. Creating one now would \
+                     make a different repository that could never be synchronised.",
+                    self.destination_name
+                )));
+        }
         self.require_passphrase("repository create")?;
         let mut cmd = self.base();
         cmd.command("repository").command("create");
@@ -508,6 +487,162 @@ impl KopiaDriver {
     }
 
     // -----------------------------------------------------------------
+    // Replication
+    // -----------------------------------------------------------------
+
+    /// Replicate this repository into a second storage location with
+    /// `kopia repository sync-to`.
+    ///
+    /// This is the chained-backup primitive: the sources are read, chunked and
+    /// encrypted **once**, into this repository, and the offsite copy is then
+    /// made from the resulting blobs rather than from the user's disk a second
+    /// time.
+    ///
+    /// # What kopia does, and what the caller must already know
+    ///
+    /// `sync-to` is blob-level replication, verified against
+    /// `cli/command_repository_sync.go`. It lists both storage locations,
+    /// copies what the destination is missing (and, with `--update`, what the
+    /// source has a newer copy of), and optionally deletes what the source no
+    /// longer has. Before any of that it compares the two `kopia.repository`
+    /// format blobs and **refuses two different repositories**:
+    /// `destination repository contains incompatible data`.
+    ///
+    /// So the destination is not an independently keyed repository and cannot
+    /// be made into one. It ends up holding this repository's format blob, and
+    /// therefore this repository's master key, and it opens with this
+    /// repository's passphrase. [`crate::model::Destination::replicate_from`]
+    /// documents the model consequences; the validator enforces them.
+    ///
+    /// # Guarantees, matching the rest of this module
+    ///
+    /// * The destination's object-store credentials travel in the environment
+    ///   and never in argv — see [`KopiaCommand::replace_secret_env`] for why
+    ///   they *replace* rather than shadow this repository's own.
+    /// * Cancellation kills the child and awaits its reap, because
+    ///   [`KopiaCommand::run`] does; there is no `select!` around it here.
+    /// * Progress is streamed: `--progress` is passed explicitly because kopia
+    ///   suppresses `outputSyncProgress` entirely when stdout is not a
+    ///   terminal, and stdout is a pipe.
+    ///
+    /// # Flags
+    ///
+    /// Verified against the flag registrations in
+    /// `cli/command_repository_sync.go`: `--update` (default true, left
+    /// alone), `--delete`, `--dry-run`, `--parallel`, `--must-exist`,
+    /// `--times`.
+    ///
+    /// # The dry-run trap
+    ///
+    /// `--dry-run` is **not** on its own side-effect-free.
+    /// `runSyncWithStorage` calls `ensureRepositoriesHaveSameFormatBlob`
+    /// *before* it checks the dry-run flag, and that function writes the source
+    /// format blob to a destination that has none. A rehearsal against an empty
+    /// bucket would therefore create the repository there. So a dry run here
+    /// always passes `--must-exist` as well, which turns that case into a clean
+    /// refusal instead of a write. A rehearsal that reports "nothing happened"
+    /// while having initialised a repository would be a lie of exactly the kind
+    /// this codebase spends its effort avoiding.
+    pub async fn sync_to(
+        &self,
+        target: &SyncTarget,
+        options: &SyncOptions,
+        ctx: &RunContext,
+    ) -> KopiaResult<SyncOutcome> {
+        let label = "repository sync-to";
+        self.require_passphrase(label)?;
+
+        let mut cmd = self.base();
+        cmd.global_bool("progress", true);
+        cmd.command("repository").command("sync-to");
+        append_storage_args(&mut cmd, &target.kind, target.provider.as_ref())?;
+
+        // The environment now belongs to the *destination*: the source
+        // repository is opened from its own stored connection profile, which
+        // carries its credentials, while kopia binds the `sync-to` storage
+        // subcommand's `--access-key` and friends to these variables.
+        match (&target.secrets.access_key, &target.secrets.secret_key) {
+            (Some(access), Some(secret)) => {
+                cmd.replace_secret_env("AWS_ACCESS_KEY_ID", access);
+                cmd.replace_secret_env("AWS_SECRET_ACCESS_KEY", secret);
+                match &target.secrets.session_token {
+                    Some(token) => cmd.replace_secret_env("AWS_SESSION_TOKEN", token),
+                    None => cmd.clear_secret_env("AWS_SESSION_TOKEN"),
+                };
+            }
+            _ if matches!(target.kind, DestinationKind::S3 { .. }) => {
+                return Err(KopiaError::local(label, KopiaFailure::StorageAuth, None)
+                    .with_message(format!(
+                        "No storage credentials are available for \"{}\", so the offsite \
+                         copy cannot be written.",
+                        target.name
+                    )));
+            }
+            // A filesystem destination needs no credentials, and this
+            // repository's own are harmless there.
+            _ => {}
+        }
+
+        if options.dry_run {
+            // See "The dry-run trap" above: these two go together or not at all.
+            cmd.switch("dry-run").switch("must-exist");
+        } else if options.must_exist {
+            cmd.switch("must-exist");
+        }
+        if options.delete {
+            cmd.switch("delete");
+        }
+        if options.times {
+            cmd.switch("times");
+        }
+        if let Some(parallel) = options.parallel.filter(|p| *p > 0) {
+            cmd.flag("parallel", parallel.to_string());
+        }
+
+        let mut ctx = ctx.clone();
+        if ctx.current_path.is_none() {
+            // kopia's sync progress line has no "current blob" field, so the
+            // GUI is given the thing a person actually wants to read.
+            ctx.current_path = Some(target.name.clone());
+        }
+
+        let out = self.run(cmd, &ctx).await?;
+
+        let mut progress = out.progress;
+        progress.current_path = None;
+        progress.estimated_seconds_remaining = Some(0);
+
+        // kopia rate-limits `outputSyncProgress` (`nextSyncOutputTime.
+        // ShouldOutput`), so the frame that would have shown the last blobs is
+        // frequently never printed, and there is no machine-readable summary at
+        // the end the way `snapshot create --json` gives one. The command
+        // succeeded, which means everything the inventory line listed was
+        // copied — so the planned figures are the truth, and keeping the last
+        // sampled ones would park a finished replication at 87% in the history
+        // for ever.
+        //
+        // For a rehearsal this reports what *would* be copied, which is the
+        // same convention the snapshot dry run uses (`snapshot estimate` fills
+        // the processed counters); the "nothing was copied" warning carries the
+        // distinction.
+        progress.files_processed = progress.files_processed.max(progress.files_total.unwrap_or(0));
+        progress.bytes_processed = progress.bytes_processed.max(progress.bytes_total.unwrap_or(0));
+        progress.files_total = Some(progress.files_processed);
+        progress.bytes_total = Some(progress.bytes_processed);
+        // Every replicated byte crossed the wire: kopia only copies blobs the
+        // destination was missing, so there is no dedup saving to subtract.
+        progress.bytes_uploaded = progress.bytes_processed;
+
+        Ok(SyncOutcome {
+            blobs_copied: progress.files_processed,
+            bytes_copied: progress.bytes_processed,
+            progress,
+            warnings: out.warnings,
+            dry_run: options.dry_run,
+        })
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 
@@ -563,6 +698,193 @@ impl KopiaDriver {
     ) -> KopiaResult<CommandOutput> {
         cmd.run(ctx).await
     }
+}
+
+// ---------------------------------------------------------------------------
+// Replication
+// ---------------------------------------------------------------------------
+
+/// The second storage location of a [`KopiaDriver::sync_to`].
+///
+/// Deliberately *not* a second [`KopiaDriver`]. A driver owns a config file, a
+/// cache directory and a repository passphrase; a sync destination has none of
+/// those, because it is not connected to and is not a separate repository —
+/// it is a place to put this repository's blobs. Modelling it as a driver
+/// would invite exactly the mistake the type exists to prevent: creating a
+/// repository there, with its own key, that `sync-to` would then refuse.
+#[derive(Debug, Clone)]
+pub struct SyncTarget {
+    id: Uuid,
+    name: String,
+    kind: DestinationKind,
+    provider: Option<StorageProvider>,
+    /// Object-store credentials only. A passphrase here would be meaningless:
+    /// the replica opens with the *source* repository's passphrase.
+    secrets: DestinationSecrets,
+}
+
+impl SyncTarget {
+    /// Describe a destination as a replication target.
+    ///
+    /// Fails fast on the two shapes kopia could never satisfy — a folder
+    /// mirror, which holds files rather than blobs, and an S3 destination
+    /// whose provider has gone missing from the configuration.
+    pub fn new(
+        destination: &Destination,
+        provider: Option<&StorageProvider>,
+        secrets: DestinationSecrets,
+    ) -> KopiaResult<SyncTarget> {
+        let label = format!("destination {}", destination.name);
+        if !destination.kind.is_repository() {
+            return Err(KopiaError::local(label, KopiaFailure::Unusable, None).with_message(
+                format!(
+                    "\"{}\" is a folder mirror, so a repository cannot be replicated into it.",
+                    destination.name
+                ),
+            ));
+        }
+        if matches!(destination.kind, DestinationKind::S3 { .. }) && provider.is_none() {
+            return Err(KopiaError::local(label, KopiaFailure::Unusable, None).with_message(
+                format!(
+                    "\"{}\" points at a storage provider that no longer exists in the \
+                     configuration.",
+                    destination.name
+                ),
+            ));
+        }
+        Ok(SyncTarget {
+            id: destination.id,
+            name: destination.name.clone(),
+            kind: destination.kind.clone(),
+            provider: provider.cloned(),
+            // A passphrase would never be used and must not be carried around:
+            // the whole point of a replica is that it has none of its own.
+            secrets: DestinationSecrets {
+                passphrase: None,
+                access_key: secrets.access_key,
+                secret_key: secrets.secret_key,
+                session_token: secrets.session_token,
+            },
+        })
+    }
+
+    pub fn destination_id(&self) -> &Uuid {
+        &self.id
+    }
+    pub fn destination_name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Knobs for one `repository sync-to`.
+#[derive(Debug, Clone)]
+pub struct SyncOptions {
+    /// Remove blobs from the replica that the source no longer holds.
+    ///
+    /// Off by default, matching kopia. With it off, a replica keeps blobs the
+    /// source's retention has since expired — which costs storage but is the
+    /// safe direction: a mistaken deletion at the source cannot propagate.
+    pub delete: bool,
+    /// Copy parallelism. Kopia defaults to 1, which is far too slow for an
+    /// offsite bucket over a domestic uplink.
+    pub parallel: Option<u32>,
+    /// Refuse a destination that holds no repository format blob yet.
+    ///
+    /// This is what stops an unmounted external drive or a mistyped bucket
+    /// from quietly becoming a brand-new offsite copy of everything.
+    pub must_exist: bool,
+    /// Synchronise blob timestamps where the backend supports them.
+    pub times: bool,
+    /// Report what would be copied without copying it. Implies
+    /// [`SyncOptions::must_exist`]; see [`KopiaDriver::sync_to`].
+    pub dry_run: bool,
+}
+
+impl Default for SyncOptions {
+    fn default() -> Self {
+        SyncOptions {
+            delete: false,
+            // Eight is kopia's own recommendation for object storage and is
+            // conservative for a filesystem destination; it is the difference
+            // between a chained offsite copy finishing overnight and not.
+            parallel: Some(8),
+            must_exist: false,
+            times: false,
+            dry_run: false,
+        }
+    }
+}
+
+/// What a finished `repository sync-to` produced.
+#[derive(Debug, Clone, Default)]
+pub struct SyncOutcome {
+    pub blobs_copied: u64,
+    pub bytes_copied: u64,
+    /// Final counters, in the shape the run history stores. Blob counts occupy
+    /// the file fields; see `ProgressTracker::apply_sync`.
+    pub progress: crate::state::Progress,
+    pub warnings: Vec<String>,
+    /// True when nothing was written because this was a rehearsal.
+    pub dry_run: bool,
+}
+
+/// Express one storage location as a kopia storage subcommand and its flags.
+///
+/// Shared by `repository create`, `repository connect` and
+/// `repository sync-to`, which all take the same per-provider subcommand
+/// (`cli/storage_providers.go` registers one under each). Keeping it in one
+/// function is what guarantees a chained destination is addressed exactly the
+/// way the same destination would be addressed directly — a `--prefix` or a
+/// `--disable-tls` that applied to one path and not the other would produce
+/// two different storage locations under one name.
+fn append_storage_args(
+    cmd: &mut KopiaCommand,
+    kind: &DestinationKind,
+    provider: Option<&StorageProvider>,
+) -> KopiaResult<()> {
+    match kind {
+        DestinationKind::LocalRepository { path } | DestinationKind::OneDrive { path, .. } => {
+            cmd.command("filesystem").flag("path", path);
+        }
+        DestinationKind::S3 { bucket, prefix, .. } => {
+            let Some(StorageProvider {
+                kind: ProviderKind::S3 { endpoint, region, tls, .. }, ..
+            }) = provider
+            else {
+                return Err(KopiaError::local(
+                    "repository",
+                    KopiaFailure::Unusable,
+                    Some("the destination's storage provider is missing".into()),
+                ));
+            };
+            let (host, scheme_disables_tls) = s3_endpoint_host(endpoint);
+            if host.is_empty() {
+                return Err(KopiaError::local("repository", KopiaFailure::Unusable, None)
+                    .with_message(
+                        "The storage provider has no endpoint. StorJ's is \
+                         https://gateway.storjshare.io.",
+                    ));
+            }
+            cmd.command("s3").flag("bucket", bucket).flag("endpoint", &host);
+            if !region.is_empty() {
+                cmd.flag("region", region);
+            }
+            if !prefix.is_empty() {
+                cmd.flag("prefix", prefix);
+            }
+            // `--disable-tls` means plain HTTP. Only ever set when the user
+            // asked for it or wrote an http:// endpoint: silently
+            // downgrading a backup to cleartext would be indefensible.
+            if !*tls || scheme_disables_tls {
+                cmd.switch("disable-tls");
+            }
+        }
+        DestinationKind::LocalMirror { .. } => {
+            return Err(KopiaError::local("repository", KopiaFailure::Unusable, None)
+                .with_message("A folder mirror has no kopia repository."));
+        }
+    }
+    Ok(())
 }
 
 /// Kopia's `--upload-bytes-per-second` value: a byte count, or the literal

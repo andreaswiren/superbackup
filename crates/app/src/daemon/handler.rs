@@ -143,6 +143,32 @@ impl DaemonHandler {
         }
     }
 
+    /// `repository status` against one destination, captured verbatim.
+    ///
+    /// Every reason it could not run — a locked vault, a folder mirror, a
+    /// missing destination — becomes a *record* rather than an error, because
+    /// `kopia.probe` is a diagnostic and half an answer beats none.
+    async fn status_invocation(
+        &self,
+        needle: &str,
+        ctx: &RunContext,
+    ) -> superbackup_core::kopia::RawInvocation {
+        use superbackup_core::kopia::RawInvocation;
+        const LABEL: &str = "repository status";
+
+        if self.runtime.store.lock().await.is_locked() {
+            return RawInvocation::not_attempted(
+                LABEL,
+                "The vault is locked, so the repository's encryption key cannot be resolved. \
+                 Unlock superbackup and check again.",
+            );
+        }
+        match self.driver_for(needle).await {
+            Ok((_, driver)) => driver.status_invocation(ctx).await,
+            Err(e) => RawInvocation::not_attempted(LABEL, e.to_string()),
+        }
+    }
+
     async fn remote_status_reply(&self, detail: Option<String>) -> RemoteStatusReply {
         let config = self.config().await;
         let Some(remote) = &config.remote else {
@@ -255,6 +281,76 @@ fn snapshot_info(
         incomplete: !manifest.is_complete(),
         tags: manifest.tags.iter().map(|(k, v)| format!("{k}={v}")).collect(),
     }
+}
+
+/// Map the driver's own provenance type onto the wire one.
+///
+/// Two enums rather than one re-export, because the protocol deliberately
+/// depends on nothing below the model layer; see [`KopiaProvenance`].
+pub fn provenance_of(source: superbackup_core::kopia::KopiaSource) -> KopiaProvenance {
+    use superbackup_core::kopia::KopiaSource;
+    match source {
+        KopiaSource::Configured => KopiaProvenance::Configured,
+        KopiaSource::SystemPath => KopiaProvenance::SystemPath,
+        KopiaSource::Bundled => KopiaProvenance::Bundled,
+    }
+}
+
+/// The wire spelling of an update policy, matching its serde rename.
+fn update_policy_wire(policy: superbackup_core::model::UpdatePolicy) -> &'static str {
+    use superbackup_core::model::UpdatePolicy;
+    match policy {
+        UpdatePolicy::Off => "off",
+        UpdatePolicy::Notify => "notify",
+        UpdatePolicy::Automatic => "automatic",
+    }
+}
+
+fn invocation(raw: superbackup_core::kopia::RawInvocation) -> KopiaInvocation {
+    KopiaInvocation {
+        label: raw.label,
+        command_line: raw.command_line,
+        secret_env: raw.secret_env,
+        exit_code: raw.exit_code,
+        stdout: raw.stdout,
+        stderr: raw.stderr,
+        duration_ms: raw.duration_ms,
+        ok: raw.ok,
+    }
+}
+
+/// Put every discovery route on the wire, marking the one that won.
+///
+/// The descriptions come from
+/// [`superbackup_core::kopia::describe_routes`], which lives beside discovery
+/// itself so the two cannot drift; this only translates them and adds the
+/// "chosen" bit, which is the caller's knowledge rather than discovery's.
+pub fn discovery_routes(
+    settings: &Settings,
+    paths: &superbackup_core::paths::Paths,
+    chosen: KopiaProvenance,
+) -> Vec<KopiaRoute> {
+    let mut routes: Vec<KopiaRoute> = superbackup_core::kopia::describe_routes(settings, paths)
+        .into_iter()
+        .map(|r| {
+            let provenance = r.source.map(provenance_of).unwrap_or(KopiaProvenance::None);
+            KopiaRoute {
+                provenance,
+                path: r.path,
+                outcome: r.outcome,
+                chosen: provenance == chosen,
+            }
+        })
+        .collect();
+    if chosen == KopiaProvenance::None {
+        routes.push(KopiaRoute {
+            provenance: KopiaProvenance::None,
+            path: None,
+            outcome: "No route produced a usable kopia.".into(),
+            chosen: true,
+        });
+    }
+    routes
 }
 
 fn check(id: &str, title: &str, status: CheckStatus) -> DoctorCheck {
@@ -458,6 +554,91 @@ impl Handler for DaemonHandler {
         // Warnings do not clear `ok`; only failures do.
         let ok = !checks.iter().any(|c| c.status == CheckStatus::Fail);
         Ok(DoctorReply { ok, checks, fixed })
+    }
+
+    /// Everything the Settings screen needs to let a user satisfy themselves
+    /// that kopia works, including the raw output of running it.
+    ///
+    /// Discovery is re-run rather than served from the cached
+    /// [`KopiaBinary`](superbackup_core::kopia::KopiaBinary) the daemon found
+    /// at startup. A cached answer says what was true when the process
+    /// started, possibly days ago and possibly before an antivirus quarantined
+    /// the file; the whole point of this command is to answer "is it working
+    /// *now*".
+    async fn kopia_probe(
+        &self,
+        _ctx: &RequestContext,
+        destination: Option<String>,
+        check_for_update: bool,
+    ) -> Result<KopiaProbeReply> {
+        use superbackup_core::kopia::{configured_floor, KopiaBinary, KopiaInstaller};
+
+        let config = self.config().await;
+        let settings = config.settings.clone();
+        let paths = &self.runtime.paths;
+        let managed_path = paths.bundled_kopia();
+
+        let resolved = KopiaBinary::discover(&settings, paths).await;
+        let (path, provenance, version, banner, detail) = match &resolved {
+            Ok(binary) => (
+                Some(binary.path().display().to_string()),
+                provenance_of(binary.source()),
+                Some(binary.version().to_string()),
+                Some(binary.banner().to_string()),
+                None,
+            ),
+            Err(e) => (None, KopiaProvenance::None, None, None, Some(e.to_string())),
+        };
+
+        let mut invocations = Vec::new();
+        let run_ctx = RunContext::new();
+        if let Ok(binary) = &resolved {
+            invocations.push(invocation(
+                superbackup_core::kopia::version_invocation(binary.path(), &run_ctx).await,
+            ));
+        } else {
+            invocations.push(invocation(superbackup_core::kopia::RawInvocation::not_attempted(
+                "--version",
+                detail.clone().unwrap_or_else(|| "no kopia executable was found".into()),
+            )));
+        }
+
+        // The repository half, when a destination was named. It needs the
+        // vault, so a locked one is reported as a not-attempted invocation
+        // rather than failing the whole command — the version half is still
+        // worth having.
+        if let Some(needle) = &destination {
+            invocations.push(invocation(self.status_invocation(needle, &run_ctx).await));
+        }
+
+        let installer = KopiaInstaller::new(paths).ok();
+        let managed_version = match &installer {
+            Some(i) => i.installed_version().await.map(|v| v.to_string()),
+            None => None,
+        };
+        let (update_available, update_summary) = match (&installer, check_for_update) {
+            (Some(i), true) => {
+                let check = i.check_for_update(&settings, Utc::now()).await;
+                (check.available_version().map(|v| v.to_string()), Some(check.summary()))
+            }
+            _ => (None, None),
+        };
+
+        Ok(KopiaProbeReply {
+            path,
+            provenance,
+            version,
+            banner,
+            routes: discovery_routes(&settings, paths, provenance),
+            managed_path: managed_path.display().to_string(),
+            managed_version,
+            update_policy: update_policy_wire(settings.kopia.auto_update).to_string(),
+            update_available,
+            update_summary,
+            minimum_version: configured_floor(&settings).to_string(),
+            invocations,
+            detail,
+        })
     }
 
     // -- jobs -------------------------------------------------------------
@@ -845,6 +1026,103 @@ impl Handler for DaemonHandler {
                 detail: Some(e.message),
             },
         })
+    }
+
+    /// Prove a repository encryption key works, by opening the repository with
+    /// it. Deliberately not a format check: a key that looks right and is
+    /// wrong is exactly the failure the user is trying to rule out.
+    ///
+    /// A candidate key is used for this call and thrown away. Storing it would
+    /// be a different, destructive operation — a repository whose vault entry
+    /// no longer matches its actual key is unopenable — so the caller has to
+    /// ask for that separately, after seeing that the key works.
+    async fn check_encryption_key(
+        &self,
+        _ctx: &RequestContext,
+        destination: String,
+        key: Option<SecretString>,
+    ) -> Result<KeyCheckReply> {
+        self.require_unlocked().await?;
+        let config = self.config().await;
+        let target = resolve_destination(&config, &destination)?.clone();
+        if !target.kind.is_repository() {
+            return Err(Error::Validation(format!(
+                "\"{}\" is a folder mirror. It holds plain copies, has no encryption key, and \
+                 there is nothing to check.",
+                target.name
+            )));
+        }
+
+        let binary = self.runtime.kopia().ok_or(Error::KopiaMissing)?;
+        let candidate = key.map(|k| k.into_secret());
+        if candidate.as_ref().is_some_and(|c| c.is_empty()) {
+            return Err(Error::Validation("an empty key cannot open a repository".into()));
+        }
+        let driver = {
+            let store = self.runtime.store.lock().await;
+            super::executor::build_driver_with(
+                &store,
+                &self.runtime.paths,
+                binary,
+                &target,
+                candidate,
+            )?
+        };
+
+        let ctx = RunContext::new();
+        let outcome = driver.test_connection(&ctx).await;
+        let reply = match outcome {
+            Ok(superbackup_core::kopia::ConnectionTest::Connected { status }) => KeyCheckReply {
+                destination_id: target.id,
+                valid: true,
+                no_repository: false,
+                repository_id: status.and_then(|s| s.unique_id),
+                detail: None,
+            },
+            // Reachable, but empty. The key is neither right nor wrong, and
+            // saying "wrong key" here would send a user hunting for a problem
+            // they do not have.
+            Ok(superbackup_core::kopia::ConnectionTest::ReachableButEmpty) => KeyCheckReply {
+                destination_id: target.id,
+                valid: false,
+                no_repository: true,
+                repository_id: None,
+                detail: Some(format!(
+                    "The location for \"{}\" is reachable but holds no repository yet, so there \
+                     is nothing to check the key against.",
+                    target.name
+                )),
+            },
+            Err(e) => KeyCheckReply {
+                destination_id: target.id,
+                valid: false,
+                no_repository: false,
+                repository_id: None,
+                detail: Some(e.message.clone()),
+            },
+        };
+
+        // The outcome is worth recording either way: a key that stopped
+        // working is the single most important thing that can happen to a
+        // backup, and a check that says so should leave a trace.
+        self.runtime.record_event(
+            Event::new(
+                if reply.valid { Severity::Info } else { Severity::Warning },
+                "dest.key_checked",
+                if reply.valid {
+                    format!("The encryption key for \"{}\" opened the repository.", target.name)
+                } else if reply.no_repository {
+                    format!("\"{}\" holds no repository to check a key against.", target.name)
+                } else {
+                    format!(
+                        "The encryption key offered for \"{}\" did not open the repository.",
+                        target.name
+                    )
+                },
+            )
+            .with_destination(target.id),
+        );
+        Ok(reply)
     }
 
     async fn create_repository(
@@ -1510,6 +1788,87 @@ impl Handler for DaemonHandler {
             format!("A credential was stored under {secret_ref}."),
         ));
         Ok(AckReply {})
+    }
+
+    /// The protocol's one sanctioned path for secret material to leave the
+    /// daemon. Read the `vault.export_keys` entry in
+    /// `crates/core/src/ipc/protocol.rs` before touching this, and
+    /// `THREAT_MODEL.md` §A7 for the recorded exception.
+    ///
+    /// This method's share of the bounds:
+    ///
+    /// * The vault must be unlocked **and** the master passphrase must be
+    ///   re-presented and verified against the sealed vault. Reaching the
+    ///   socket is not enough — the daemon may be SYSTEM while the caller is
+    ///   not, and this is the one request where that distinction is decisive.
+    /// * Rate-limited, so the socket is not an oracle.
+    /// * Logged: that an export happened, how many repositories it covered,
+    ///   and nothing else. No part of the document reaches a log, an event, an
+    ///   error message or a tracing span.
+    /// * No file is written here. The document goes back to the caller, which
+    ///   saves it where the *user* chose. A path parameter would turn an
+    ///   elevated daemon into an arbitrary-file-write primitive, which is a
+    ///   far worse hole than the disclosure this feature is about.
+    async fn export_encryption_keys(
+        &self,
+        _ctx: &RequestContext,
+        passphrase: SecretString,
+    ) -> Result<KeyExportReply> {
+        self.require_unlocked().await?;
+        if let Some(wait) = self.runtime.export_cooldown_remaining() {
+            return Err(Error::Validation(format!(
+                "An encryption key export was made moments ago. Try again in {} second{}.",
+                wait.as_secs().max(1),
+                if wait.as_secs() == 1 { "" } else { "s" }
+            )));
+        }
+
+        // Verified against the sealed vault rather than against the cached
+        // master key: the cached key proves only that *somebody* unlocked this
+        // daemon at some point, which is exactly the assumption this check
+        // exists to refuse.
+        let secret = passphrase.into_secret();
+        {
+            let store = self.runtime.store.lock().await;
+            let sealed = store.vault().sealed_bytes().to_vec();
+            drop(store);
+            superbackup_core::crypto::Vault::unlock(&sealed, &secret)
+                .map_err(|_| Error::BadPassphrase)?;
+        }
+
+        let generated_at = Utc::now();
+        let (export, file_name) = {
+            let store = self.runtime.store.lock().await;
+            let name = super::keyexport::suggested_file_name(store.config(), generated_at);
+            (super::keyexport::build(&store, generated_at), name)
+        };
+        self.runtime.note_export();
+
+        // Counts and names of what was *left out*; never a byte of the
+        // document itself.
+        self.runtime.record_event(Event::new(
+            Severity::Warning,
+            "vault.keys_exported",
+            format!(
+                "Repository encryption keys were exported for {} destination{}. Anyone holding \
+                 that file can read those backups.",
+                export.exported,
+                if export.exported == 1 { "" } else { "s" }
+            ),
+        ));
+        tracing::warn!(
+            destinations = export.exported,
+            omitted = export.omitted.len(),
+            "repository encryption keys were exported"
+        );
+
+        Ok(KeyExportReply {
+            document: export.document,
+            destinations: export.exported,
+            omitted: export.omitted,
+            suggested_file_name: file_name,
+            generated_at,
+        })
     }
 
     async fn list_secret_refs(&self, _ctx: &RequestContext) -> Result<SecretRefsReply> {

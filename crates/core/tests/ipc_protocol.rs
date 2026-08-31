@@ -79,6 +79,7 @@ fn destination() -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: Utc::now(),
         last_verified_at: None,
     }
@@ -142,6 +143,7 @@ fn sample_requests() -> Vec<Request> {
         Request::Version {},
         Request::Health {},
         Request::Doctor { fix: true },
+        Request::KopiaProbe { destination: Some("drive".into()), check_for_update: false },
         // jobs
         Request::JobList { include_disabled: true },
         Request::JobGet { job: "documents".into() },
@@ -160,6 +162,10 @@ fn sample_requests() -> Vec<Request> {
         Request::DestinationUpdate { destination: Box::new(destination()) },
         Request::DestinationDelete { destination: "drive".into(), force: false },
         Request::DestinationTest { destination: "drive".into() },
+        Request::DestinationCheckKey {
+            destination: "drive".into(),
+            key: Some(SecretString::from_string("a candidate key".into())),
+        },
         Request::DestinationRepoCreate {
             destination: "drive".into(),
             encryption: Some(EncryptionSettings::default()),
@@ -210,6 +216,9 @@ fn sample_requests() -> Vec<Request> {
             value: secret("AKIAEXAMPLE"),
         },
         Request::VaultListRefs {},
+        Request::VaultExportKeys {
+            passphrase: SecretString::from_string("correct-horse-battery-staple".into()),
+        },
         // control
         Request::ControlPause { seconds: Some(3600), reason: Some("presenting".into()) },
         Request::ControlResume {},
@@ -256,6 +265,8 @@ fn sample_replies() -> Vec<Reply> {
             snapshot_id: None,
             error: None,
             warnings: vec![],
+            replicated_from: None,
+            skipped_reason: None,
         }],
     };
 

@@ -75,12 +75,12 @@ use superbackup_core::config::{destination_passphrase, Store};
 use superbackup_core::engine::clock::{BoxFuture, Clock};
 use superbackup_core::engine::{
     BackupExecutor, CancelToken, ExecutorError, ExecutorResult, MirrorEngine, MirrorOptions,
-    MirrorRequest, PrepareOutcome, PrepareRequest, ProgressSink, Retryable, SnapshotOutcome,
-    SnapshotRequest, VerifyOutcome, VerifyRequest,
+    MirrorRequest, PrepareOutcome, PrepareRequest, ProgressSink, ReplicateOutcome,
+    ReplicateRequest, Retryable, SnapshotOutcome, SnapshotRequest, VerifyOutcome, VerifyRequest,
 };
 use superbackup_core::kopia::{
     cancellation, CancelHandle, DestinationSecrets, EventSink, KopiaBinary, KopiaDriver,
-    KopiaError, KopiaEvent, KopiaFailure, RunContext, SnapshotOptions,
+    KopiaError, KopiaEvent, KopiaFailure, RunContext, SnapshotOptions, SyncOptions, SyncTarget,
 };
 use superbackup_core::model::{Destination, DestinationKind, RetentionPolicy};
 use superbackup_core::paths::Paths;
@@ -456,6 +456,125 @@ impl KopiaExecutor {
         Ok(SnapshotOutcome { snapshot_id, progress: total, warnings })
     }
 
+    /// The kopia call behind `replicate`: `repository sync-to`.
+    ///
+    /// The driver is bound to the **source** destination, because that is the
+    /// repository being read and `sync-to` is a command *of* a repository. The
+    /// replica is described by a [`SyncTarget`], which deliberately carries no
+    /// passphrase: it is the same repository at a second address and opens with
+    /// the source's key. See
+    /// [`Destination::replicate_from`](superbackup_core::model::Destination::replicate_from).
+    async fn replicate_repository(
+        &self,
+        request: ReplicateRequest,
+    ) -> ExecutorResult<ReplicateOutcome> {
+        let driver = self.driver_for(&request.source).await?;
+        let target = {
+            let store = self.runtime.store.lock().await;
+            build_sync_target(&store, &request.destination)
+        }
+        .map_err(config_error)?;
+
+        let (handle, token) = cancellation();
+        let _bridge = CancelBridge::new(request.cancel.clone(), handle);
+
+        // `sync-to` runs against a connected repository. The runner has
+        // normally just prepared the source in this same run, but connecting
+        // again is idempotent and cheap, and it turns "the config file was
+        // cleaned up between runs" from a confusing kopia error into the
+        // ordinary not-connected path.
+        let connect_ctx = RunContext::new().with_cancel(token.clone());
+        driver.connect_repository(&connect_ctx).await.map_err(map_kopia_error)?;
+
+        let rehearsal = request.dry_run || self.dry_run;
+        let options = SyncOptions {
+            // Never on. Propagating deletions from the fast local repository to
+            // the offsite one would let one bad retention change, or one
+            // corrupted local repository, destroy the offsite copy too — which
+            // is the single thing the offsite copy exists to survive.
+            delete: false,
+            // A bandwidth ceiling cannot be handed to `sync-to` (kopia stores
+            // throttling in the repository, and that governs the *source*
+            // side), so the one lever available is to stop competing with
+            // ourselves for the uplink.
+            parallel: if request.bandwidth.is_unlimited() {
+                SyncOptions::default().parallel
+            } else {
+                Some(1)
+            },
+            // Off, so the *first* replication bootstraps the offsite copy
+            // instead of demanding the user create it by hand — which they
+            // could not do correctly anyway, since a replica must inherit its
+            // source's format blob rather than be created.
+            //
+            // The cost is kopia's documented `--must-exist` hazard: on a
+            // platform where an unmounted volume leaves an empty directory
+            // behind, a replication into it would start a fresh copy there
+            // rather than refusing. A rehearsal is not exposed to this — a dry
+            // run always passes `--must-exist`, see `KopiaDriver::sync_to`.
+            must_exist: false,
+            times: false,
+            dry_run: rehearsal,
+        };
+
+        let (events, rx) = EventSink::channel(PROGRESS_BUFFER);
+        let pump = spawn_progress_pump(rx, request.progress.clone());
+        let ctx = RunContext::new()
+            .with_cancel(token)
+            .with_events(events)
+            .with_current_path(request.destination.name.clone());
+
+        let result = driver.sync_to(&target, &options, &ctx).await;
+        // Same ordering rule as `snapshot_repository`: drop the context (and
+        // with it the last `EventSink`) before joining, or this awaits a sender
+        // it is itself keeping alive.
+        drop(ctx);
+        let mut warnings = pump.await.unwrap_or_default();
+
+        match result {
+            Ok(outcome) => {
+                warnings.extend(outcome.warnings);
+                if outcome.blobs_copied == 0 && !rehearsal {
+                    warnings.push(format!(
+                        "\"{}\" was already up to date; nothing needed copying.",
+                        request.destination.name
+                    ));
+                }
+                warnings.sort();
+                warnings.dedup();
+                request.progress.finish(outcome.progress.clone());
+                Ok(ReplicateOutcome {
+                    blobs_copied: outcome.blobs_copied,
+                    bytes_copied: outcome.bytes_copied,
+                    progress: outcome.progress,
+                    warnings,
+                })
+            }
+            // A rehearsal passes `--must-exist`, so an offsite location that
+            // holds no repository yet fails here rather than being quietly
+            // initialised. Saying that plainly is the whole point.
+            Err(e) if rehearsal && e.failure == KopiaFailure::RepositoryNotFound => {
+                request.progress.finish(Progress::default());
+                Err(ExecutorError::new(
+                    ErrorCode::RepoNotConnected,
+                    format!(
+                        "there is no repository at \"{}\" yet, so a dry run cannot check what \
+                         it would copy.",
+                        request.destination.name
+                    ),
+                )
+                .permanent()
+                .with_hint(
+                    "Run the job for real once; the first replication creates the offsite copy.",
+                ))
+            }
+            Err(e) => {
+                request.progress.finish(Progress::default());
+                Err(map_kopia_error(e))
+            }
+        }
+    }
+
     /// The mirror branch: no repository, no kopia, no secrets.
     ///
     /// Reached only when something drives the executor directly — the runner
@@ -496,6 +615,28 @@ pub fn build_driver(
     binary: KopiaBinary,
     destination: &Destination,
 ) -> Result<KopiaDriver> {
+    build_driver_with(store, paths, binary, destination, None)
+}
+
+/// [`build_driver`], optionally with a repository passphrase the caller
+/// supplies instead of the one in the vault.
+///
+/// The override exists for exactly one caller: `dest.check_key`, which has to
+/// answer "does *this* key open the repository?" about a key the user just
+/// typed and which is deliberately **not** stored. Everything else passes
+/// `None` and gets the vault's answer, chain-resolved, as before.
+///
+/// The override replaces only the repository passphrase. Object-store
+/// credentials still come from the vault, because reaching the bucket is not
+/// the thing being tested and asking the user to re-type an S3 key to check a
+/// repository key would be nonsense.
+pub fn build_driver_with(
+    store: &Store,
+    paths: &Paths,
+    binary: KopiaBinary,
+    destination: &Destination,
+    passphrase_override: Option<superbackup_core::secret::Secret>,
+) -> Result<KopiaDriver> {
     if store.is_locked() {
         return Err(Error::Locked);
     }
@@ -515,8 +656,11 @@ pub fn build_driver(
         )));
     }
 
-    let mut secrets =
-        DestinationSecrets::with_passphrase(destination_passphrase(store, destination)?);
+    let passphrase = match passphrase_override {
+        Some(candidate) => candidate,
+        None => destination_passphrase(store, destination)?,
+    };
+    let mut secrets = DestinationSecrets::with_passphrase(passphrase);
 
     if let Some(credentials) = destination.kind.effective_credentials(provider.as_ref()) {
         let access = store.require_secret(&credentials.access_key_ref)?;
@@ -530,6 +674,49 @@ pub fn build_driver(
     }
 
     KopiaDriver::new(binary, paths, destination, provider.as_ref(), secrets)
+        .map_err(|e| Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.message })
+}
+
+/// Describe a destination as a `sync-to` target, resolving only the secrets it
+/// actually needs.
+///
+/// The asymmetry with [`build_driver`] is the point: a replication target needs
+/// **object-store credentials and nothing else**. It gets no repository
+/// passphrase, because it does not have one — `kopia repository sync-to` copies
+/// the source's format blob, so the replica opens with the source's key. Asking
+/// the vault for a passphrase here would be asking for something that must not
+/// exist, and getting one would mean the configuration is wrong.
+pub fn build_sync_target(store: &Store, destination: &Destination) -> Result<SyncTarget> {
+    if store.is_locked() {
+        return Err(Error::Locked);
+    }
+    if !destination.kind.is_repository() {
+        return Err(Error::Validation(format!(
+            "\"{}\" is a folder mirror, so a repository cannot be replicated into it",
+            destination.name
+        )));
+    }
+
+    let provider =
+        destination.kind.provider_id().and_then(|id| store.config().provider(id)).cloned();
+    if matches!(destination.kind, DestinationKind::S3 { .. }) && provider.is_none() {
+        return Err(Error::Config(format!(
+            "\"{}\" points at a storage provider that is no longer in the configuration",
+            destination.name
+        )));
+    }
+
+    let mut secrets = DestinationSecrets::default();
+    if let Some(credentials) = destination.kind.effective_credentials(provider.as_ref()) {
+        let access = store.require_secret(&credentials.access_key_ref)?;
+        let secret = store.require_secret(&credentials.secret_key_ref)?;
+        secrets = secrets.with_s3(access, secret);
+        if let Some(token_ref) = &credentials.session_token_ref {
+            secrets.session_token = store.secret(token_ref)?;
+        }
+    }
+
+    SyncTarget::new(destination, provider.as_ref(), secrets)
         .map_err(|e| Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.message })
 }
 
@@ -607,6 +794,34 @@ impl BackupExecutor for KopiaExecutor {
             } else {
                 self.snapshot_mirror(request, rehearsal).await
             }
+        })
+    }
+
+    fn replicate<'a>(
+        &'a self,
+        request: ReplicateRequest,
+    ) -> BoxFuture<'a, ExecutorResult<ReplicateOutcome>> {
+        Box::pin(async move {
+            if request.cancel.is_cancelled() {
+                return Err(ExecutorError::cancelled());
+            }
+            // Both ends have to be repositories. The validator rejects anything
+            // else, so reaching this is a leniently loaded configuration — a
+            // clear refusal beats a kopia error about a missing format blob.
+            for end in [&request.source, &request.destination] {
+                if !end.kind.is_repository() {
+                    return Err(ExecutorError::new(
+                        ErrorCode::Validation,
+                        format!(
+                            "\"{}\" is a folder mirror, so it has no repository to replicate \
+                             to or from.",
+                            end.name
+                        ),
+                    )
+                    .permanent());
+                }
+            }
+            self.replicate_repository(request).await
         })
     }
 

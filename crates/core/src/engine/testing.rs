@@ -13,8 +13,9 @@
 use crate::engine::cancel::CancelToken;
 use crate::engine::clock::BoxFuture;
 use crate::engine::executor::{
-    BackupExecutor, ExecutorError, ExecutorResult, PrepareOutcome, PrepareRequest, SnapshotOutcome,
-    SnapshotRequest, VerifyOutcome, VerifyRequest,
+    BackupExecutor, ExecutorError, ExecutorResult, PrepareOutcome, PrepareRequest,
+    ReplicateOutcome, ReplicateRequest, SnapshotOutcome, SnapshotRequest, VerifyOutcome,
+    VerifyRequest,
 };
 use crate::engine::throttle::ResolvedBandwidth;
 use crate::model::{Destination, DestinationKind, ExclusionSet, Job, JobHooks, Schedule, Source};
@@ -60,13 +61,31 @@ pub struct MockCall {
     pub bandwidth: ResolvedBandwidth,
 }
 
+/// One recorded replication call.
+#[derive(Debug, Clone)]
+pub struct MockReplication {
+    pub run_id: Uuid,
+    pub job_id: Uuid,
+    /// The replica being written.
+    pub destination_id: Uuid,
+    /// The destination its blobs were copied from.
+    pub source_id: Uuid,
+    pub attempt: u32,
+    pub dry_run: bool,
+    pub bandwidth: ResolvedBandwidth,
+}
+
 #[derive(Debug, Default)]
 struct MockState {
     default: Option<MockBehaviour>,
     per_destination: HashMap<Uuid, MockBehaviour>,
     calls: Vec<MockCall>,
+    replications: Vec<MockReplication>,
     prepares: Vec<Uuid>,
     prepare_error: Option<ExecutorError>,
+    /// Destination ids in the order any work was started against them, whether
+    /// a snapshot or a replication. This is what a chain-ordering test asserts.
+    order: Vec<Uuid>,
 }
 
 /// A scriptable [`BackupExecutor`].
@@ -109,9 +128,26 @@ impl MockExecutor {
         self.state.lock().map(|s| s.calls.clone()).unwrap_or_default()
     }
 
-    /// How many times a destination was attempted.
+    /// Every replication call made so far, in order.
+    pub fn replications(&self) -> Vec<MockReplication> {
+        self.state.lock().map(|s| s.replications.clone()).unwrap_or_default()
+    }
+
+    /// Destination ids in the order work actually started against them,
+    /// snapshots and replications together. A chained job asserts on this.
+    pub fn order(&self) -> Vec<Uuid> {
+        self.state.lock().map(|s| s.order.clone()).unwrap_or_default()
+    }
+
+    /// How many times a destination was attempted, by either route.
     pub fn attempts(&self, destination: Uuid) -> usize {
-        self.calls().iter().filter(|c| c.destination_id == destination).count()
+        self.state
+            .lock()
+            .map(|s| {
+                s.calls.iter().filter(|c| c.destination_id == destination).count()
+                    + s.replications.iter().filter(|r| r.destination_id == destination).count()
+            })
+            .unwrap_or(0)
     }
 
     /// Destination ids passed to `prepare`, in order.
@@ -180,6 +216,7 @@ impl BackupExecutor for MockExecutor {
     ) -> BoxFuture<'a, ExecutorResult<SnapshotOutcome>> {
         Box::pin(async move {
             if let Ok(mut state) = self.state.lock() {
+                state.order.push(request.destination.id);
                 state.calls.push(MockCall {
                     run_id: request.run_id,
                     job_id: request.job_id,
@@ -219,6 +256,72 @@ impl BackupExecutor for MockExecutor {
                 // Already resolved by `next_behaviour`; reaching here means the
                 // counter ran out.
                 MockBehaviour::FailThenSucceed { .. } => Ok(SnapshotOutcome::default()),
+                MockBehaviour::BlockUntilCancelled => {
+                    request.progress.update(Progress {
+                        files_processed: 1,
+                        bytes_processed: 512,
+                        ..Default::default()
+                    });
+                    request.cancel.cancelled().await;
+                    Err(ExecutorError::cancelled())
+                }
+                MockBehaviour::HangForever => std::future::pending().await,
+            }
+        })
+    }
+
+    fn replicate<'a>(
+        &'a self,
+        request: ReplicateRequest,
+    ) -> BoxFuture<'a, ExecutorResult<ReplicateOutcome>> {
+        Box::pin(async move {
+            if let Ok(mut state) = self.state.lock() {
+                state.order.push(request.destination.id);
+                state.replications.push(MockReplication {
+                    run_id: request.run_id,
+                    job_id: request.job_id,
+                    destination_id: request.destination.id,
+                    source_id: request.source.id,
+                    attempt: request.attempt,
+                    dry_run: request.dry_run,
+                    bandwidth: request.bandwidth,
+                });
+            }
+            // A rehearsal copies nothing, and says so, because the one thing a
+            // dry run must never do is look like a real one.
+            if request.dry_run {
+                let progress = Progress::default();
+                request.progress.finish(progress.clone());
+                return Ok(ReplicateOutcome {
+                    blobs_copied: 0,
+                    bytes_copied: 0,
+                    progress,
+                    warnings: vec![format!(
+                        "Dry run: nothing was copied to \"{}\".",
+                        request.destination.name
+                    )],
+                });
+            }
+            match self.next_behaviour(request.destination.id) {
+                MockBehaviour::Succeed { files, bytes, warnings } => {
+                    let progress = Progress {
+                        files_processed: files,
+                        files_total: Some(files),
+                        bytes_processed: bytes,
+                        bytes_total: Some(bytes),
+                        bytes_uploaded: bytes,
+                        ..Default::default()
+                    };
+                    request.progress.finish(progress.clone());
+                    Ok(ReplicateOutcome {
+                        blobs_copied: files,
+                        bytes_copied: bytes,
+                        progress,
+                        warnings,
+                    })
+                }
+                MockBehaviour::Fail(error) => Err(error),
+                MockBehaviour::FailThenSucceed { .. } => Ok(ReplicateOutcome::default()),
                 MockBehaviour::BlockUntilCancelled => {
                     request.progress.update(Progress {
                         files_processed: 1,
@@ -283,9 +386,19 @@ pub fn test_repository(name: &str, path: impl Into<PathBuf>) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }
+}
+
+/// A repository destination that is a replica of `source`.
+///
+/// Carries no `encryption` and no `passphrase_ref`, because a replica has
+/// neither: it is the same kopia repository as its source, reached at a second
+/// address. See [`crate::model::Destination::replicate_from`].
+pub fn test_replica(name: &str, path: impl Into<PathBuf>, source: Uuid) -> Destination {
+    Destination { replicate_from: Some(source), ..test_repository(name, path) }
 }
 
 /// A folder-mirror destination, which routes through

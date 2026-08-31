@@ -46,6 +46,7 @@ pub mod redact;
 pub mod remote;
 pub mod secret;
 pub mod state;
+pub mod update;
 
 pub use error::{Error, ErrorCode, Result};
 

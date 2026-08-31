@@ -340,6 +340,52 @@ impl Handler for MockHandler {
         })
     }
 
+    async fn kopia_probe(
+        &self,
+        _ctx: &RequestContext,
+        destination: Option<String>,
+        _check_for_update: bool,
+    ) -> Result<KopiaProbeReply> {
+        let _guard = self.enter("kopia.probe").await?;
+        let mut invocations = vec![KopiaInvocation {
+            label: "--version".into(),
+            command_line: "/usr/bin/kopia --version".into(),
+            secret_env: Vec::new(),
+            exit_code: Some(0),
+            stdout: "0.21.1 build: mock from: kopia/kopia".into(),
+            stderr: String::new(),
+            duration_ms: 12,
+            ok: true,
+        }];
+        if destination.is_some() {
+            invocations.push(KopiaInvocation {
+                label: "repository status".into(),
+                command_line: "/usr/bin/kopia --config-file=... repository status --json".into(),
+                secret_env: vec!["KOPIA_PASSWORD".into()],
+                exit_code: Some(0),
+                stdout: "{\"uniqueId\":\"mock-repo\"}".into(),
+                stderr: String::new(),
+                duration_ms: 84,
+                ok: true,
+            });
+        }
+        Ok(KopiaProbeReply {
+            path: Some("/usr/bin/kopia".into()),
+            provenance: KopiaProvenance::SystemPath,
+            version: Some("0.21.1".into()),
+            banner: Some("0.21.1 build: mock from: kopia/kopia".into()),
+            routes: Vec::new(),
+            managed_path: "/var/lib/superbackup/kopia".into(),
+            managed_version: None,
+            update_policy: "notify".into(),
+            update_available: None,
+            update_summary: Some("kopia 0.21.1 is up to date.".into()),
+            minimum_version: "0.17.0".into(),
+            invocations,
+            detail: None,
+        })
+    }
+
     async fn list_jobs(&self, _ctx: &RequestContext, _include_disabled: bool) -> Result<JobsReply> {
         let _guard = self.enter("job.list").await?;
         let jobs = self.state.lock().map(|s| s.jobs.clone()).unwrap_or_default();
@@ -485,6 +531,28 @@ impl Handler for MockHandler {
     ) -> Result<ProbeReply> {
         let _guard = self.enter("dest.test").await?;
         Ok(Self::probe())
+    }
+
+    async fn check_encryption_key(
+        &self,
+        _ctx: &RequestContext,
+        _destination: String,
+        key: Option<SecretString>,
+    ) -> Result<KeyCheckReply> {
+        let _guard = self.enter("dest.check_key").await?;
+        // A key the fixture recognises opens the mock repository; anything
+        // else does not, so a caller can exercise both branches.
+        let valid = match &key {
+            None => true,
+            Some(k) => k.expose().expose_str() == Some("correct-key"),
+        };
+        Ok(KeyCheckReply {
+            destination_id: Uuid::new_v4(),
+            valid,
+            no_repository: false,
+            repository_id: valid.then(|| "mock-repo".to_string()),
+            detail: (!valid).then(|| "invalid repository password".to_string()),
+        })
     }
 
     async fn create_repository(
@@ -739,6 +807,21 @@ impl Handler for MockHandler {
             }
         }
         Ok(AckReply {})
+    }
+
+    async fn export_encryption_keys(
+        &self,
+        _ctx: &RequestContext,
+        _passphrase: SecretString,
+    ) -> Result<KeyExportReply> {
+        let _guard = self.enter("vault.export_keys").await?;
+        Ok(KeyExportReply {
+            document: "SUPERBACKUP - REPOSITORY ENCRYPTION KEYS\r\n(mock)\r\n".to_string(),
+            destinations: 0,
+            omitted: Vec::new(),
+            suggested_file_name: "superbackup-encryption-keys-mock.txt".to_string(),
+            generated_at: Utc::now(),
+        })
     }
 
     async fn list_secret_refs(&self, _ctx: &RequestContext) -> Result<SecretRefsReply> {

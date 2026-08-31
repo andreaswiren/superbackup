@@ -43,8 +43,10 @@ pub mod events;
 pub mod executor;
 pub mod handler;
 pub mod keychain;
+pub mod keyexport;
 pub mod lifecycle;
 pub mod logging;
+pub mod manifest;
 pub mod rekey;
 pub mod runtime;
 

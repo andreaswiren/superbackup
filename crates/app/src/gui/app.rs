@@ -39,6 +39,8 @@ use super::widgets::{self, Button};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pending {
     RunJob(Uuid),
+    PreviewJob(Uuid),
+    CheckKey(Uuid),
     RunAll,
     Verify(Uuid),
     CreateRepository(Uuid),
@@ -274,6 +276,32 @@ impl App {
             (Intent::Doctor, Reply::Doctor(report)) => {
                 self.screens.settings.doctor_arrived(report.clone());
             }
+            (Intent::PreviewJob(job_id, name), Reply::Started(started)) => {
+                self.screens.preview.accepted(*job_id, started.run_id);
+                self.toasts.info(copy::preview_started(name));
+                self.ask(Intent::Status, Request::Status {});
+            }
+            (Intent::KopiaProbe, Reply::KopiaProbe(probe)) => {
+                self.screens.settings.kopia_probe_arrived(probe.clone());
+            }
+            (Intent::CheckKey(id), Reply::KeyCheck(check)) => {
+                self.screens.destination_editor.key_check_arrived(*id, check.clone());
+                let name = self.data.destination_name(id);
+                if check.valid {
+                    self.toasts.success(copy::keys::CHECK_OK);
+                } else if check.no_repository {
+                    self.toasts.info(copy::keys::CHECK_NONE);
+                } else {
+                    self.toasts.danger(name, copy::keys::CHECK_BAD);
+                }
+            }
+            (Intent::ExportKeys, Reply::KeyExport(export)) => {
+                // The document never lands in `Data`: the modal owns it, and
+                // closing the modal is what forgets it.
+                if let Some(Modal::ExportKeys(state)) = &mut self.modal {
+                    state.document_arrived(export.clone());
+                }
+            }
             (Intent::Service, Reply::Service(_)) => {}
             (Intent::SecretRefs, Reply::SecretRefs(refs)) => {
                 self.screens.provider_editor.secret_refs(refs.refs.clone());
@@ -292,6 +320,8 @@ impl App {
             E::BadPassphrase => {
                 if let Some(Modal::Unlock(state)) = &mut self.modal {
                     state.fail();
+                } else if let Some(Modal::ExportKeys(state)) = &mut self.modal {
+                    state.fail(copy::err::BAD_PASSPHRASE.to_string());
                 } else {
                     self.toasts.danger(copy::err::BAD_PASSPHRASE, payload.message);
                 }
@@ -310,6 +340,16 @@ impl App {
                     self.screens.destination_editor.repository_failed(payload)
                 }
                 Intent::Snapshots(_) | Intent::Browse(_, _) => self.screens.restore.failed(payload),
+                Intent::PreviewJob(job_id, _) => self.screens.preview.failed(job_id, payload),
+                Intent::KopiaProbe => self.screens.settings.kopia_probe_failed(payload),
+                Intent::CheckKey(id) => {
+                    self.screens.destination_editor.key_check_failed(id, payload)
+                }
+                Intent::ExportKeys => {
+                    if let Some(Modal::ExportKeys(state)) = &mut self.modal {
+                        state.fail(payload.message);
+                    }
+                }
                 _ => {
                     let title = payload.message.clone();
                     let body = payload.hint.clone().unwrap_or_default();
@@ -344,6 +384,66 @@ impl App {
         self.ask(
             Intent::RunJob(job.name.clone()),
             Request::JobRun { job: job.id.to_string(), dry_run: false },
+        );
+    }
+
+    /// Rehearse a job: report what it would copy, write nothing.
+    ///
+    /// Goes to the same `job.run` the real thing does, with `dry_run` set —
+    /// the engine is the authority on what a rehearsal means, and a second
+    /// code path would eventually disagree with it.
+    pub fn request_preview(&mut self, job: &Job) {
+        if !self.guard(Action::RunJob, Pending::PreviewJob(job.id)) {
+            return;
+        }
+        self.screens.preview.started(job.id, job.name.clone());
+        self.go(Route::Preview(job.id));
+        self.ask(
+            Intent::PreviewJob(job.id, job.name.clone()),
+            Request::JobRun { job: job.id.to_string(), dry_run: true },
+        );
+    }
+
+    /// Ask the daemon where kopia is and to run it for real.
+    pub fn request_kopia_probe(&mut self, destination: Option<Uuid>, check_for_update: bool) {
+        self.screens.settings.kopia_probe_started();
+        self.ask(
+            Intent::KopiaProbe,
+            Request::KopiaProbe {
+                destination: destination.map(|d| d.to_string()),
+                check_for_update,
+            },
+        );
+    }
+
+    /// Check that a repository encryption key opens its repository.
+    ///
+    /// `key` is `None` to check the one already in the vault, which is the
+    /// question "is my backup still openable?" rather than "did I type this
+    /// correctly?".
+    pub fn request_check_key(&mut self, destination: Uuid, key: Option<String>) {
+        if !self.guard(Action::VerifyDestination, Pending::CheckKey(destination)) {
+            return;
+        }
+        self.screens.destination_editor.key_check_started(destination);
+        self.ask(
+            Intent::CheckKey(destination),
+            Request::DestinationCheckKey {
+                destination: destination.to_string(),
+                key: key.map(SecretString::from_string),
+            },
+        );
+    }
+
+    /// Ask for the encryption key export document.
+    ///
+    /// The reply carries every repository key in the clear. It is handed
+    /// straight to the export modal and is never stored in [`Data`], never
+    /// logged, and never held after the modal closes.
+    pub fn request_key_export(&mut self, passphrase: String) {
+        self.ask(
+            Intent::ExportKeys,
+            Request::VaultExportKeys { passphrase: SecretString::from_string(passphrase) },
         );
     }
 
@@ -488,6 +588,16 @@ impl App {
                     );
                 }
             }
+            Pending::PreviewJob(id) => {
+                if let Some(job) = self.data.job(&id).cloned() {
+                    self.request_preview(&job);
+                }
+            }
+            // Deliberately does not re-run the check with a key the user typed
+            // before the vault locked: that string is gone by now, and
+            // silently checking the *stored* key instead would answer a
+            // different question than the one asked.
+            Pending::CheckKey(id) => self.go(Route::DestinationEditor(id)),
             Pending::RunAll => self.request_run_all(),
             Pending::Verify(id) => self.request_verify(id),
             Pending::CreateRepository(id) => self.request_create_repository(id),
@@ -761,11 +871,47 @@ impl App {
         response.clicked()
     }
 
+    /// The rail's lock badge, sized to whatever it has to say.
+    ///
+    /// It used to be a fixed 32px tall with two lines of text painted inside
+    /// it, so "Locked / Schedules are blocked" filled the box edge to edge and
+    /// read as clipped. The height and the text measure are now derived from
+    /// the strings themselves, which is what keeps it honest for the longer
+    /// unlocked variant and for a translation.
     fn vault_control(&mut self, ui: &mut egui::Ui, narrow: bool) {
         let t = self.tokens;
         let unlocked = self.data.unlocked();
+
+        // Laid out before the rect is allocated, because the rect's height
+        // depends on how tall the wrapped text turns out to be.
+        const PAD_X: f32 = 10.0;
+        const PAD_Y: f32 = 7.0;
+        const ICON: f32 = 16.0;
+        const GAP: f32 = 8.0;
+        let text_x_offset = PAD_X + ICON + GAP;
+        let full_width = ui.available_width();
+        let text_width = (full_width - text_x_offset - PAD_X).max(40.0);
+
+        let label = if unlocked { copy::vault::UNLOCKED } else { copy::vault::LOCKED };
+        let sub = if unlocked {
+            let minutes = self.data.settings.auto_lock_minutes;
+            (minutes != 0).then(|| copy::vault_locks_in(&format::minutes(minutes)))
+        } else {
+            Some(copy::vault::LOCKED_SUB.to_string())
+        };
+        let text_colour = if unlocked { t.text_primary } else { t.danger.tint_text };
+        let title = widgets::galley_wrapped(ui, label, Type::BodyStrong, text_colour, text_width);
+        let subtitle = sub
+            .as_ref()
+            .map(|s| widgets::galley_wrapped(ui, s.clone(), Type::Small, t.text_muted, text_width));
+
+        let text_height = title.size().y + subtitle.as_ref().map(|g| g.size().y).unwrap_or(0.0);
+        // Never shorter than a rail item, so the two states and the navigation
+        // above them keep a common rhythm.
+        let height = (text_height + PAD_Y * 2.0).max(size::RAIL_ITEM_H);
+
         let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
+            ui.allocate_exact_size(Vec2::new(full_width, height), Sense::click());
         if ui.is_rect_visible(rect) {
             if !unlocked {
                 ui.painter().rect_filled(rect, radius::CONTROL, t.danger.tint_bg);
@@ -780,47 +926,26 @@ impl App {
             } else {
                 (Icon::Lock, t.danger.mark)
             };
-            let icon_x = if narrow { rect.center().x - 8.0 } else { rect.left() + 8.0 };
+            let icon_x = if narrow { rect.center().x - ICON / 2.0 } else { rect.left() + PAD_X };
             icon.paint(
                 ui.painter(),
                 Rect::from_min_size(
-                    egui::Pos2::new(icon_x, rect.center().y - 8.0),
-                    Vec2::splat(16.0),
+                    egui::Pos2::new(icon_x, rect.center().y - ICON / 2.0),
+                    Vec2::splat(ICON),
                 ),
                 colour,
             );
             if !narrow {
-                let label = if unlocked { copy::vault::UNLOCKED } else { copy::vault::LOCKED };
-                let sub = if unlocked {
-                    let minutes = self.data.settings.auto_lock_minutes;
-                    if minutes == 0 {
-                        None
-                    } else {
-                        Some(copy::vault_locks_in(&format::minutes(minutes)))
-                    }
-                } else {
-                    Some(copy::vault::LOCKED_SUB.to_string())
-                };
-                let text_colour = if unlocked { t.text_primary } else { t.danger.tint_text };
-                let g = widgets::galley(ui, label, Type::BodyStrong, text_colour);
-                let x = rect.left() + 8.0 + 16.0 + 8.0;
-                match sub {
-                    Some(sub) => {
-                        let sg = widgets::galley(ui, sub, Type::Small, t.text_muted);
-                        let total = g.size().y + sg.size().y;
-                        let top = rect.center().y - total / 2.0;
-                        let gy = g.size().y;
-                        ui.painter().galley(egui::Pos2::new(x, top), g, text_colour);
-                        ui.painter().galley(egui::Pos2::new(x, top + gy), sg, t.text_muted);
-                    }
-                    None => {
-                        let h = g.size().y;
-                        ui.painter().galley(
-                            egui::Pos2::new(x, rect.center().y - h / 2.0),
-                            g,
-                            text_colour,
-                        );
-                    }
+                let x = rect.left() + text_x_offset;
+                let top = rect.center().y - text_height / 2.0;
+                let title_height = title.size().y;
+                ui.painter().galley(egui::Pos2::new(x, top), title, text_colour);
+                if let Some(subtitle) = subtitle {
+                    ui.painter().galley(
+                        egui::Pos2::new(x, top + title_height),
+                        subtitle,
+                        t.text_muted,
+                    );
                 }
             }
         }
@@ -899,6 +1024,7 @@ impl App {
                 .find(|r| &r.run_id == id)
                 .map(|r| copy::run_detail_title(&r.job_name, &format::absolute(r.started_at)))
                 .unwrap_or_else(|| copy::state::UNKNOWN.to_string()),
+            Route::Preview(id) => copy::preview_title(&self.data.job_name(id)),
             other => other.section().title().to_string(),
         }
     }
@@ -1115,6 +1241,7 @@ impl App {
             Route::Restore => self.show_restore(ui),
             Route::Activity => self.show_activity(ui),
             Route::RunDetail(id) => self.show_run_detail(ui, id),
+            Route::Preview(id) => self.show_preview(ui, id),
             Route::Settings(section) => self.show_settings(ui, section),
             Route::About => self.show_about(ui),
         }

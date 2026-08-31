@@ -160,6 +160,10 @@ pub enum Route {
     Restore,
     Activity,
     RunDetail(Uuid),
+    /// A job's rehearsal: what it would copy, per destination, written
+    /// nowhere. Pushed over Jobs, keyed by the job rather than the run so the
+    /// screen survives a preview being started twice.
+    Preview(Uuid),
     Settings(SettingsSection),
     About,
 }
@@ -170,7 +174,7 @@ impl Route {
     pub fn section(&self) -> Section {
         match self {
             Route::Dashboard => Section::Dashboard,
-            Route::Jobs | Route::JobEditor(_) => Section::Jobs,
+            Route::Jobs | Route::JobEditor(_) | Route::Preview(_) => Section::Jobs,
             Route::Destinations | Route::DestinationEditor(_) | Route::NewDestination => {
                 Section::Destinations
             }
@@ -192,6 +196,7 @@ impl Route {
                 | Route::ProviderEditor(_)
                 | Route::NewProvider
                 | Route::RunDetail(_)
+                | Route::Preview(_)
         )
     }
 
@@ -225,6 +230,8 @@ impl Route {
             Route::Activity,
             Route::RunDetail(super::fixtures::RUN_PARTIAL),
             Route::RunDetail(Uuid::nil()),
+            Route::Preview(super::fixtures::JOB_DEV),
+            Route::Preview(Uuid::nil()),
             Route::About,
         ];
         routes.extend(SettingsSection::ALL.iter().map(|s| Route::Settings(*s)));

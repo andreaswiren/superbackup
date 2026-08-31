@@ -100,6 +100,7 @@ pub fn destinations() -> Vec<Destination> {
             enabled: true,
             auto_discovered: false,
             bandwidth: None,
+            replicate_from: None,
             created_at: Utc::now() - Duration::days(120),
             last_verified_at: Some(Utc::now() - Duration::hours(2)),
         },
@@ -119,6 +120,7 @@ pub fn destinations() -> Vec<Destination> {
             enabled: true,
             auto_discovered: true,
             bandwidth: None,
+            replicate_from: None,
             created_at: Utc::now() - Duration::days(120),
             last_verified_at: Some(Utc::now() - Duration::days(2)),
         },
@@ -141,6 +143,7 @@ pub fn destinations() -> Vec<Destination> {
                 download_kbps: None,
                 schedule: None,
             }),
+            replicate_from: None,
             created_at: Utc::now() - Duration::days(110),
             last_verified_at: None,
         },
@@ -156,6 +159,7 @@ pub fn destinations() -> Vec<Destination> {
             enabled: true,
             auto_discovered: false,
             bandwidth: None,
+            replicate_from: None,
             created_at: Utc::now() - Duration::days(30),
             last_verified_at: Some(Utc::now() - Duration::days(9)),
         },
@@ -247,6 +251,8 @@ fn destination_run(
         snapshot_id: status.is_terminal().then(|| "k9f2ab7c31de4f0a8c2b".to_string()),
         error: None,
         warnings: vec![],
+        replicated_from: None,
+        skipped_reason: None,
     }
 }
 

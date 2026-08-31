@@ -61,6 +61,52 @@ pub fn pump_engine_events(
     })
 }
 
+/// Refresh this machine's record at a destination, off the pump's thread.
+///
+/// Hooked to `DestinationStarted` rather than to the executor because that is
+/// the one signal every destination kind produces: the runner drives folder
+/// mirrors and replicas itself and never calls `BackupExecutor::prepare` for
+/// them, so an executor-side hook would quietly cover only kopia repositories
+/// — which is exactly the drive a user is most likely to be looking at with a
+/// torch during a recovery.
+///
+/// Fire-and-forget on purpose. This pump also delivers progress and terminal
+/// events for live backups, and a slow or stalled network share must not be
+/// able to hold it up. The manifest is a convenience for a future human, never
+/// part of the data path, so a failure becomes one activity-log line and
+/// nothing else. See [`super::manifest`].
+fn leave_machine_manifest(runtime: &Arc<Runtime>, run_id: uuid::Uuid, destination_id: uuid::Uuid) {
+    let runtime = Arc::clone(runtime);
+    tokio::spawn(async move {
+        // A rehearsal writes nothing anywhere, including this.
+        let rehearsal = runtime
+            .active_runs()
+            .iter()
+            .find(|r| r.run_id == run_id)
+            .map(|r| r.trigger.is_rehearsal())
+            .unwrap_or(false);
+
+        let (destination, identity, settings) = {
+            let store = runtime.store.lock().await;
+            let config = store.config();
+            let Some(destination) = config.destination(&destination_id).cloned() else {
+                return;
+            };
+            (destination, config.machine.clone(), config.settings.clone())
+        };
+
+        let outcome =
+            super::manifest::write_for_destination(&destination, &identity, &settings, rehearsal)
+                .await;
+        if let Some(warning) = outcome.warning() {
+            runtime.record_event(
+                Event::new(Severity::Warning, "dest.manifest_failed", warning)
+                    .with_destination(destination_id),
+            );
+        }
+    });
+}
+
 async fn handle(runtime: &Arc<Runtime>, event: EngineEvent) {
     match event {
         EngineEvent::RunQueued { run_id, job_id, job_name } => {
@@ -92,6 +138,7 @@ async fn handle(runtime: &Arc<Runtime>, event: EngineEvent) {
                 status: RunStatus::Preparing,
                 progress: Box::default(),
             });
+            leave_machine_manifest(runtime, run_id, destination_id);
         }
 
         EngineEvent::DestinationRetrying {

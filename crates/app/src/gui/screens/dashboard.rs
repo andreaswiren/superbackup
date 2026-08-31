@@ -749,6 +749,9 @@ impl App {
                             if widgets::menu_item(ui, copy::action::RUN_NOW, job.enabled) {
                                 menu_action = Some("run");
                             }
+                            if widgets::menu_item(ui, copy::preview::ACTION, job.enabled) {
+                                menu_action = Some("preview");
+                            }
                             if widgets::menu_item(ui, copy::action::EDIT, true) {
                                 menu_action = Some("edit");
                             }
@@ -979,6 +982,7 @@ impl App {
         }
         match menu_action {
             Some("run") => self.request_run(job),
+            Some("preview") => self.request_preview(job),
             Some("edit") => self.go(Route::JobEditor(job.id)),
             Some("browse") => self.go(Route::Restore),
             Some("history") => {

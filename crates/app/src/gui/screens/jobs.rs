@@ -422,6 +422,13 @@ impl App {
                                                 }
                                                 if widgets::menu_item(
                                                     ui,
+                                                    copy::preview::ACTION,
+                                                    true,
+                                                ) {
+                                                    menu = Some(("preview", job.id));
+                                                }
+                                                if widgets::menu_item(
+                                                    ui,
                                                     if job.enabled {
                                                         copy::action::DISABLE
                                                     } else {
@@ -545,6 +552,7 @@ impl App {
         };
         match action {
             "edit" => self.go(Route::JobEditor(id)),
+            "preview" => self.request_preview(&job),
             "history" => {
                 self.screens.activity.filter_job(id);
                 self.go(Route::Activity);

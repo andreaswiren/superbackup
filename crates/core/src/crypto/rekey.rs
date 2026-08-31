@@ -102,11 +102,22 @@ pub struct DerivedRepository {
 /// Destinations with no explicit [`crate::model::EncryptionSettings`] are also
 /// excluded, because the model's default source is
 /// [`PassphraseSource::Generated`] — a stored secret, unaffected by rotation.
+///
+/// **Replicas are excluded too**, and this one is load-bearing rather than
+/// tidy. A replica is the same kopia repository as the destination it is
+/// copied from, reached at a second address; re-passwording it directly would
+/// rewrite *its* format blob, diverge it from its source, and make every later
+/// `repository sync-to` fail as incompatible data. Rotating the source is what
+/// covers the whole chain — the new format blob is replicated on the next run
+/// like any other changed blob. [`crate::config::validate`] refuses a replica
+/// that declares encryption settings at all, so this filter is the second lock
+/// on a door that should already be shut.
 pub fn derived_repositories(config: &Config) -> Vec<DerivedRepository> {
     config
         .destinations
         .iter()
         .filter(|destination| destination.kind.is_repository())
+        .filter(|destination| !destination.is_replica())
         .filter(|destination| {
             destination
                 .encryption
@@ -499,6 +510,7 @@ mod tests {
             enabled: true,
             auto_discovered: false,
             bandwidth: None,
+            replicate_from: None,
             created_at: chrono::Utc::now(),
             last_verified_at: None,
         }
@@ -522,6 +534,30 @@ mod tests {
         assert_eq!(derived.len(), 1, "{derived:#?}");
         assert_eq!(derived[0].destination_name, "derived");
         assert_eq!(derived[0].location, "/backups");
+    }
+
+    #[test]
+    fn a_replica_is_never_listed_for_rekeying() {
+        // A replica is the *same* kopia repository as its source, reached at a
+        // second address. Re-passwording it directly would rewrite its own
+        // format blob, diverge it from the source, and make every later
+        // `repository sync-to` fail as incompatible data. Rotating the source
+        // covers the whole chain: the new format blob replicates like any
+        // other changed blob.
+        let mut config = Config::default();
+        let source = destination("primary", Some(PassphraseSource::DerivedFromMaster));
+        // The replica *also* claims a derived key, which `config::validate`
+        // refuses outright. Asserting it here covers the leniently loaded
+        // document the daemon can legitimately be holding while a user repairs
+        // their configuration.
+        let mut replica = destination("offsite copy", Some(PassphraseSource::DerivedFromMaster));
+        replica.replicate_from = Some(source.id);
+        config.destinations.push(source);
+        config.destinations.push(replica);
+
+        let derived = derived_repositories(&config);
+        assert_eq!(derived.len(), 1, "{derived:#?}");
+        assert_eq!(derived[0].destination_name, "primary");
     }
 
     #[test]

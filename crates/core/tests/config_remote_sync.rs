@@ -106,6 +106,7 @@ fn destination(name: &str) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }

@@ -83,6 +83,7 @@ mod error;
 pub mod install;
 mod manifest;
 mod policy;
+mod probe;
 mod progress;
 mod snapshot;
 
@@ -93,7 +94,7 @@ pub use command::{
 };
 pub use driver::{
     s3_endpoint_host, BlobStats, ConnectionTest, ContentStats, DestinationSecrets, KopiaDriver,
-    KopiaResult, RepositoryStatus, UnsupportedOption,
+    KopiaResult, RepositoryStatus, SyncOptions, SyncOutcome, SyncTarget, UnsupportedOption,
 };
 pub use error::{classify, KopiaError, KopiaFailure};
 pub use install::{
@@ -105,9 +106,10 @@ pub use manifest::{
     SnapshotStats, SourceInfo,
 };
 pub use policy::{MaintenanceMode, MaintenanceSettings, StoredPolicy};
+pub use probe::{describe_routes, version_invocation, RawInvocation, RouteDescription};
 pub use progress::{
-    parse_bytes, parse_go_duration, parse_progress_line, parse_restore_progress_line, ProgressLine,
-    ProgressTracker, RestoreProgressLine,
+    parse_bytes, parse_go_duration, parse_progress_line, parse_restore_progress_line,
+    parse_sync_progress_line, ProgressLine, ProgressTracker, RestoreProgressLine, SyncProgressLine,
 };
 pub use snapshot::{
     RestoreArchive, RestoreOptions, RestoreOutcome, SnapshotEstimate, SnapshotOptions,

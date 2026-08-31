@@ -232,6 +232,7 @@ fn offer_first_destination(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<()> {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     };

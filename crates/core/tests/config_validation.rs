@@ -46,6 +46,7 @@ fn local_destination(name: &str, path: PathBuf) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }
@@ -68,6 +69,7 @@ fn s3_destination(name: &str, provider_id: Uuid, prefix: &str) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }
@@ -416,4 +418,163 @@ fn every_error_is_reported_at_once() {
     assert!(message.contains("relative"), "{message}");
     assert!(message.contains("cron"), "{message}");
     assert!(message.contains("no destination with id"), "{message}");
+}
+
+// ---------------------------------------------------------------------------
+// Chained destinations
+// ---------------------------------------------------------------------------
+
+/// Turn the control config's offsite destination into a replica of the local
+/// one — the shape a user asks for: "back up to the fast local repository,
+/// then push that repository onward to StorJ."
+fn chained_config() -> Config {
+    let mut config = valid_config();
+    let local_id = config.destinations[0].id;
+    let replica = &mut config.destinations[1];
+    replica.replicate_from = Some(local_id);
+    // A replica has no key of its own; it opens with its source's.
+    replica.encryption = None;
+    replica.passphrase_ref = None;
+    config
+}
+
+#[test]
+fn a_well_formed_chain_is_accepted() {
+    let report = validate(&chained_config());
+    assert!(report.is_ok(), "a valid chain must validate: {:#?}", report.errors);
+}
+
+#[test]
+fn a_chain_may_be_more_than_one_hop_deep() {
+    let mut config = chained_config();
+    let middle_id = config.destinations[1].id;
+    let mut third = config.destinations[1].clone();
+    third.id = Uuid::new_v4();
+    third.name = "Second offsite".into();
+    third.replicate_from = Some(middle_id);
+    config.destinations.push(third.clone());
+    config.jobs[0].destination_ids.push(third.id);
+
+    let report = validate(&config);
+    assert!(report.is_ok(), "a replica of a replica is well defined: {:#?}", report.errors);
+}
+
+#[test]
+fn a_replication_cycle_is_rejected_and_names_the_loop() {
+    let mut config = chained_config();
+    let replica_id = config.destinations[1].id;
+    // Point the source back at the replica: neither can go first.
+    config.destinations[0].replicate_from = Some(replica_id);
+    config.destinations[0].encryption = None;
+    config.destinations[0].passphrase_ref = None;
+
+    let report = validate(&config);
+    assert!(!report.is_ok(), "a cycle must be rejected");
+    assert_error_mentioning(&report, "cycle");
+    assert_error_mentioning(&report, "Offsite");
+}
+
+#[test]
+fn a_destination_cannot_replicate_from_itself() {
+    let mut config = valid_config();
+    let id = config.destinations[1].id;
+    config.destinations[1].replicate_from = Some(id);
+    config.destinations[1].encryption = None;
+    config.destinations[1].passphrase_ref = None;
+
+    assert_error_mentioning(&validate(&config), "cannot be replicated from itself");
+}
+
+#[test]
+fn a_folder_mirror_cannot_be_the_source_of_a_chain() {
+    let mut config = valid_config();
+    // A mirror is a plain file copy: it has no repository blobs, and therefore
+    // nothing `kopia repository sync-to` could read.
+    let mut mirror = local_destination("Plain copy", abs("backups/plain"));
+    mirror.kind = DestinationKind::LocalMirror { path: abs("backups/plain") };
+    mirror.encryption = None;
+    mirror.passphrase_ref = None;
+    let mirror_id = mirror.id;
+    config.destinations.push(mirror);
+    config.jobs[0].destination_ids.push(mirror_id);
+
+    config.destinations[1].replicate_from = Some(mirror_id);
+    config.destinations[1].encryption = None;
+    config.destinations[1].passphrase_ref = None;
+
+    let report = validate(&config);
+    assert!(!report.is_ok(), "a mirror has no blobs to replicate");
+    assert_error_mentioning(&report, "no repository blobs to replicate");
+}
+
+#[test]
+fn a_folder_mirror_cannot_be_the_target_of_a_chain() {
+    let mut config = valid_config();
+    let local_id = config.destinations[0].id;
+    let mut mirror = local_destination("Plain copy", abs("backups/plain"));
+    mirror.kind = DestinationKind::LocalMirror { path: abs("backups/plain") };
+    mirror.encryption = None;
+    mirror.passphrase_ref = None;
+    mirror.replicate_from = Some(local_id);
+    let mirror_id = mirror.id;
+    config.destinations.push(mirror);
+    config.jobs[0].destination_ids.push(mirror_id);
+
+    let report = validate(&config);
+    assert!(!report.is_ok());
+    assert_error_mentioning(&report, "only a repository destination can be a replica");
+}
+
+#[test]
+fn a_replica_may_not_declare_a_passphrase_or_encryption_of_its_own() {
+    // This is the rule that matters most. `kopia repository sync-to` copies the
+    // source's format blob, so the replica *is* the source repository and opens
+    // with the source's passphrase. A configuration claiming otherwise would
+    // leave the user believing their offsite copy has an independent key.
+    for mutate in [
+        (|d: &mut Destination| d.passphrase_ref = Some(SecretRef("repo.passphrase:x".into())))
+            as fn(&mut Destination),
+        (|d: &mut Destination| d.encryption = Some(EncryptionSettings::default()))
+            as fn(&mut Destination),
+    ] {
+        let mut config = chained_config();
+        mutate(&mut config.destinations[1]);
+        let report = validate(&config);
+        assert!(!report.is_ok(), "a replica must not carry its own key material");
+        assert_error_mentioning(&report, "same kopia repository");
+    }
+}
+
+#[test]
+fn a_dangling_chain_source_is_rejected() {
+    let mut config = chained_config();
+    config.destinations[1].replicate_from = Some(Uuid::new_v4());
+    assert_error_mentioning(&validate(&config), "no destination with id");
+}
+
+#[test]
+fn a_job_must_back_up_the_destination_its_replica_copies_from() {
+    let mut config = chained_config();
+    let local_id = config.destinations[0].id;
+    // Drop the source from the job while keeping the replica. The replication
+    // would then copy whatever this run did not update.
+    config.jobs[0].destination_ids.retain(|id| *id != local_id);
+
+    let report = validate(&config);
+    assert!(!report.is_ok());
+    assert_error_mentioning(&report, "which this job does not back up");
+}
+
+#[test]
+fn a_replica_is_not_warned_about_for_having_no_encryption_settings() {
+    let config = chained_config();
+    let report = validate(&config);
+    assert!(
+        !report
+            .warnings
+            .iter()
+            .any(|w| w.location.contains("Offsite") && w.location.contains("encryption")),
+        "a replica cannot have encryption settings, so telling it to is nonsense: {:#?}",
+        report.warnings
+    );
 }

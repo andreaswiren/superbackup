@@ -5,12 +5,13 @@ use chrono::Utc;
 use egui::{Align, Layout, Ui};
 use uuid::Uuid;
 
-use superbackup_core::ipc::protocol::{ErrorPayload, RepositoryReply, Request};
+use superbackup_core::ipc::protocol::{ErrorPayload, KeyCheckReply, RepositoryReply, Request};
 use superbackup_core::model::{
     default_s3_prefix, normalise_prefix, Destination, DestinationKind, EccAlgorithm,
     EncryptionAlgorithm, EncryptionSettings, HashAlgorithm, PassphraseSource, RetentionPolicy,
     Splitter,
 };
+use superbackup_core::platform::identity::MachineRecord;
 
 use crate::gui::app::App;
 use crate::gui::copy;
@@ -50,9 +51,58 @@ pub struct State {
     pub show_errors: bool,
     pub pin_offline: bool,
     pub mirror_prune: bool,
+    /// The destination whose encryption key is being checked right now.
+    pub key_check_running: Option<Uuid>,
+    /// The last check's outcome, keyed by destination so a stale reply for a
+    /// destination the user has navigated away from cannot be shown against a
+    /// different one.
+    pub key_check: Option<(Uuid, KeyCheckOutcome)>,
+    /// The machines that have left a record at this destination, read from the
+    /// destination's own folder. `None` until it has been looked for.
+    pub machines: Option<(Uuid, Result<Vec<MachineRecord>, String>)>,
+}
+
+/// What a `dest.check_key` said, reduced to the three answers that differ.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyCheckOutcome {
+    /// The repository opened.
+    Opened,
+    /// The location is reachable but holds no repository, so the key could not
+    /// be checked against anything. Deliberately not "wrong key": telling a
+    /// user their key is bad when nothing tried it would send them hunting.
+    NoRepository,
+    /// The repository refused the key, or the check could not be made.
+    Refused(String),
 }
 
 impl State {
+    pub fn key_check_started(&mut self, destination: Uuid) {
+        self.key_check_running = Some(destination);
+        self.key_check = None;
+    }
+    pub fn key_check_arrived(&mut self, destination: Uuid, reply: KeyCheckReply) {
+        self.key_check_running = None;
+        let outcome = if reply.valid {
+            KeyCheckOutcome::Opened
+        } else if reply.no_repository {
+            KeyCheckOutcome::NoRepository
+        } else {
+            KeyCheckOutcome::Refused(
+                reply.detail.unwrap_or_else(|| copy::keys::CHECK_BAD.to_string()),
+            )
+        };
+        self.key_check = Some((destination, outcome));
+    }
+    pub fn key_check_failed(&mut self, destination: Uuid, payload: ErrorPayload) {
+        self.key_check_running = None;
+        self.key_check = Some((destination, KeyCheckOutcome::Refused(payload.message)));
+    }
+
+    /// The outcome to render for `destination`, if the last one was about it.
+    pub fn key_check_for(&self, destination: Uuid) -> Option<&KeyCheckOutcome> {
+        self.key_check.as_ref().filter(|(id, _)| *id == destination).map(|(_, o)| o)
+    }
+
     pub fn repository_started(&mut self) {
         self.creation = Some(CreationPhase::Running(0));
         self.creation_error = None;
@@ -65,7 +115,7 @@ impl State {
         self.creation_error = Some(payload.message);
     }
     pub fn busy(&self) -> bool {
-        matches!(self.creation, Some(CreationPhase::Running(_)))
+        matches!(self.creation, Some(CreationPhase::Running(_))) || self.key_check_running.is_some()
     }
 
     fn load(&mut self, destination: Option<&Destination>, machine_slug: &str) {
@@ -106,6 +156,7 @@ impl State {
                     enabled: true,
                     auto_discovered: false,
                     bandwidth: None,
+                    replicate_from: None,
                     created_at: Utc::now(),
                     last_verified_at: None,
                 };
@@ -203,6 +254,13 @@ impl App {
                         });
                     });
                 }
+            }
+
+            // Only for a destination that exists: a draft has no folder to
+            // read, and an empty card on the create form would suggest the
+            // question had been asked and answered.
+            if let Some(destination) = &existing {
+                self.machines_panel(ui, destination);
             }
 
             ui.add_space(space::H2);
@@ -663,6 +721,173 @@ impl App {
         });
     }
 
+    /// "Check the stored key", and what it said.
+    ///
+    /// The interface cannot show a repository encryption key — the daemon has
+    /// no request that returns one, by design — so the useful question it
+    /// *can* answer is whether the key it holds still opens the repository.
+    /// That is not a format check: the daemon opens the repository with it.
+    fn key_check_controls(&mut self, ui: &mut Ui, destination: &Destination) {
+        let t = theme::tokens(ui.ctx());
+        let id = destination.id;
+        let running = self.screens.destination_editor.key_check_running == Some(id);
+        let mut check = false;
+
+        ui.horizontal(|ui| {
+            let mut button = Button::secondary(copy::keys::CHECK_STORED).icon(Icon::Shield);
+            if running {
+                button = button.busy(true);
+            }
+            if self.data.gate(Action::VerifyDestination) == Gate::NeedsUnlock {
+                button = button.disabled_because(copy::locked::ACTION_BLOCKED);
+            }
+            if button.show(ui).clicked() {
+                check = true;
+            }
+            if running {
+                ui.add_space(space::M);
+                widgets::text(ui, copy::keys::CHECKING, Type::Small, t.text_secondary);
+            }
+        });
+        ui.add_space(space::XS);
+        widgets::paragraph_at(ui, copy::keys::CHECK_NOTE, Type::Small, t.text_muted, 560.0);
+
+        match self.screens.destination_editor.key_check_for(id) {
+            Some(KeyCheckOutcome::Opened) => {
+                ui.add_space(space::M);
+                widgets::banner(
+                    ui,
+                    widgets::BannerKind::Success,
+                    copy::keys::CHECK_OK,
+                    None,
+                    |_| {},
+                );
+            }
+            Some(KeyCheckOutcome::NoRepository) => {
+                ui.add_space(space::M);
+                widgets::banner(
+                    ui,
+                    widgets::BannerKind::Info,
+                    copy::keys::CHECK_NONE,
+                    None,
+                    |_| {},
+                );
+            }
+            Some(KeyCheckOutcome::Refused(detail)) => {
+                ui.add_space(space::M);
+                let detail = detail.clone();
+                widgets::banner(
+                    ui,
+                    widgets::BannerKind::Danger,
+                    copy::keys::CHECK_BAD,
+                    Some(&detail),
+                    |_| {},
+                );
+            }
+            None => {}
+        }
+
+        if check {
+            // `None`: check the key the vault already holds, which is the
+            // question "is my backup still openable?".
+            self.request_check_key(id, None);
+        }
+    }
+
+    /// Which computers have left a record at this destination.
+    ///
+    /// Read here rather than over IPC, and that is a deliberate limit worth
+    /// knowing: the window reads the destination's own folder with the *user's*
+    /// rights. A destination the daemon can reach but this session cannot —
+    /// a mapped drive under a service account — reports that it could not be
+    /// read, rather than claiming no computer has ever backed up there.
+    fn machines_panel(&mut self, ui: &mut Ui, destination: &Destination) {
+        let t = theme::tokens(ui.ctx());
+        let id = destination.id;
+        widgets::form_group(ui, copy::machines::TITLE, None);
+
+        if !matches!(
+            destination.kind,
+            DestinationKind::LocalRepository { .. }
+                | DestinationKind::OneDrive { .. }
+                | DestinationKind::LocalMirror { .. }
+        ) {
+            widgets::paragraph_at(
+                ui,
+                copy::machines::UNSUPPORTED,
+                Type::Small,
+                t.text_muted,
+                560.0,
+            );
+            ui.add_space(space::XS);
+            widgets::paragraph_at(ui, copy::machines::SETTING_S3, Type::Small, t.text_muted, 560.0);
+            return;
+        }
+
+        // Read once per destination and cached: this is a small directory
+        // listing, but it is still blocking I/O and an immediate-mode
+        // interface would otherwise do it sixty times a second.
+        let stale = self
+            .screens
+            .destination_editor
+            .machines
+            .as_ref()
+            .map(|(cached, _)| *cached != id)
+            .unwrap_or(true);
+        if stale {
+            let result = superbackup_core::platform::identity::list_machines_for(destination)
+                .map_err(|_| copy::machines::UNREADABLE.to_string());
+            self.screens.destination_editor.machines = Some((id, result));
+        }
+
+        let mut refresh = false;
+        match self.screens.destination_editor.machines.as_ref().map(|(_, r)| r) {
+            Some(Err(message)) => {
+                let message = message.clone();
+                widgets::paragraph_at(ui, &message, Type::Small, t.text_muted, 560.0);
+            }
+            Some(Ok(machines)) if machines.is_empty() => {
+                widgets::empty_state(ui, Icon::HardDrive, &copy::empty::MACHINES, None);
+            }
+            Some(Ok(machines)) => {
+                let me = self.data.snapshot.as_ref().map(|s| s.machine_slug.clone());
+                for machine in machines {
+                    widgets::card(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            widgets::text(ui, &machine.label, Type::BodyStrong, t.text_primary);
+                            if me.as_deref() == Some(machine.slug.as_str()) {
+                                ui.add_space(space::M);
+                                widgets::neutral_badge(ui, copy::machines::THIS_PC, None);
+                            }
+                        });
+                        ui.add_space(space::XS);
+                        widgets::text(ui, &machine.slug, Type::MonoSmall, t.text_secondary);
+                        ui.add_space(space::XS);
+                        widgets::text(
+                            ui,
+                            copy::machines_last_seen(&crate::gui::format::relative_past(
+                                machine.last_seen,
+                                Utc::now(),
+                            )),
+                            Type::Small,
+                            t.text_muted,
+                        );
+                    });
+                    ui.add_space(space::S);
+                }
+            }
+            None => {}
+        }
+        ui.add_space(space::M);
+        if Button::secondary(copy::machines::REFRESH).compact().show(ui).clicked() {
+            refresh = true;
+        }
+        if refresh {
+            self.screens.destination_editor.machines = None;
+        }
+    }
+
     // -- T-4: the encryption panel -----------------------------------------
 
     fn encryption_panel(&mut self, ui: &mut Ui, existing: Option<&Destination>) {
@@ -699,6 +924,8 @@ impl App {
                     t.text_muted,
                     560.0,
                 );
+                ui.add_space(space::XL);
+                self.key_check_controls(ui, destination);
             }
             return;
         }

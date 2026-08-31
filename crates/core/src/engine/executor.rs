@@ -368,6 +368,62 @@ pub struct SnapshotOutcome {
     pub warnings: Vec<String>,
 }
 
+/// Replicate one destination's repository into another destination.
+///
+/// This is the chained-backup step: the sources were read, chunked and
+/// encrypted once into `source`, and `destination` is filled from the
+/// resulting blobs instead of from the user's disk a second time.
+///
+/// The runner only ever issues this after `source` has finished successfully
+/// **in the same run**, so an implementation may assume the source repository
+/// is current. It must *not* assume the destination repository exists: it may
+/// be an empty bucket on the first run, and creating it is the replication's
+/// own business — but creating it as a *new* repository is not, because
+/// `kopia repository sync-to` refuses a destination whose format blob does not
+/// match the source's.
+#[derive(Debug, Clone)]
+pub struct ReplicateRequest {
+    pub run_id: Uuid,
+    pub job_id: Uuid,
+    pub job_name: String,
+    /// The replica being written.
+    pub destination: Arc<Destination>,
+    /// The repository being copied. Always a repository destination, never a
+    /// [`crate::model::DestinationKind::LocalMirror`].
+    pub source: Arc<Destination>,
+    /// Resolved exactly as for [`SnapshotRequest::bandwidth`], through job →
+    /// destination → global precedence and any active time window.
+    pub bandwidth: ResolvedBandwidth,
+    pub progress: ProgressSink,
+    /// Fires when the run must stop. Same contract as everywhere else: return
+    /// within about a second, having killed the child.
+    pub cancel: CancelToken,
+    pub attempt: u32,
+    /// Report what would be copied without copying it.
+    ///
+    /// An implementation that cannot rehearse without writing must return an
+    /// error rather than replicating for real. Note that this is a sharper
+    /// requirement than it sounds: kopia's own `--dry-run` will still
+    /// initialise an empty destination unless `--must-exist` is passed with it.
+    pub dry_run: bool,
+}
+
+/// The result of a successful replication.
+#[derive(Debug, Clone, Default)]
+pub struct ReplicateOutcome {
+    /// Blobs actually transferred. Zero is the normal, healthy result when the
+    /// replica was already up to date.
+    pub blobs_copied: u64,
+    pub bytes_copied: u64,
+    /// Final absolute counters, stored verbatim by the runner. Blob counts
+    /// occupy the file fields, because every consumer of
+    /// [`crate::state::Progress`] would otherwise show an empty destination.
+    pub progress: Progress,
+    /// Non-fatal problems. A non-empty list turns the destination into
+    /// `SucceededWithWarnings`, exactly as for a snapshot.
+    pub warnings: Vec<String>,
+}
+
 /// A consistency check of a destination, run by `superbackup verify` and by
 /// the periodic maintenance pass.
 #[derive(Debug, Clone)]
@@ -412,6 +468,18 @@ pub trait BackupExecutor: std::fmt::Debug + Send + Sync + 'static {
         &'a self,
         request: SnapshotRequest,
     ) -> BoxFuture<'a, ExecutorResult<SnapshotOutcome>>;
+
+    /// Copy `request.source`'s repository into `request.destination`.
+    ///
+    /// Required rather than defaulted: an executor that silently answered
+    /// "not supported" would turn a configured offsite copy into a run that
+    /// looks fine and produces nothing, which is the failure mode this whole
+    /// feature exists to avoid. An implementation that genuinely cannot
+    /// replicate should say so with an error the user can read.
+    fn replicate<'a>(
+        &'a self,
+        request: ReplicateRequest,
+    ) -> BoxFuture<'a, ExecutorResult<ReplicateOutcome>>;
 
     /// Check the integrity of a destination.
     fn verify<'a>(&'a self, request: VerifyRequest)

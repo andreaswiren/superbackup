@@ -4,8 +4,12 @@
 
 use egui::{Align, Layout, Sense, Ui, Vec2};
 
-use superbackup_core::ipc::protocol::{CheckStatus, DoctorReply, Request};
-use superbackup_core::model::{BandwidthWindow, LogLevel, Theme};
+use uuid::Uuid;
+
+use superbackup_core::ipc::protocol::{
+    CheckStatus, DoctorReply, ErrorPayload, KopiaProbeReply, Request,
+};
+use superbackup_core::model::{BandwidthWindow, LogLevel, Theme, UpdatePolicy};
 
 use crate::gui::app::App;
 use crate::gui::copy;
@@ -24,6 +28,15 @@ pub struct State {
     pub doctor_running: bool,
     pub pause_reason: String,
     pub kopia_path: String,
+    /// The last `kopia.probe` result, or `None` before anything was run. The
+    /// screen distinguishes the two: "not run yet" and "ran and found nothing"
+    /// are different answers and must not look the same.
+    pub kopia_probe: Option<KopiaProbeReply>,
+    pub kopia_probing: bool,
+    pub kopia_probe_error: Option<String>,
+    /// Which destination the repository half of the check runs against.
+    /// `None` means "version only", which needs no unlocked vault.
+    pub kopia_probe_destination: Option<Uuid>,
 }
 
 impl State {
@@ -31,8 +44,21 @@ impl State {
         self.doctor_running = false;
         self.doctor = Some(reply);
     }
+    pub fn kopia_probe_started(&mut self) {
+        self.kopia_probing = true;
+        self.kopia_probe_error = None;
+    }
+    pub fn kopia_probe_arrived(&mut self, reply: KopiaProbeReply) {
+        self.kopia_probing = false;
+        self.kopia_probe_error = None;
+        self.kopia_probe = Some(reply);
+    }
+    pub fn kopia_probe_failed(&mut self, payload: ErrorPayload) {
+        self.kopia_probing = false;
+        self.kopia_probe_error = Some(payload.message);
+    }
     pub fn busy(&self) -> bool {
-        self.doctor_running
+        self.doctor_running || self.kopia_probing
     }
 }
 
@@ -157,6 +183,27 @@ impl App {
             };
             changed = true;
         }
+
+        widgets::form_group(ui, "At each destination", None);
+        let mut manifest = self.data.settings.write_machine_manifest;
+        if widgets::toggle(
+            ui,
+            &mut manifest,
+            copy::machines::SETTING,
+            Some(copy::machines::SETTING_BODY),
+            true,
+        )
+        .clicked()
+        {
+            self.data.settings.write_machine_manifest = manifest;
+            changed = true;
+        }
+        ui.add_space(space::S);
+        // Stated next to the control rather than discovered later: object
+        // storage genuinely cannot hold this file, and a setting that silently
+        // does nothing for half a user's destinations is worse than one that
+        // says so.
+        widgets::paragraph_at(ui, copy::machines::SETTING_S3, Type::Small, t.text_muted, 560.0);
 
         widgets::form_group(ui, "Starting up", None);
         let mut autostart = self.data.settings.start_at_login;
@@ -952,7 +999,7 @@ impl App {
                 self.open_modal(Modal::ChangePassphrase(Default::default()));
             }
             Some("export") => {
-                self.toasts.warning(copy::set::SEC_EXPORT_BODY);
+                self.open_modal(Modal::ExportKeys(Default::default()));
             }
             Some("keychain-on") => {
                 self.open_modal(Modal::ChangePassphrase(Default::default()));
@@ -968,32 +1015,136 @@ impl App {
         }
     }
 
+    /// `S-6`. The page a user goes to when they want to satisfy themselves
+    /// that this thing actually works.
+    ///
+    /// Four blocks, in the order a doubt occurs: *which* kopia is being run,
+    /// *why* that one, *what it printed when we just ran it*, and the managed
+    /// build's update policy. Everything else on this screen is a preference;
+    /// the first three are evidence.
     fn settings_kopia(&mut self, ui: &mut Ui) {
         let t = theme::tokens(ui.ctx());
-        match self.data.snapshot.as_ref().and_then(|s| s.kopia_version.clone()) {
-            Some(version) => {
-                widgets::banner(
-                    ui,
-                    widgets::BannerKind::Success,
-                    &copy::set_kopia_found(&version),
-                    None,
-                    |_| {},
-                );
+        let probe = self.screens.settings.kopia_probe.clone();
+        let mut changed = false;
+        let mut reveal: Option<String> = None;
+        let mut run_checks = false;
+        let mut check_update = false;
+
+        // -- where the binary is ------------------------------------------
+        widgets::text(ui, copy::kopia::WHERE_TITLE, Type::H3, t.text_primary);
+        ui.add_space(space::S);
+        widgets::paragraph_at(ui, copy::kopia::WHERE_LEAD, Type::Small, t.text_secondary, 600.0);
+        ui.add_space(space::M);
+
+        widgets::card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            match probe.as_ref().and_then(|p| p.path.clone()) {
+                Some(path) => {
+                    widgets::kv(ui, copy::kopia::PATH, &path, true);
+                    if let Some(p) = probe.as_ref() {
+                        widgets::kv(ui, copy::kopia::PROVENANCE, p.provenance.title(), false);
+                        widgets::kv(
+                            ui,
+                            copy::kopia::VERSION,
+                            p.version.as_deref().unwrap_or(copy::state::UNKNOWN),
+                            false,
+                        );
+                        if let Some(banner) = &p.banner {
+                            widgets::kv(ui, copy::kopia::BANNER, banner, true);
+                        }
+                        widgets::kv(ui, copy::kopia::MINIMUM, &p.minimum_version, false);
+                    }
+                    ui.add_space(space::M);
+                    if Button::secondary(copy::kopia::REVEAL)
+                        .icon(Icon::FolderOpen)
+                        .compact()
+                        .show(ui)
+                        .clicked()
+                    {
+                        reveal = Some(path);
+                    }
+                }
+                None => {
+                    // Before the first probe the daemon's own version string
+                    // is all there is, and it is labelled as second-hand
+                    // rather than dressed up as a resolved path.
+                    match self.data.snapshot.as_ref().and_then(|s| s.kopia_version.clone()) {
+                        Some(version) => {
+                            widgets::kv(ui, copy::kopia::VERSION, &version, false);
+                            ui.add_space(space::S);
+                            widgets::paragraph_at(
+                                ui,
+                                copy::kopia::VERIFY_EMPTY,
+                                Type::Small,
+                                t.text_muted,
+                                600.0,
+                            );
+                        }
+                        None => {
+                            widgets::banner(
+                                ui,
+                                widgets::BannerKind::Danger,
+                                copy::kopia::NOT_FOUND,
+                                Some(copy::kopia::NOT_FOUND_BODY),
+                                |_| {},
+                            );
+                        }
+                    }
+                }
             }
-            None => {
-                widgets::banner(
+            if let Some(detail) = probe.as_ref().and_then(|p| p.detail.clone()) {
+                ui.add_space(space::M);
+                widgets::paragraph_at(ui, &detail, Type::Small, t.danger.mark, 600.0);
+            }
+        });
+
+        // -- which route found it -----------------------------------------
+        widgets::form_group(ui, copy::kopia::ROUTES_TITLE, Some(copy::kopia::ROUTES_LEAD));
+        match probe.as_ref() {
+            Some(p) if !p.routes.is_empty() => {
+                for route in &p.routes {
+                    widgets::card(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            widgets::text(
+                                ui,
+                                route.provenance.title(),
+                                Type::BodyStrong,
+                                t.text_primary,
+                            );
+                            if route.chosen {
+                                ui.add_space(space::M);
+                                widgets::badge(
+                                    ui,
+                                    t.success,
+                                    Some(Icon::Check),
+                                    copy::kopia::ROUTE_CHOSEN,
+                                );
+                            }
+                        });
+                        if let Some(path) = &route.path {
+                            ui.add_space(space::XS);
+                            widgets::text(ui, path, Type::MonoSmall, t.text_secondary);
+                        }
+                        ui.add_space(space::XS);
+                        widgets::paragraph_at(ui, &route.outcome, Type::Small, t.text_muted, 600.0);
+                    });
+                    ui.add_space(space::S);
+                }
+            }
+            _ => {
+                widgets::paragraph_at(
                     ui,
-                    widgets::BannerKind::Danger,
-                    copy::err::KOPIA_MISSING,
-                    Some(copy::onboarding::KOPIA_MISSING_BODY),
-                    |_| {},
+                    copy::kopia::VERIFY_EMPTY,
+                    Type::Small,
+                    t.text_muted,
+                    600.0,
                 );
             }
         }
 
-        widgets::form_group(ui, "Where superbackup looks", None);
+        ui.add_space(space::L);
         let automatic = self.data.settings.kopia_path.is_none();
-        let mut changed = false;
         if widgets::radio(ui, automatic, copy::set::KOPIA_AUTO, None, true).clicked() {
             self.data.settings.kopia_path = None;
             changed = true;
@@ -1019,23 +1170,156 @@ impl App {
                 }
             });
         }
+        let mut prefer = self.data.settings.kopia.prefer_system_binary;
+        if widgets::toggle(ui, &mut prefer, copy::kopia::PREFER_SYSTEM, None, automatic).clicked() {
+            self.data.settings.kopia.prefer_system_binary = prefer;
+            changed = true;
+        }
 
-        ui.add_space(space::XL);
+        // -- prove it ------------------------------------------------------
+        widgets::form_group(ui, copy::kopia::VERIFY_TITLE, Some(copy::kopia::VERIFY_LEAD));
+        let repositories: Vec<(Uuid, String)> = self
+            .data
+            .destinations
+            .iter()
+            .filter(|d| d.kind.is_repository())
+            .map(|d| (d.id, d.name.clone()))
+            .collect();
         ui.horizontal(|ui| {
-            if Button::secondary(copy::set::KOPIA_CHECK).show(ui).clicked() {
-                self.refresh();
+            let mut run = Button::primary(copy::kopia::VERIFY_BUTTON).icon(Icon::Play);
+            if self.screens.settings.kopia_probing {
+                run = run.busy(true);
             }
-            if Button::secondary(copy::set::KOPIA_DOWNLOAD).icon(Icon::Download).show(ui).clicked()
-            {
-                self.toasts.info(copy::onboarding::KOPIA_MISSING_BODY);
+            if run.show(ui).clicked() {
+                run_checks = true;
+            }
+            ui.add_space(space::M);
+            // Index 0 is deliberately "version only": that half needs no
+            // unlocked vault, so it is the one option that always works.
+            let mut options = vec![copy::kopia::VERIFY_AGAINST_NONE.to_string()];
+            options.extend(repositories.iter().map(|(_, n)| n.clone()));
+            let selected = self.screens.settings.kopia_probe_destination;
+            let mut index = selected
+                .and_then(|id| repositories.iter().position(|(d, _)| *d == id).map(|i| i + 1))
+                .unwrap_or(0);
+            if widgets::combo(ui, "kopia-probe-destination", &mut index, &options, 260.0, true) {
+                self.screens.settings.kopia_probe_destination =
+                    index.checked_sub(1).and_then(|i| repositories.get(i)).map(|(id, _)| *id);
             }
         });
+        ui.add_space(space::S);
+        widgets::paragraph_at(ui, copy::kopia::COMMAND_LINE_NOTE, Type::Small, t.text_muted, 600.0);
+
+        ui.add_space(space::L);
+        if let Some(error) = &self.screens.settings.kopia_probe_error {
+            widgets::banner(ui, widgets::BannerKind::Danger, error, None, |_| {});
+            ui.add_space(space::L);
+        }
+        match probe.as_ref() {
+            Some(p) if !p.invocations.is_empty() => {
+                for run in &p.invocations {
+                    invocation_block(ui, &crate::gui::viewmodel::invocation_view(run));
+                    ui.add_space(space::L);
+                }
+            }
+            _ => {
+                widgets::paragraph_at(
+                    ui,
+                    copy::kopia::VERIFY_EMPTY,
+                    Type::Small,
+                    t.text_muted,
+                    600.0,
+                );
+            }
+        }
+
+        // -- the managed build --------------------------------------------
+        widgets::form_group(ui, copy::kopia::MANAGED_TITLE, Some(copy::kopia::MANAGED_LEAD));
+        if let Some(p) = probe.as_ref() {
+            widgets::kv(ui, copy::kopia::MANAGED_PATH, &p.managed_path, true);
+            widgets::kv(
+                ui,
+                copy::kopia::MANAGED_VERSION,
+                p.managed_version.as_deref().unwrap_or(copy::kopia::MANAGED_NONE),
+                false,
+            );
+            ui.add_space(space::M);
+            match (&p.update_available, &p.update_summary) {
+                (Some(version), _) => {
+                    widgets::banner(
+                        ui,
+                        widgets::BannerKind::Info,
+                        &copy::kopia_update_available(version),
+                        None,
+                        |_| {},
+                    );
+                }
+                (None, Some(summary)) => {
+                    widgets::text(ui, summary, Type::Small, t.text_secondary);
+                }
+                (None, None) => {
+                    widgets::text(ui, copy::kopia::UPDATE_NONE, Type::Small, t.text_muted);
+                }
+            }
+        } else {
+            widgets::text(ui, copy::kopia::UPDATE_NONE, Type::Small, t.text_muted);
+        }
+
+        ui.add_space(space::L);
+        widgets::text(ui, copy::kopia::UPDATE_POLICY, Type::BodyStrong, t.text_primary);
+        ui.add_space(space::S);
+        for (policy, label) in [
+            (UpdatePolicy::Off, copy::kopia::UPDATE_OFF),
+            (UpdatePolicy::Notify, copy::kopia::UPDATE_NOTIFY),
+            (UpdatePolicy::Automatic, copy::kopia::UPDATE_AUTOMATIC),
+        ] {
+            let selected = self.data.settings.kopia.auto_update == policy;
+            if widgets::radio(ui, selected, label, None, true).clicked() && !selected {
+                self.data.settings.kopia.auto_update = policy;
+                changed = true;
+            }
+        }
+        ui.add_space(space::L);
+        if Button::secondary(copy::kopia::UPDATE_CHECK).icon(Icon::Download).show(ui).clicked() {
+            check_update = true;
+        }
 
         ui.add_space(space::XL);
         widgets::paragraph_at(ui, copy::set::KOPIA_FOLDERS, Type::Small, t.text_muted, 560.0);
 
+        if let Some(path) = reveal {
+            self.reveal_in_file_browser(&path);
+        }
+        if run_checks || check_update {
+            let destination = self.screens.settings.kopia_probe_destination;
+            self.request_kopia_probe(destination, check_update);
+        }
         if changed {
             self.save_settings();
+        }
+    }
+
+    /// Open the platform's file browser at a file, selecting it where the
+    /// platform supports that.
+    ///
+    /// Best effort by nature — a headless session or a locked-down desktop has
+    /// no file browser to open — so a failure is a toast rather than an error
+    /// state on a page whose subject is something else.
+    fn reveal_in_file_browser(&mut self, path: &str) {
+        let target = std::path::Path::new(path);
+        // Selecting the file is nicer than opening its folder, but only some
+        // platforms can. Falling back to the parent directory is better than
+        // failing, because the user's actual goal is to see the file.
+        let opened = if cfg!(target_os = "macos") {
+            open::that_detached(target).is_ok()
+        } else {
+            match target.parent() {
+                Some(dir) => open::that_detached(dir).is_ok(),
+                None => open::that_detached(target).is_ok(),
+            }
+        };
+        if !opened {
+            self.toasts.warning(copy::kopia::REVEAL_FAILED);
         }
     }
 
@@ -1252,6 +1536,63 @@ impl App {
             _ => {}
         }
     }
+}
+
+/// One kopia invocation, rendered as evidence rather than as a verdict.
+///
+/// The command line, the exit code and both streams, in monospace with a copy
+/// button — the same thing a user would see in a terminal, so they can compare
+/// the two. Nothing here is summarised, because a summary is precisely what a
+/// person checking the application's claims does not want.
+fn invocation_block(ui: &mut Ui, view: &crate::gui::viewmodel::InvocationView) {
+    let t = theme::tokens(ui.ctx());
+    widgets::card(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            widgets::text(ui, &view.label, Type::BodyStrong, t.text_primary);
+            ui.add_space(space::M);
+            let status = if view.not_attempted {
+                t.warning
+            } else if view.ok {
+                t.success
+            } else {
+                t.danger
+            };
+            widgets::badge(ui, status, None, &view.status);
+            if !view.not_attempted {
+                ui.add_space(space::M);
+                widgets::text(ui, &view.duration, Type::Small, t.text_muted);
+            }
+        });
+
+        if view.not_attempted {
+            ui.add_space(space::M);
+            widgets::paragraph_at(ui, &view.stderr, Type::Small, t.text_secondary, 600.0);
+            return;
+        }
+
+        ui.add_space(space::M);
+        widgets::text(ui, copy::kopia::COMMAND_LINE, Type::Small, t.text_muted);
+        ui.add_space(space::XS);
+        widgets::code_block(ui, &view.command_line, 80.0, None);
+        ui.add_space(space::S);
+        widgets::kv(ui, copy::kopia::SECRET_ENV, &view.secret_env, true);
+
+        ui.add_space(space::M);
+        widgets::text(ui, copy::kopia::STDOUT, Type::Small, t.text_muted);
+        ui.add_space(space::XS);
+        widgets::code_block(ui, &view.stdout, 220.0, None);
+
+        ui.add_space(space::M);
+        widgets::text(ui, copy::kopia::STDERR, Type::Small, t.text_muted);
+        ui.add_space(space::XS);
+        widgets::code_block(
+            ui,
+            &view.stderr,
+            160.0,
+            (!view.ok).then_some(theme::tokens(ui.ctx()).danger),
+        );
+    });
 }
 
 fn keychain_name() -> &'static str {

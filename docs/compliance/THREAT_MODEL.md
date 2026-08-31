@@ -139,10 +139,55 @@ substitute for it.
 
 **Defence.** The endpoint is restricted to the owning user, rejects remote
 clients, caps line length so a client cannot exhaust memory, caps concurrent
-connections, and rate-limits per connection. **The daemon never returns
-plaintext secrets over IPC** — there is no `GetSecret` request, only `SetSecret`.
-Reading a secret out of superbackup requires the passphrase and is not a thing
-the protocol offers.
+connections, and rate-limits per connection. **The daemon returns no plaintext
+secret over IPC except through one explicit, bounded command** — there is no
+`GetSecret`, and no way to ask for a secret by handle. Reading a credential out
+of superbackup is not a thing the protocol offers.
+
+#### The one exception: `vault.export_keys`
+
+Repository encryption keys — and only those — can be exported as a single
+plain-text document, so a user can print them or put them in a password
+manager. This is a deliberate weakening of the rule above and is recorded here
+because a security document that quietly stops being true is worse than none.
+
+**Why the rule is not absolute.** A repository encryption key that is lost is a
+backup that no longer exists; that irrecoverability is the property the
+encryption is *for*. A product that seals a user's only copy of their data
+behind a key it will not let them write down has not protected them, and the
+behaviour it actually produces is worse for this very threat: users photograph
+the "write it down" dialog, or keep the master passphrase in a text file.
+
+**What the exception does not cover.** Object-store access keys, session
+tokens, the master passphrase, and any other vault entry. There is still no
+request that names a secret and returns it.
+
+**The bounds, all enforced in code:**
+
+| Bound | Where |
+|---|---|
+| Vault must be unlocked | `DaemonHandler::require_unlocked` |
+| Master passphrase re-presented and verified against the sealed vault — reaching the socket is not enough, which matters because the daemon may run as SYSTEM while the caller does not | `export_encryption_keys`, via `Vault::unlock` on `sealed_bytes` |
+| Key-derivation gate: at most `MAX_CONCURRENT_KDF` process-wide, one per connection, delayed failure | the `kdf` command flag |
+| Rate limited to one export per 60 s per daemon | `Runtime::export_cooldown_remaining` |
+| Logged as an event and a `warn` span: that it happened and how many repositories it covered, never any part of the document | `export_encryption_keys` |
+| The daemon writes no file. It returns the document; the *caller* saves it where the user chose | no path parameter exists |
+| The reply is excluded from `Reply::sanitise`, deliberately and with a comment, because redaction would silently destroy the keys | `crates/core/src/ipc/protocol.rs` |
+
+**Residual risk.** A local process that already holds the master passphrase can
+obtain every repository key through this command. That process could equally
+unlock the vault and read the backups directly, so the command does not widen
+what such an attacker can reach; it changes only how fast. The rate limit and
+the event-log entry exist so that use of it is slow and visible rather than
+silent. The absence of a path parameter is what keeps it from being an
+arbitrary-file-write primitive in an elevated daemon, which would have been a
+materially worse hole than the disclosure.
+
+The GUI writes the file through `paths::write_atomic`, which creates it with
+owner-only permissions before any byte is written. On Windows the file inherits
+the ACL of the directory the user chose; superbackup does not tighten it
+further, and the interface says in plain words that the file is equivalent to
+the backups themselves.
 
 **Residual risk.** A process running as the same user can already read the
 user's files directly; the endpoint does not meaningfully widen that. It does
@@ -337,3 +382,4 @@ request that returns sensitive data, and at each minor release.
 |---|---|---|
 | 1 | 2026-08-30 | Initial model for 0.1.0. |
 | 2 | 2026-08-31 | Added A8 (Kopia binary integrity) after auto-install moved that verification from the user to this application. Recorded the Windows pid-only peer identity and the transient passphrase copy in serde's buffer under A7. |
+| 3 | 2026-08-31 | Recorded the `vault.export_keys` exception to "no plaintext secret over IPC" under A7, with its bounds and residual risk. The rule was previously stated as absolute and would have stopped being true silently. |

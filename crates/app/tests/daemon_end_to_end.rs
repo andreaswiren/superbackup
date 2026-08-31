@@ -234,6 +234,29 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
         }
     }
 
+    // ---- the machine's calling card is at the destination -----------
+    // The manifest is what makes a drive holding several computers' backups
+    // comprehensible during a recovery, and it is written on *every* run so
+    // `last_seen` cannot go stale. It is fire-and-forget by design, so it is
+    // waited for rather than assumed.
+    let repo_root = harness.root.join("repo");
+    assert!(
+        wait_for(Duration::from_secs(5), || {
+            superbackup_core::platform::list_machines(&repo_root)
+                .map(|m| !m.is_empty())
+                .unwrap_or(false)
+        })
+        .await,
+        "a run must leave this machine's manifest at the destination: {:?}",
+        superbackup_core::platform::list_machines(&repo_root)
+    );
+    let machines = superbackup_core::platform::list_machines(&repo_root).expect("list machines");
+    assert_eq!(machines.len(), 1);
+    assert!(
+        superbackup_core::platform::identity::readme_path(&repo_root).is_file(),
+        "the human-readable README must be written beside the record"
+    );
+
     // ---- status reflects the finished run ---------------------------
     let status = client.status().await.expect("status");
     assert!(status.active_runs.is_empty(), "nothing is still running");

@@ -294,6 +294,77 @@ pub fn parse_restore_progress_line(raw: &str) -> Option<RestoreProgressLine> {
     Some(out)
 }
 
+/// One decoded `kopia repository sync-to` progress line.
+///
+/// `sync-to` has a third progress renderer, unrelated to the upload and
+/// restore ones. `cli/command_repository_sync.go` builds it with
+/// `outputSyncProgress`, which — like the others — pads the line and rewrites
+/// it in place with a leading `\r`, and emits nothing at all unless
+/// `--progress` is on.
+///
+/// Two of its shapes carry numbers worth showing:
+///
+/// ```text
+/// \r  Found 41230 BLOBs (88.1 GB) in the source repository, 512 (1.2 GB) to copy
+/// \r  Copied 214 blobs (612.4 MB), Speed: 18.1 MB/s, ETA: 42s
+/// ```
+///
+/// The first is the only place the *total* appears, so a progress bar for a
+/// replication needs both: the "to copy" line sets the denominator once and
+/// the "Copied" lines move the numerator. Every field is optional because a
+/// given line only ever carries one of the two halves.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SyncProgressLine {
+    pub blobs_copied: Option<u64>,
+    pub bytes_copied: Option<u64>,
+    pub bytes_per_second: Option<f64>,
+    pub time_remaining: Option<Duration>,
+    /// Blobs kopia decided it has to copy — the denominator.
+    pub blobs_to_copy: Option<u64>,
+    pub bytes_to_copy: Option<u64>,
+}
+
+/// Parse a `kopia repository sync-to` progress line. `None` for anything else.
+///
+/// Total, like every parser in this module: a reworded line costs a stalled
+/// progress bar, never a failed replication.
+pub fn parse_sync_progress_line(raw: &str) -> Option<SyncProgressLine> {
+    let s = raw.trim();
+    let mut out = SyncProgressLine::default();
+
+    if let Some(rest) = s.strip_prefix("Copied ") {
+        let (blobs, rest) = rest.split_once(" blobs (")?;
+        out.blobs_copied = Some(parse_u64(blobs)?);
+        let (bytes, rest) = rest.split_once("), Speed: ")?;
+        out.bytes_copied = Some(parse_bytes(bytes)?);
+        // `Speed:` and `ETA:` are formatted by kopia and may both be `-`
+        // before the first sample, so neither is required.
+        match rest.split_once(", ETA: ") {
+            Some((speed, eta)) => {
+                out.bytes_per_second = parse_bytes_per_second(speed);
+                out.time_remaining = parse_go_duration(eta.trim());
+            }
+            None => out.bytes_per_second = parse_bytes_per_second(rest),
+        }
+        return Some(out);
+    }
+
+    if let Some(rest) = s.strip_prefix("Found ") {
+        // `Found N BLOBs (X) in the source repository, M (Y) to copy`. The
+        // other `Found …` lines (destination inventory, deletion counts) carry
+        // no number this progress bar can use, so they fall through to `None`.
+        let (_source_blobs, rest) = rest.split_once(" BLOBs (")?;
+        let (_source_bytes, rest) = rest.split_once(") in the source repository, ")?;
+        let (blobs, rest) = rest.split_once(" (")?;
+        out.blobs_to_copy = Some(parse_u64(blobs)?);
+        let (bytes, _) = rest.split_once(") to copy")?;
+        out.bytes_to_copy = Some(parse_bytes(bytes)?);
+        return Some(out);
+    }
+
+    None
+}
+
 /// `units.BytesPerSecondsString` output: the byte formatter with a `/s` suffix.
 fn parse_bytes_per_second(s: &str) -> Option<f64> {
     parse_bytes(s.trim().strip_suffix("/s")?).map(|v| v as f64)
@@ -352,9 +423,9 @@ impl ProgressTracker {
     /// Feed one stderr fragment. Returns `true` when it was a progress line and
     /// [`ProgressTracker::progress`] therefore changed.
     ///
-    /// Handles both renderers — upload and restore — because one command
-    /// pipeline drives both and the caller should not have to know which shape
-    /// to expect.
+    /// Handles all three renderers — upload, restore and repository sync —
+    /// because one command pipeline drives all of them and the caller should
+    /// not have to know which shape to expect.
     pub fn feed(&mut self, line: &str) -> bool {
         if let Some(parsed) = parse_progress_line(line) {
             self.apply(&parsed, Instant::now());
@@ -364,7 +435,48 @@ impl ProgressTracker {
             self.apply_restore(&parsed);
             return true;
         }
+        if let Some(parsed) = parse_sync_progress_line(line) {
+            self.apply_sync(&parsed);
+            return true;
+        }
         false
+    }
+
+    /// A replication moves blobs, not files, and kopia reports its own rate and
+    /// ETA — so there is nothing to estimate here either.
+    ///
+    /// Counters are mapped onto the file/byte fields rather than given new
+    /// ones: the GUI's bar, the tray tooltip and the run history all read
+    /// [`Progress`], and a second set of fields that only replication filled in
+    /// would leave every one of them showing an empty destination. "Files" is
+    /// the wrong word for a blob, and the destination's own
+    /// `replicated_from` marker is what tells the reader which it is looking at.
+    fn apply_sync(&mut self, line: &SyncProgressLine) {
+        // Set once, by the "…to copy" line, and deliberately not overwritten:
+        // "Copied" lines carry no denominator, so recomputing it from them
+        // would make the bar jump to 100% on the first sample.
+        if let Some(blobs) = line.blobs_to_copy {
+            self.progress.files_total = Some(blobs).filter(|n| *n > 0);
+        }
+        if let Some(bytes) = line.bytes_to_copy {
+            self.progress.bytes_total = Some(bytes).filter(|b| *b > 0);
+        }
+        if let Some(blobs) = line.blobs_copied {
+            self.progress.files_processed = blobs;
+        }
+        if let Some(bytes) = line.bytes_copied {
+            self.progress.bytes_processed = bytes;
+            // Every replicated byte crosses the wire: there is no local dedup
+            // win to subtract, because kopia already decided this blob is
+            // missing at the destination.
+            self.progress.bytes_uploaded = bytes;
+        }
+        if let Some(bps) = line.bytes_per_second {
+            self.progress.bytes_per_second = bps;
+        }
+        if let Some(remaining) = line.time_remaining {
+            self.progress.estimated_seconds_remaining = Some(remaining.as_secs());
+        }
     }
 
     /// Restore reports totals directly, so there is no rate to estimate and no
@@ -636,6 +748,87 @@ mod tests {
             "()()()()",
         ] {
             let _ = parse_progress_line(line);
+        }
+    }
+
+    // -- repository sync-to -------------------------------------------------
+
+    // The shapes `outputSyncProgress` builds in
+    // `cli/command_repository_sync.go`, including the trailing padding it uses
+    // to wipe a longer previous line.
+    const SYNC_INVENTORY: &str =
+        "  Found 41230 BLOBs (88.1 GB) in the source repository, 512 (1.2 GB) to copy";
+    const SYNC_COPYING: &str = "  Copied 214 blobs (612.4 MB), Speed: 18.1 MB/s, ETA: 42s     ";
+
+    #[test]
+    fn the_sync_inventory_line_yields_the_denominator() {
+        let line = parse_sync_progress_line(SYNC_INVENTORY).expect("parses");
+        assert_eq!(line.blobs_to_copy, Some(512));
+        assert_eq!(line.bytes_to_copy, Some(1_200_000_000));
+        assert_eq!(line.blobs_copied, None);
+    }
+
+    #[test]
+    fn the_sync_copying_line_yields_the_numerator_rate_and_eta() {
+        let line = parse_sync_progress_line(SYNC_COPYING).expect("parses");
+        assert_eq!(line.blobs_copied, Some(214));
+        assert_eq!(line.bytes_copied, Some(612_400_000));
+        assert_eq!(line.bytes_per_second, Some(18_100_000.0));
+        assert_eq!(line.time_remaining, Some(Duration::from_secs(42)));
+    }
+
+    #[test]
+    fn a_sync_copying_line_without_an_eta_still_parses() {
+        // Before the first sample kopia has neither a rate nor an estimate.
+        let line =
+            parse_sync_progress_line("  Copied 0 blobs (0 B), Speed: -, ETA: -").expect("parses");
+        assert_eq!(line.blobs_copied, Some(0));
+        assert_eq!(line.bytes_copied, Some(0));
+        assert_eq!(line.bytes_per_second, None);
+        assert_eq!(line.time_remaining, None);
+    }
+
+    #[test]
+    fn the_other_sync_lines_are_not_mistaken_for_progress() {
+        for line in [
+            "Synchronizing repositories:",
+            "  Found 100 BLOBs in the destination repository (1.2 GB)",
+            "  Found 3 BLOBs to delete (1 KB), 97 in sync (1.1 GB)",
+            "NOTE: By default no BLOBs are deleted, pass --delete to allow it.",
+            "Copying...",
+        ] {
+            assert!(parse_sync_progress_line(line).is_none(), "misparsed: {line}");
+        }
+    }
+
+    #[test]
+    fn the_tracker_folds_a_sync_into_progress() {
+        let mut t = ProgressTracker::new();
+        assert!(t.feed(SYNC_INVENTORY));
+        assert_eq!(t.progress().files_total, Some(512));
+        assert_eq!(t.progress().bytes_total, Some(1_200_000_000));
+
+        assert!(t.feed(SYNC_COPYING));
+        assert_eq!(t.progress().files_processed, 214);
+        assert_eq!(t.progress().bytes_processed, 612_400_000);
+        // Everything replicated crosses the wire; there is no local dedup win.
+        assert_eq!(t.progress().bytes_uploaded, 612_400_000);
+        assert_eq!(t.progress().estimated_seconds_remaining, Some(42));
+        // The denominator survives: a "Copied" line carries none, and
+        // recomputing it from the numerator would peg the bar at 100%.
+        assert_eq!(t.progress().bytes_total, Some(1_200_000_000));
+    }
+
+    #[test]
+    fn malformed_sync_input_never_panics() {
+        for line in [
+            "Copied ",
+            "Copied x blobs (",
+            "Copied 1 blobs (1 B), Speed: ",
+            "Found  BLOBs (",
+            "Found 1 BLOBs (1 B) in the source repository, ",
+        ] {
+            let _ = parse_sync_progress_line(line);
         }
     }
 }

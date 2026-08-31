@@ -1,12 +1,19 @@
 # Privacy and Data Handling
 
-Version 1, for superbackup 0.1.x.
+Version 2, for superbackup 0.1.x.
 
 ## The short version
 
 superbackup has no servers. It sends nothing to us, because there is no "us"
-to send it to. There is no telemetry, no analytics, no crash reporting, no
-update check that phones home, and no account.
+to send it to. There is no telemetry, no analytics, no crash reporting, and no
+account.
+
+It does ask GitHub whether a newer version has been published — weekly by
+default, and switchable off. That request carries nothing about your
+installation, and it is described in full below rather than buried: an earlier
+version of this document claimed there was "no update check that phones home",
+and once the check existed that sentence had to go rather than be quietly
+reinterpreted.
 
 Your data goes exactly where you configure it to go, and nowhere else.
 
@@ -27,10 +34,37 @@ Network connections superbackup makes at all:
 
 1. **To your configured S3 endpoint**, by Kopia, when a job runs.
 2. **To your configured Git host**, when you pull or push shared config.
-3. **To a Kopia release URL**, only if you explicitly ask `superbackup doctor
-   --fix` to download a Kopia binary.
+3. **To GitHub's releases API for the Kopia project**, to fetch and verify the
+   `kopia` binary — on first run, and when checking whether a newer Kopia
+   exists.
+4. **To GitHub's releases API for superbackup itself**, to see whether a newer
+   version has been published. Once a week by default, and whenever you press
+   "Check for updates".
 
-That is the complete list. There is no fourth.
+That is the complete list. There is no fifth.
+
+### What an update check discloses
+
+Connections 3 and 4 are unauthenticated `GET` requests for a public list of
+releases. They send **no information about your installation**: no machine
+identifier, no configuration, no job or folder names, no version history, no
+telemetry. There is no account and nothing is correlated across checks.
+
+What they unavoidably reveal to GitHub is what any HTTP request reveals: your
+IP address, roughly when superbackup was running, and — from the `User-Agent`
+— that it was superbackup and which version. Over time that is enough for
+GitHub to infer that a machine at your address runs this software.
+
+If that matters to you, both are switchable:
+
+- Turn off **Settings → Check for updates** to stop connection 4 entirely.
+- Set the Kopia update policy to **Never check**, and install Kopia through
+  your platform's package manager, to stop connection 3.
+
+Neither affects backups. superbackup never installs an update by itself: it
+tells you one exists and you decide. Replacing the binary that is holding your
+repository keys, possibly mid-backup, is not a decision this application makes
+on your behalf.
 
 ---
 
@@ -137,11 +171,12 @@ superbackup doctor --json
 # on Linux `ss -tp` or strace, on macOS Little Snitch or `lsof -i`.
 ```
 
-The source is public. Searching it for HTTP clients will find `reqwest` used
-only in `remote.rs` (shared config) and the optional Kopia download. There is no
-analytics dependency in `Cargo.toml`, and `cargo deny` would flag one arriving
-transitively.
+The source is public. Searching it for HTTP clients will find `reqwest` used in
+exactly three places: `remote.rs` (shared config), `kopia/install.rs` (fetching
+and verifying the Kopia binary), and `update.rs` (the release check). There is
+no analytics dependency in `Cargo.toml`, and `cargo deny` would flag one
+arriving transitively.
 
 ---
 
-Last reviewed: 2026-08-30. Questions: open an issue.
+Last reviewed: 2026-08-31. Questions: open an issue.

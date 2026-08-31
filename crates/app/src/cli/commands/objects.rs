@@ -582,6 +582,7 @@ fn destination_add(ctx: &mut Ctx, daemon: &Daemon, args: DestinationAddArgs) -> 
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: Utc::now(),
         last_verified_at: None,
     };

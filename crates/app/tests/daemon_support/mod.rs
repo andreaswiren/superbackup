@@ -342,6 +342,7 @@ pub fn repository(name: &str, path: PathBuf) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }
@@ -359,6 +360,7 @@ pub fn mirror(name: &str, path: PathBuf) -> Destination {
         enabled: true,
         auto_discovered: false,
         bandwidth: None,
+        replicate_from: None,
         created_at: chrono::Utc::now(),
         last_verified_at: None,
     }
