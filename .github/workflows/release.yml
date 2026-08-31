@@ -38,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
+      changelog_version: ${{ steps.check.outputs.changelog_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,22 +50,27 @@ jobs:
           set -euo pipefail
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           version="${tag#v}"
+          # A release candidate carries a prerelease suffix that Cargo.toml does
+          # not: v0.1.0-rc.1 is still a build of 0.1.0. Compare the core version
+          # so a test release does not require churning the manifest.
+          base="${version%%-*}"
           manifest=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
 
-          if [ "$version" != "$manifest" ]; then
-            echo "::error::tag $tag implies version $version, but Cargo.toml says $manifest"
+          if [ "$base" != "$manifest" ]; then
+            echo "::error::tag $tag implies version $base, but Cargo.toml says $manifest"
             exit 1
           fi
 
           # A release whose changelog still says [Unreleased] tells a user
           # nothing about what they are installing.
-          if ! grep -q "## \[$version\]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no '## [$version]' section"
+          if ! grep -q "## \[$base\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$base]' section"
             exit 1
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing $version"
+          echo "changelog_version=$base" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (changelog section $base)"
 
       - name: The dependency policy must pass before anything is published
         run: |
@@ -219,11 +225,14 @@ jobs:
         id: notes
         run: |
           set -euo pipefail
-          version="${{ needs.preflight.outputs.version }}"
+          version="${{ needs.preflight.outputs.changelog_version }}"
           # Everything between this version's heading and the next one.
-          awk -v v="$version" '
-            $0 ~ "^## \\[" v "\\]" { on = 1; next }
-            on && /^## \[/ { exit }
+          # `index` rather than a regex: escaping a literal '[' through YAML,
+          # the shell and awk turns it into a character class, which silently
+          # matches nothing and produces an empty release body.
+          awk -v v="## [$version]" '
+            index($0, v) == 1 { on = 1; next }
+            on && index($0, "## [") == 1 { exit }
             on { print }
           ' CHANGELOG.md > notes.md
           {
@@ -254,6 +263,6 @@ jobs:
           body_path: notes.md
           # Never publish automatically. A human presses the button.
           draft: true
-          prerelease: ${{ startsWith(needs.preflight.outputs.version, '0.') }}
+          prerelease: ${{ startsWith(needs.preflight.outputs.version, '0.') || contains(needs.preflight.outputs.version, '-') }}
           files: dist/*
           fail_on_unmatched_files: true
