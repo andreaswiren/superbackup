@@ -18,6 +18,11 @@
 //! `Context::request_repaint()` after it posts a message, and at no other time.
 //! An idle window with no running job therefore reaches zero frames per second.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};

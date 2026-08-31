@@ -11,6 +11,11 @@
 //! It exists for the design review: `cargo test -p superbackup --test gui_app
 //! -- --ignored screenshots` writes `design/screenshots/`.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

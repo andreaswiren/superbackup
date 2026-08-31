@@ -4,6 +4,11 @@
 //! says, so it can be tested without a rendering context. Screens read it and
 //! draw; they never compute a status, a gate or a reason of their own.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Utc};

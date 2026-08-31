@@ -35,7 +35,6 @@ pub struct State {
     pub loading_listing: Option<String>,
     pub path: String,
     pub history: Vec<String>,
-    pub forward: Vec<String>,
     pub filter: String,
     pub show_hidden: bool,
     pub selection: Vec<String>,
@@ -445,11 +444,14 @@ impl App {
 
         let mut open: Option<String> = None;
         widgets::table_frame(ui, |ui| {
+            let gap = ui.spacing().item_spacing.x;
+            let source_width =
+                (ui.available_width() - 150.0 - 90.0 - 90.0 - 120.0 - gap * 5.0).max(140.0);
             egui_extras::TableBuilder::new(ui)
                 .id_salt("restore-snapshots")
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(150.0))
-                .column(egui_extras::Column::remainder().at_least(160.0))
+                .column(egui_extras::Column::exact(source_width))
                 .column(egui_extras::Column::exact(90.0))
                 .column(egui_extras::Column::exact(90.0))
                 .column(egui_extras::Column::exact(120.0))
@@ -684,11 +686,14 @@ impl App {
         let mut select_all = false;
 
         widgets::table_frame(ui, |ui| {
+            let gap = ui.spacing().item_spacing.x;
+            let name_width =
+                (ui.available_width() - 32.0 - 90.0 - 130.0 - gap * 4.0).max(180.0);
             egui_extras::TableBuilder::new(ui)
                 .id_salt("restore-listing")
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(32.0))
-                .column(egui_extras::Column::remainder().at_least(200.0))
+                .column(egui_extras::Column::exact(name_width))
                 .column(egui_extras::Column::exact(90.0))
                 .column(egui_extras::Column::exact(130.0))
                 .header(size::TABLE_HEADER_H, |mut header| {

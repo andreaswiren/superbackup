@@ -10,6 +10,11 @@
 //! back by every component, which is how egui code avoids threading a theme
 //! reference through several hundred function signatures.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use egui::{Color32, Context, CornerRadius, FontFamily, FontId, Id, Margin, Stroke, TextStyle};
 use superbackup_core::model::Theme;
 
@@ -516,8 +521,7 @@ pub fn visuals(t: &Tokens) -> egui::Visuals {
 
 /// Spacing, hit targets and the text-style table (`DESIGN_SYSTEM.md` §4.2).
 pub fn style(t: &Tokens) -> egui::Style {
-    let mut s = egui::Style::default();
-    s.visuals = visuals(t);
+    let mut s = egui::Style { visuals: visuals(t), ..Default::default() };
 
     s.spacing.item_spacing = egui::vec2(8.0, 6.0);
     s.spacing.button_padding = egui::vec2(12.0, 7.0);
@@ -529,9 +533,23 @@ pub fn style(t: &Tokens) -> egui::Style {
     s.spacing.text_edit_width = 280.0;
     s.spacing.icon_width = 16.0;
     s.spacing.icon_width_inner = 10.0;
-    s.spacing.scroll.bar_width = 10.0;
+    // The scroll bar: a soft, dormant handle derived from the text colour, so
+    // it reads the same way in both themes. egui's solid style paints the
+    // handle at full `fg_stroke` — a black slab on a light background — which
+    // is far louder than anything else in the interface.
+    s.spacing.scroll.bar_width = 8.0;
     s.spacing.scroll.bar_inner_margin = 4.0;
-    s.spacing.scroll.floating = false;
+    s.spacing.scroll.bar_outer_margin = 2.0;
+    s.spacing.scroll.floating = true;
+    s.spacing.scroll.floating_width = 8.0;
+    s.spacing.scroll.floating_allocated_width = 0.0;
+    s.spacing.scroll.foreground_color = true;
+    s.spacing.scroll.dormant_background_opacity = 0.0;
+    s.spacing.scroll.active_background_opacity = 0.0;
+    s.spacing.scroll.interact_background_opacity = 0.0;
+    s.spacing.scroll.dormant_handle_opacity = 0.22;
+    s.spacing.scroll.active_handle_opacity = 0.55;
+    s.spacing.scroll.interact_handle_opacity = 0.45;
     s.spacing.menu_spacing = 4.0;
 
     s.text_styles = [

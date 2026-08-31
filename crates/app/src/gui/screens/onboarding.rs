@@ -32,12 +32,6 @@ pub struct Onboarding {
     pub scan_done: bool,
 }
 
-impl Default for OnboardingStep {
-    fn default() -> Self {
-        OnboardingStep::Welcome
-    }
-}
-
 impl Onboarding {
     pub fn score(&self) -> u8 {
         validation::passphrase_score(&self.passphrase)

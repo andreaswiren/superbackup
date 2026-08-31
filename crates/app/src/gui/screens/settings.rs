@@ -24,7 +24,6 @@ pub struct State {
     pub doctor_running: bool,
     pub pause_reason: String,
     pub kopia_path: String,
-    pub signer_input: String,
 }
 
 impl State {
@@ -131,7 +130,7 @@ impl App {
 
         widgets::form_group(ui, "This machine", None);
         if let Some(version) = &self.data.version {
-            widgets::kv(ui, copy::set::OS, &format!("{}", version.target_os), false);
+            widgets::kv(ui, copy::set::OS, &version.target_os.to_string(), false);
             widgets::kv(ui, copy::set::ARCH, &version.target_arch, false);
         }
         widgets::kv(
@@ -540,7 +539,8 @@ impl App {
         ui.add_space(space::S);
         widgets::paragraph_at(ui, copy::set::BW_DOWNLOAD_BODY, Type::Small, t.text_muted, 560.0);
 
-        widgets::form_group(ui, copy::set::BW_WINDOW, None);
+        // The group is named for what it is; the toggle carries the sentence.
+        widgets::form_group(ui, "Daily window", None);
         let mut window_on = self.data.settings.bandwidth.schedule.is_some();
         if widgets::toggle(ui, &mut window_on, copy::set::BW_WINDOW, None, true).clicked() {
             self.data.settings.bandwidth.schedule = window_on.then(|| BandwidthWindow {
@@ -664,6 +664,22 @@ impl App {
             egui::Pos2::new(x_for(window.start_minute) + 6.0, rect.top() + 8.0),
             g,
             t.text_primary,
+        );
+        // The limit outside the window, labelled at both ends, so the strip
+        // states both halves of the rule rather than only the exception.
+        let outside = format::kbps(self.data.settings.bandwidth.upload_kbps);
+        let left = widgets::galley(ui, outside.clone(), Type::MonoSmall, t.text_muted);
+        let right = widgets::galley(ui, outside, Type::MonoSmall, t.text_muted);
+        let right_width = right.size().x;
+        ui.painter().galley(
+            egui::Pos2::new(rect.left() + 6.0, rect.top() + 8.0),
+            left,
+            t.text_muted,
+        );
+        ui.painter().galley(
+            egui::Pos2::new(rect.right() - 6.0 - right_width, rect.top() + 8.0),
+            right,
+            t.text_muted,
         );
         response.widget_info(|| {
             egui::WidgetInfo::labeled(

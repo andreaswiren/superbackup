@@ -6,6 +6,11 @@
 //! wants a control not in this file is a screen that has drifted from the
 //! design system.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use std::sync::Arc;
 
 use egui::{
@@ -89,6 +94,28 @@ pub fn elided(
     let shown = elide_to_width(ui, value, ty, width, from_left);
     let g = galley(ui, shown.clone(), ty, color);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, g.size().y), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter().galley(rect.min, g, color);
+    }
+    if shown != value {
+        response.on_hover_text(value)
+    } else {
+        response
+    }
+}
+
+/// Text that elides if it must, but allocates only the width it uses — so an
+/// icon after a short name sits next to it rather than at the column edge.
+pub fn text_capped(
+    ui: &mut Ui,
+    value: &str,
+    ty: Type,
+    color: Color32,
+    max_width: f32,
+) -> Response {
+    let shown = elide_to_width(ui, value, ty, max_width.min(ui.available_width()), false);
+    let g = galley(ui, shown.clone(), ty, color);
+    let (rect, response) = ui.allocate_exact_size(g.size(), Sense::hover());
     if ui.is_rect_visible(rect) {
         ui.painter().galley(rect.min, g, color);
     }

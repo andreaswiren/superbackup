@@ -140,7 +140,6 @@ pub struct WizardState {
     pub draft: Job,
     pub run_after: bool,
     pub patterns_text: String,
-    pub advanced_seen: bool,
 }
 
 impl WizardState {
@@ -154,7 +153,6 @@ impl WizardState {
             draft,
             run_after: true,
             patterns_text: String::new(),
-            advanced_seen: false,
         }
     }
 }

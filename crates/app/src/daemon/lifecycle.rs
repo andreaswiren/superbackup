@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use superbackup_core::secret::Secret;
-use superbackup_core::state::{Event, Trigger};
+use superbackup_core::state::{Event, Severity, Trigger};
 
 use super::runtime::Runtime;
 
@@ -40,11 +40,18 @@ pub async fn on_unlocked(runtime: &Arc<Runtime>, passphrase: Secret) {
     runtime.environment.set_vault_unlocked(true);
     runtime.arm_auto_lock(settings.auto_lock_minutes);
 
-    // The keychain is opt-in and best effort: a machine with no keyring, or a
-    // user who declined, must still be able to unlock by hand.
+    // Opt-in, and every failure degrades to "we will ask again" — but says so,
+    // because the user's real position after a failure is "scheduled backups
+    // are skipped until I unlock by hand", and they can only act on that if
+    // they are told.
     if settings.use_os_keychain {
-        if let Err(e) = super::keychain::store(&runtime.paths, &passphrase) {
-            tracing::debug!(error = %e, "could not cache the passphrase in the OS keychain");
+        if let Err(e) = super::keychain::store(&runtime.paths, &passphrase).await {
+            tracing::warn!(error = %e, "could not cache the passphrase in the OS keychain");
+            runtime.record_event(Event::new(
+                Severity::Warning,
+                "vault.keychain_failed",
+                format!("{} ({e})", super::keychain::explain_unavailable()),
+            ));
         }
     }
     runtime.remember_master(passphrase);
@@ -92,6 +99,11 @@ pub async fn on_unlocked(runtime: &Arc<Runtime>, passphrase: Secret) {
 ///
 /// `kind` and `message` are the activity-log line, so the auto-lock timer and
 /// a deliberate `vault.lock` are distinguishable in the history.
+///
+/// The cached passphrase goes with it. "Lock" has to mean locked: a machine
+/// that re-opens itself the instant it is asked to shut has not locked
+/// anything, and leaving the cache in place would make `vault.lock` a lie on
+/// exactly the installs that opted into caching.
 pub async fn lock(runtime: &Arc<Runtime>, kind: &str, message: &str) {
     {
         let mut store = runtime.store.lock().await;
@@ -100,6 +112,17 @@ pub async fn lock(runtime: &Arc<Runtime>, kind: &str, message: &str) {
     runtime.environment.set_vault_unlocked(false);
     runtime.forget_master();
     runtime.disarm_auto_lock();
+    if let Err(e) = super::keychain::forget_if_cached(&runtime.paths).await {
+        tracing::warn!(error = %e, "could not clear the cached passphrase");
+        runtime.record_event(Event::new(
+            Severity::Warning,
+            "vault.keychain_not_cleared",
+            format!(
+                "The vault was locked, but the saved passphrase could not be removed from the \
+                 keychain ({e}). Remove the superbackup entry by hand if that matters to you."
+            ),
+        ));
+    }
     runtime.record_event(Event::info(kind, message));
     runtime.publish_status().await;
 }
@@ -144,19 +167,44 @@ pub fn spawn_auto_lock(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
 
 /// Try to open the vault from the OS keychain at startup.
 ///
-/// Returns true when it worked. A failure is silent by design: the user is
-/// then in exactly the state they would have been in without the feature, and
-/// a scary error about a keyring is not what someone wants at login.
+/// Returns true when it worked. Every way of failing leaves the user exactly
+/// where they would have been without the feature — being asked for their
+/// passphrase — but says so in the activity log rather than staying quiet,
+/// because "scheduled backups are skipped until you unlock" is something they
+/// can only act on if they are told.
 pub async fn try_keychain_unlock(runtime: &Arc<Runtime>) -> bool {
-    let use_keychain = {
+    let (use_keychain, auto_lock_minutes) = {
         let store = runtime.store.lock().await;
-        store.config().settings.use_os_keychain
+        let settings = &store.config().settings;
+        (settings.use_os_keychain, settings.auto_lock_minutes)
     };
     if !use_keychain {
         return false;
     }
-    let Some(passphrase) = super::keychain::load(&runtime.paths) else {
-        return false;
+    // A footgun worth naming once at start-up rather than leaving to be
+    // discovered: locking clears the cache, so an auto-lock interval means
+    // unattended unlocking survives only until the first timeout.
+    if auto_lock_minutes > 0 {
+        runtime.record_event(Event::new(
+            Severity::Warning,
+            "vault.keychain_auto_lock",
+            format!(
+                "Your passphrase is remembered, but auto-lock is set to {auto_lock_minutes}                  minutes and locking forgets it. Set auto-lock to 0 for unattended backups."
+            ),
+        ));
+    }
+    let passphrase = match super::keychain::load(&runtime.paths).await {
+        Ok(Some(passphrase)) => passphrase,
+        Ok(None) => return false,
+        Err(e) => {
+            tracing::warn!(error = %e, "the cached passphrase could not be read");
+            runtime.record_event(Event::new(
+                Severity::Warning,
+                "vault.keychain_failed",
+                format!("{} ({e})", super::keychain::explain_unavailable()),
+            ));
+            return false;
+        }
     };
     let opened = {
         let mut store = runtime.store.lock().await;
@@ -166,8 +214,13 @@ pub async fn try_keychain_unlock(runtime: &Arc<Runtime>) -> bool {
         // The cached passphrase no longer opens the vault — it was rotated
         // elsewhere. Drop it rather than leaving a stale secret in the
         // keyring for the next machine to trip over.
-        let _ = super::keychain::forget(&runtime.paths);
-        tracing::info!("the cached passphrase no longer opens the vault; it was discarded");
+        let _ = super::keychain::forget(&runtime.paths).await;
+        runtime.record_event(Event::new(
+            Severity::Warning,
+            "vault.keychain_stale",
+            "The saved passphrase no longer opens the vault — it was probably changed on              another machine — so it was discarded. superbackup will ask for the new one."
+                .to_string(),
+        ));
         return false;
     }
     on_unlocked(runtime, passphrase).await;

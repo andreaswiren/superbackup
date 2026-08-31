@@ -263,12 +263,14 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
     harness.shutdown().await.expect("clean shutdown");
 }
 
-/// A dry run reports and writes nothing — and says what it could not rehearse.
+/// A dry run reports and writes nothing — for *every* destination kind.
 ///
 /// `engine::Runner` drives the mirror engine itself for a `LocalMirror`
-/// destination, so a dry-run executor cannot stop it copying. Rather than
-/// silently write gigabytes during a "rehearsal", the daemon leaves mirrors
-/// out and says so.
+/// destination, so an executor-level flag could never have stopped it copying.
+/// `RunRequest::dry_run` reaches both halves, so the guarantee is uniform: the
+/// repository is estimated rather than snapshotted, and the mirror folder is
+/// not even brought into existence — while both still report the counts they
+/// would have produced.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_dry_run_reports_without_writing() {
     if !kopia_available() {
@@ -315,8 +317,8 @@ async fn a_dry_run_reports_without_writing() {
     let note = started.note.expect("a dry run must explain itself");
     assert!(note.to_lowercase().contains("dry run"), "{note}");
     assert!(
-        note.contains("plain copy") && note.contains("cannot be rehearsed"),
-        "the reply must say which destinations were left out: {note}"
+        !note.contains("cannot be rehearsed"),
+        "every destination kind is rehearsable now; the caveat must be gone: {note}"
     );
 
     assert!(
@@ -333,15 +335,20 @@ async fn a_dry_run_reports_without_writing() {
         "the dry run must be recorded"
     );
 
-    // Nothing was written to the mirror.
+    // The mirror folder was not even created: bringing it into existence is a
+    // visible side effect, and on a removable drive it is the difference
+    // between "nothing happened" and a stray folder.
     let mirror_root = harness.root.join("mirror");
-    let written: Vec<String> = std::fs::read_dir(&mirror_root)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    assert!(written.is_empty(), "a dry run wrote to a folder mirror: {written:?}");
+    assert!(
+        !mirror_root.exists(),
+        "a dry run created the mirror folder: {:?}",
+        std::fs::read_dir(&mirror_root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    );
 
     // And kopia was asked to *estimate*, never to snapshot.
     let invocations = harness.invocations();
@@ -365,11 +372,37 @@ async fn a_dry_run_reports_without_writing() {
         panic!("expected runs")
     };
     let run = history.runs.first().expect("one run");
-    assert_eq!(run.destinations.len(), 1, "only the repository was rehearsed");
+    assert_eq!(
+        run.destinations.len(),
+        2,
+        "both destinations must be rehearsed, not just the repository"
+    );
+    let repo_run = run
+        .destinations
+        .iter()
+        .find(|d| d.destination_id == repo_id)
+        .expect("the repository was rehearsed");
     assert!(
-        run.destinations[0].warnings.iter().any(|w| w.starts_with("Dry run:")),
+        repo_run.warnings.iter().any(|w| w.starts_with("Dry run:")),
         "the history must record that nothing was written: {:#?}",
-        run.destinations[0].warnings
+        repo_run.warnings
+    );
+    assert!(
+        repo_run.snapshot_id.is_none(),
+        "a rehearsal must not claim to have produced a snapshot"
+    );
+
+    // The mirror still reports what it *would* have copied — a rehearsal that
+    // reported zero would be useless for deciding whether to run for real.
+    let mirror_run = run
+        .destinations
+        .iter()
+        .find(|d| d.destination_id != repo_id)
+        .expect("the mirror was rehearsed");
+    assert!(
+        mirror_run.progress.files_processed >= 3,
+        "the mirror rehearsal must report the files it would copy: {:#?}",
+        mirror_run.progress
     );
 
     drop(client);

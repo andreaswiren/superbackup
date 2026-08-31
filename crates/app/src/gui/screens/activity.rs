@@ -183,10 +183,21 @@ impl App {
             ui.spacing().item_spacing.x,
             &RUN_COLUMNS,
         );
-        let has = |key: &str| shown.iter().any(|k| *k == key);
+        let has = |key: &str| shown.contains(&key);
         let mut open: Option<Uuid> = None;
 
         widgets::table_frame(ui, |ui| {
+            // Worked out before the builder borrows the ui: a mid-table
+            // remainder column would squeeze everything after it to nothing.
+            let gap = ui.spacing().item_spacing.x;
+            let fixed = 32.0
+                + 120.0
+                + 160.0
+                + 32.0
+                + if has("trigger") { 84.0 + gap } else { 0.0 }
+                + if has("duration") { 76.0 + gap } else { 0.0 }
+                + if has("uploaded") { 84.0 + gap } else { 0.0 };
+            let destinations_width = (ui.available_width() - fixed - gap * 4.0).max(140.0);
             let mut builder = egui_extras::TableBuilder::new(ui)
                 .id_salt("activity-runs")
                 .cell_layout(Layout::left_to_right(Align::Center))
@@ -196,7 +207,7 @@ impl App {
             if has("trigger") {
                 builder = builder.column(egui_extras::Column::exact(84.0));
             }
-            builder = builder.column(egui_extras::Column::remainder().at_least(150.0));
+            builder = builder.column(egui_extras::Column::exact(destinations_width));
             if has("duration") {
                 builder = builder.column(egui_extras::Column::exact(76.0));
             }

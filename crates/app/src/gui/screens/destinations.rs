@@ -160,18 +160,26 @@ impl App {
             ui.spacing().item_spacing.x,
             &DESTINATION_COLUMNS,
         );
-        let has = |key: &str| shown.iter().any(|k| *k == key);
+        let has = |key: &str| shown.contains(&key);
         let mut open: Option<Uuid> = None;
         let mut verify: Option<Uuid> = None;
         let mut menu: Option<(&'static str, Uuid)> = None;
 
         widgets::table_frame(ui, |ui| {
+            let gap = ui.spacing().item_spacing.x;
+            let fixed = 36.0
+                + 180.0
+                + 104.0
+                + 104.0
+                + if has("used_by") { 84.0 + gap } else { 0.0 }
+                + if has("verified") { 104.0 + gap } else { 0.0 };
+            let location_width = (ui.available_width() - fixed - gap * 4.0).max(180.0);
             let mut builder = egui_extras::TableBuilder::new(ui)
                 .id_salt("destinations")
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(36.0))
                 .column(egui_extras::Column::exact(180.0))
-                .column(egui_extras::Column::remainder().at_least(200.0));
+                .column(egui_extras::Column::exact(location_width));
             if has("used_by") {
                 builder = builder.column(egui_extras::Column::exact(84.0));
             }
@@ -232,13 +240,12 @@ impl App {
                         });
                         row.col(|ui| {
                             ui.horizontal(|ui| {
-                                widgets::elided(
+                                widgets::text_capped(
                                     ui,
                                     &destination.name,
                                     Type::BodyStrong,
                                     theme::alpha(t.text_primary, dim),
                                     if destination.auto_discovered { 140.0 } else { 166.0 },
-                                    false,
                                 );
                                 if destination.auto_discovered {
                                     let (rect, response) =

@@ -44,7 +44,7 @@ use superbackup_core::model::{
 };
 use superbackup_core::platform::{self, ServiceScope};
 use superbackup_core::secret::Secret;
-use superbackup_core::state::{Event, RunStatus, Trigger};
+use superbackup_core::state::{Event, RunStatus, Severity, Trigger};
 use superbackup_core::{Error, ErrorCode, Result};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -1666,9 +1666,20 @@ impl Handler for DaemonHandler {
         self.runtime.notifier.update_settings(after.notifications.clone());
         // Re-arm the auto-lock against the new interval, so shortening it
         // takes effect now rather than after the next unlock.
-        if !self.runtime.store.lock().await.is_locked() {
+        let unlocked = !self.runtime.store.lock().await.is_locked();
+        if unlocked {
             self.runtime.arm_auto_lock(after.auto_lock_minutes);
         }
+
+        // The setting *is* the consent, so it takes effect on the transition
+        // rather than at the next unlock: switching it off must destroy what
+        // is already cached, and switching it on must cache what the daemon is
+        // holding right now — otherwise a user who ticks the box and reboots
+        // finds it did nothing.
+        if before.use_os_keychain != after.use_os_keychain {
+            self.apply_keychain_setting(after.use_os_keychain, unlocked).await;
+        }
+
         if let Some(event) = settings_changed_event(&before, &after) {
             self.runtime.record_event(event);
         }
@@ -1894,6 +1905,47 @@ impl Handler for DaemonHandler {
 // ---------------------------------------------------------------------------
 
 impl DaemonHandler {
+    /// React to `use_os_keychain` being switched on or off.
+    ///
+    /// Turning it off is destructive and immediate: the cache is the thing the
+    /// user just withdrew consent for. Turning it on is best effort — the
+    /// vault may be locked, in which case there is nothing to cache yet and
+    /// the next unlock will do it.
+    async fn apply_keychain_setting(&self, enabled: bool, unlocked: bool) {
+        if !enabled {
+            match super::keychain::forget(&self.runtime.paths).await {
+                Ok(()) => self.runtime.record_event(Event::info(
+                    "vault.keychain_cleared",
+                    "The saved passphrase was removed. superbackup will ask for it again.",
+                )),
+                Err(e) => self.runtime.record_event(Event::new(
+                    Severity::Warning,
+                    "vault.keychain_not_cleared",
+                    format!(
+                        "The saved passphrase could not be removed from the keychain ({e}).                          Remove the superbackup entry by hand."
+                    ),
+                )),
+            }
+            return;
+        }
+        if !unlocked {
+            // Nothing to cache: the passphrase is only in memory while open.
+            return;
+        }
+        let Ok(passphrase) = self.runtime.master() else { return };
+        match super::keychain::store(&self.runtime.paths, &passphrase).await {
+            Ok(()) => self.runtime.record_event(Event::info(
+                "vault.keychain_stored",
+                "Your passphrase is now saved in this machine's credential store.",
+            )),
+            Err(e) => self.runtime.record_event(Event::new(
+                Severity::Warning,
+                "vault.keychain_failed",
+                format!("{} ({e})", super::keychain::explain_unavailable()),
+            )),
+        }
+    }
+
     /// Make sure a repository destination has a passphrase in the vault before
     /// its repository is created.
     ///

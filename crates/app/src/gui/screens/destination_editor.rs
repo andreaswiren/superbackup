@@ -16,7 +16,6 @@ use crate::gui::app::App;
 use crate::gui::copy;
 use crate::gui::daemon::Intent;
 use crate::gui::data::{Action, Gate};
-use crate::gui::format;
 use crate::gui::icons::Icon;
 use crate::gui::modals::{self, Modal};
 use crate::gui::nav::Route;
@@ -27,7 +26,6 @@ use crate::gui::widgets::{self, Button, StepState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreationPhase {
-    Idle,
     Running(usize),
     Done,
     Failed,
@@ -1078,14 +1076,5 @@ fn hash_helper(hash: HashAlgorithm) -> &'static str {
         HashAlgorithm::Blake2s256 => copy::enc::HASH_BLAKE2S256,
         HashAlgorithm::HmacSha256 => copy::enc::HASH_HMACSHA256,
         HashAlgorithm::HmacSha256128 => copy::enc::HASH_HMACSHA256128,
-    }
-}
-
-/// The relative time a destination was last verified, shared by the list and
-/// the editor so the two never disagree.
-pub fn verified_label(destination: &Destination, now: chrono::DateTime<Utc>) -> String {
-    match destination.last_verified_at {
-        Some(at) => copy::job_dest_verified(&format::relative_past(at, now)),
-        None => copy::job::DEST_NEVER_VERIFIED.to_string(),
     }
 }

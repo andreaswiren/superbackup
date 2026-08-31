@@ -41,14 +41,14 @@ impl App {
                     ui.add_space(space::XS);
                     widgets::text(
                         ui,
-                        copy::about_version(&info.version),
+                        copy::about_version(info.version),
                         Type::Body,
                         t.text_muted,
                     );
                     ui.add_space(space::XXS);
                     widgets::text(
                         ui,
-                        copy::about_build(&info.target_os, &info.target_arch, "from source"),
+                        copy::about_build(info.target_os, info.target_arch, "from source"),
                         Type::MonoSmall,
                         t.text_muted,
                     );

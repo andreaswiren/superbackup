@@ -5,6 +5,11 @@
 //! the current screen, the status strip, the toasts and at most one modal — in
 //! that order — and then decides whether to ask for another frame at all.
 
+// The interface is a library-shaped tree inside a binary crate. Its screens
+// and intents are also compiled by `crates/app/tests/gui_app.rs` as a separate
+// crate, so items the harness drives look unused from the binary's side.
+#![allow(dead_code)]
+
 use std::sync::Arc;
 use std::time::Duration;
 

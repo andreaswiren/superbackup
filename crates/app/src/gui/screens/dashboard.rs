@@ -19,12 +19,6 @@ use crate::gui::theme::{self, radius, size, space, Type};
 use crate::gui::viewmodel::{self, CardState};
 use crate::gui::widgets::{self, Button};
 
-#[derive(Default)]
-pub struct State {
-    /// The day column the pointer is over, so the tooltip can name it.
-    pub hovered_day: Option<usize>,
-}
-
 impl App {
     pub(crate) fn dashboard_actions(&mut self, ui: &mut Ui) {
         let gate = self.data.gate(Action::RunJob);
@@ -206,16 +200,14 @@ impl App {
                                             }
                                         }
                                         superbackup_core::state::Health::Attention
-                                            if !self.data.unlocked() =>
-                                        {
-                                            if Button::primary(copy::action::UNLOCK)
+                                            if !self.data.unlocked()
+                                            && Button::primary(copy::action::UNLOCK)
                                                 .compact()
                                                 .show(ui)
                                                 .clicked()
-                                            {
+                                            => {
                                                 action = Some("unlock");
                                             }
-                                        }
                                         _ => {}
                                     }
                                 });

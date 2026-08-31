@@ -1,281 +1,35 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>superbackup tray icons</title>
+<title>superbackup — tray marks</title>
 <style>
-  body { background:#fff; color:#1A1D23; font:14px/1.5 system-ui, sans-serif; padding:32px; }
-  h1 { font-size:18px; margin:0 0 4px; }
-  p  { margin:0 0 24px; color:#5A6270; max-width:62ch; }
-  table { border-collapse:collapse; }
-  th { font-weight:500; font-size:13px; color:#3A3F4A; }
-  tr > th:first-child { text-align:right; padding-right:16px; white-space:nowrap; }
-  th.col { padding-bottom:10px; text-align:center; }
+  :root { color-scheme: dark; }
+  body { background:#0C0E12; color:#E8ECF2; font:14px/1.5 system-ui,sans-serif; margin:0; padding:28px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  p  { color:#8A94A1; margin:0 0 8px; max-width:64ch; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#8A94A1;
+       margin:26px 0 10px; }
+  .strip { display:flex; gap:26px; flex-wrap:wrap; padding:16px; border-radius:8px; }
+  .strip.light   { background:#F3F3F3; }
+  .strip.dark    { background:#202020; }
+  .strip.menubar { background:#F6F6F6; }
+  .state { display:flex; align-items:flex-end; gap:10px; }
+  .state b { font-size:11px; font-weight:600; width:66px; }
+  .strip.light .state b, .strip.menubar .state b { color:#22262E; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .cell span { font-size:10px; color:#7d8794; }
+  .grey-out { filter:grayscale(1); }
 </style>
-<h1>superbackup tray icons</h1>
-<p>Five health states. Check that every row stays mutually distinguishable &mdash;
-especially the two greyscale rows, which are the test for whether shape (and not
-just colour) is carrying the meaning.</p>
-<table><tr><th></th><th class="col">idle</th><th class="col">running</th><th class="col">attention</th><th class="col">paused</th><th class="col">failed</th></tr><tr><th>Light taskbar 16px</th><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
-  <title>superbackup â€” idle</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
-  <!-- Check: completed, nothing outstanding. -->
-  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
-  <title>superbackup â€” running</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
-  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
-       when static, and is unmistakably not a check. -->
-  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
-  <title>superbackup â€” attention</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
-  <!-- Exclamation: needs a decision, not an error. -->
-  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
-  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
-  <title>superbackup â€” paused</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
-  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
-  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
-  <title>superbackup â€” failed</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
-  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
-  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-</svg>
-</span></td></tr><tr><th>Dark taskbar 16px</th><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
-  <title>superbackup â€” idle</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
-  <!-- Check: completed, nothing outstanding. -->
-  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
-  <title>superbackup â€” running</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
-  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
-       when static, and is unmistakably not a check. -->
-  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
-  <title>superbackup â€” attention</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
-  <!-- Exclamation: needs a decision, not an error. -->
-  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
-  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
-  <title>superbackup â€” paused</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
-  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
-  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
-  <title>superbackup â€” failed</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
-  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
-  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-</svg>
-</span></td></tr><tr><th>Dark taskbar 20px</th><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
-  <title>superbackup â€” idle</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
-  <!-- Check: completed, nothing outstanding. -->
-  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
-  <title>superbackup â€” running</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
-  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
-       when static, and is unmistakably not a check. -->
-  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
-  <title>superbackup â€” attention</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
-  <!-- Exclamation: needs a decision, not an error. -->
-  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
-  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
-  <title>superbackup â€” paused</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
-  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
-  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:20px;height:20px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
-  <title>superbackup â€” failed</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
-  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
-  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-</svg>
-</span></td></tr><tr><th>32px</th><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
-  <title>superbackup â€” idle</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
-  <!-- Check: completed, nothing outstanding. -->
-  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
-  <title>superbackup â€” running</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
-  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
-       when static, and is unmistakably not a check. -->
-  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
-  <title>superbackup â€” attention</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
-  <!-- Exclamation: needs a decision, not an error. -->
-  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
-  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
-  <title>superbackup â€” paused</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
-  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
-  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:32px;height:32px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
-  <title>superbackup â€” failed</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
-  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
-  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-</svg>
-</span></td></tr><tr><th>Greyscale on light</th><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
-  <title>superbackup â€” idle</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
-  <!-- Check: completed, nothing outstanding. -->
-  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
-  <title>superbackup â€” running</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
-  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
-       when static, and is unmistakably not a check. -->
-  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
-  <title>superbackup â€” attention</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
-  <!-- Exclamation: needs a decision, not an error. -->
-  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
-  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
-  <title>superbackup â€” paused</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
-  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
-  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#F3F3F3;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
-  <title>superbackup â€” failed</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
-  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
-  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-</svg>
-</span></td></tr><tr><th>Greyscale on dark</th><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: idle">
-  <title>superbackup â€” idle</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#468769"/>
-  <!-- Check: completed, nothing outstanding. -->
-  <path d="M10.6 16.4 L14.3 20.1 L21.6 12.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: running">
-  <title>superbackup â€” running</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#377BD4"/>
-  <!-- Open arc with an arrowhead: work in motion. Reads as movement even
-       when static, and is unmistakably not a check. -->
-  <path d="M21.9 12.6 A6.8 6.8 0 1 0 22.6 17.9" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-  <path d="M22.4 8.4 L22.6 13.4 L17.7 12.9 Z" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: attention">
-  <title>superbackup â€” attention</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#AB6D11"/>
-  <!-- Exclamation: needs a decision, not an error. -->
-  <rect x="14.5" y="9.6" width="3" height="8.6" rx="1.5" fill="#FFFFFF"/>
-  <circle cx="16" cy="21.6" r="1.9" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: paused">
-  <title>superbackup â€” paused</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#747B87"/>
-  <!-- Two bars: the universal pause mark, deliberately not a colour cue. -->
-  <rect x="11.4" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-  <rect x="17.2" y="10.6" width="3.4" height="10.8" rx="1.5" fill="#FFFFFF"/>
-</svg>
-</span></td><td style="background:#202020;padding:16px;text-align:center"><span style="display:inline-block;width:16px;height:16px;filter:grayscale(1)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="superbackup: failed">
-  <title>superbackup â€” failed</title>
-  <!-- Shared shield silhouette. Identical across all five states so the app is
-       recognisable at 16px; only the interior glyph and accent change. -->
-  <path d="M16 2.5 L27.5 6.6 V16.2 C27.5 22.6 22.7 27.6 16 29.5 C9.3 27.6 4.5 22.6 4.5 16.2 V6.6 Z" fill="#EB2D36"/>
-  <!-- Cross: failure. Distinct in silhouette from the check at 16px. -->
-  <path d="M11.6 11.6 L20.4 20.4 M20.4 11.6 L11.6 20.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
-</svg>
-</span></td></tr></table>
+<h1>superbackup — the five tray marks</h1>
+<p><a href="../../design/DESIGN_SYSTEM.md">DESIGN_SYSTEM.md</a> §7 is the
+specification; these files are it, drawn. The application generates the same
+geometry at run time from <code>crates/app/src/tray/icons.rs</code>. Regenerate
+with <code>python tools/icons/build.py</code>.</p>
+<p>The greyscale rows are the point of this page: they are what catches a
+state that has quietly started depending on colour.</p>
+<h2>Light taskbar (#F3F3F3) — the <code>-light</code> variant</h2><div class="strip light"><div class="state"><b>idle</b><div class="cell"><img src="idle-light.svg" width="16" height="16" alt="idle light 16px"><span>16</span></div><div class="cell"><img src="idle-light.svg" width="20" height="20" alt="idle light 20px"><span>20</span></div><div class="cell"><img src="idle-light.svg" width="24" height="24" alt="idle light 24px"><span>24</span></div><div class="cell"><img src="idle-light.svg" width="32" height="32" alt="idle light 32px"><span>32</span></div></div><div class="state"><b>running</b><div class="cell"><img src="running-00-light.svg" width="16" height="16" alt="running light 16px"><span>16</span></div><div class="cell"><img src="running-00-light.svg" width="20" height="20" alt="running light 20px"><span>20</span></div><div class="cell"><img src="running-00-light.svg" width="24" height="24" alt="running light 24px"><span>24</span></div><div class="cell"><img src="running-00-light.svg" width="32" height="32" alt="running light 32px"><span>32</span></div></div><div class="state"><b>attention</b><div class="cell"><img src="attention-light.svg" width="16" height="16" alt="attention light 16px"><span>16</span></div><div class="cell"><img src="attention-light.svg" width="20" height="20" alt="attention light 20px"><span>20</span></div><div class="cell"><img src="attention-light.svg" width="24" height="24" alt="attention light 24px"><span>24</span></div><div class="cell"><img src="attention-light.svg" width="32" height="32" alt="attention light 32px"><span>32</span></div></div><div class="state"><b>paused</b><div class="cell"><img src="paused-light.svg" width="16" height="16" alt="paused light 16px"><span>16</span></div><div class="cell"><img src="paused-light.svg" width="20" height="20" alt="paused light 20px"><span>20</span></div><div class="cell"><img src="paused-light.svg" width="24" height="24" alt="paused light 24px"><span>24</span></div><div class="cell"><img src="paused-light.svg" width="32" height="32" alt="paused light 32px"><span>32</span></div></div><div class="state"><b>failed</b><div class="cell"><img src="failed-light.svg" width="16" height="16" alt="failed light 16px"><span>16</span></div><div class="cell"><img src="failed-light.svg" width="20" height="20" alt="failed light 20px"><span>20</span></div><div class="cell"><img src="failed-light.svg" width="24" height="24" alt="failed light 24px"><span>24</span></div><div class="cell"><img src="failed-light.svg" width="32" height="32" alt="failed light 32px"><span>32</span></div></div></div>
+<h2>Light taskbar (#F3F3F3) — the <code>-light</code> variant — greyscale</h2><div class="strip light grey-out"><div class="state"><b>idle</b><div class="cell"><img src="idle-light.svg" width="16" height="16" alt="idle light 16px"><span>16</span></div><div class="cell"><img src="idle-light.svg" width="20" height="20" alt="idle light 20px"><span>20</span></div><div class="cell"><img src="idle-light.svg" width="24" height="24" alt="idle light 24px"><span>24</span></div><div class="cell"><img src="idle-light.svg" width="32" height="32" alt="idle light 32px"><span>32</span></div></div><div class="state"><b>running</b><div class="cell"><img src="running-00-light.svg" width="16" height="16" alt="running light 16px"><span>16</span></div><div class="cell"><img src="running-00-light.svg" width="20" height="20" alt="running light 20px"><span>20</span></div><div class="cell"><img src="running-00-light.svg" width="24" height="24" alt="running light 24px"><span>24</span></div><div class="cell"><img src="running-00-light.svg" width="32" height="32" alt="running light 32px"><span>32</span></div></div><div class="state"><b>attention</b><div class="cell"><img src="attention-light.svg" width="16" height="16" alt="attention light 16px"><span>16</span></div><div class="cell"><img src="attention-light.svg" width="20" height="20" alt="attention light 20px"><span>20</span></div><div class="cell"><img src="attention-light.svg" width="24" height="24" alt="attention light 24px"><span>24</span></div><div class="cell"><img src="attention-light.svg" width="32" height="32" alt="attention light 32px"><span>32</span></div></div><div class="state"><b>paused</b><div class="cell"><img src="paused-light.svg" width="16" height="16" alt="paused light 16px"><span>16</span></div><div class="cell"><img src="paused-light.svg" width="20" height="20" alt="paused light 20px"><span>20</span></div><div class="cell"><img src="paused-light.svg" width="24" height="24" alt="paused light 24px"><span>24</span></div><div class="cell"><img src="paused-light.svg" width="32" height="32" alt="paused light 32px"><span>32</span></div></div><div class="state"><b>failed</b><div class="cell"><img src="failed-light.svg" width="16" height="16" alt="failed light 16px"><span>16</span></div><div class="cell"><img src="failed-light.svg" width="20" height="20" alt="failed light 20px"><span>20</span></div><div class="cell"><img src="failed-light.svg" width="24" height="24" alt="failed light 24px"><span>24</span></div><div class="cell"><img src="failed-light.svg" width="32" height="32" alt="failed light 32px"><span>32</span></div></div></div>
+<h2>Dark taskbar (#202020) — the <code>-dark</code> variant</h2><div class="strip dark"><div class="state"><b>idle</b><div class="cell"><img src="idle-dark.svg" width="16" height="16" alt="idle dark 16px"><span>16</span></div><div class="cell"><img src="idle-dark.svg" width="20" height="20" alt="idle dark 20px"><span>20</span></div><div class="cell"><img src="idle-dark.svg" width="24" height="24" alt="idle dark 24px"><span>24</span></div><div class="cell"><img src="idle-dark.svg" width="32" height="32" alt="idle dark 32px"><span>32</span></div></div><div class="state"><b>running</b><div class="cell"><img src="running-00-dark.svg" width="16" height="16" alt="running dark 16px"><span>16</span></div><div class="cell"><img src="running-00-dark.svg" width="20" height="20" alt="running dark 20px"><span>20</span></div><div class="cell"><img src="running-00-dark.svg" width="24" height="24" alt="running dark 24px"><span>24</span></div><div class="cell"><img src="running-00-dark.svg" width="32" height="32" alt="running dark 32px"><span>32</span></div></div><div class="state"><b>attention</b><div class="cell"><img src="attention-dark.svg" width="16" height="16" alt="attention dark 16px"><span>16</span></div><div class="cell"><img src="attention-dark.svg" width="20" height="20" alt="attention dark 20px"><span>20</span></div><div class="cell"><img src="attention-dark.svg" width="24" height="24" alt="attention dark 24px"><span>24</span></div><div class="cell"><img src="attention-dark.svg" width="32" height="32" alt="attention dark 32px"><span>32</span></div></div><div class="state"><b>paused</b><div class="cell"><img src="paused-dark.svg" width="16" height="16" alt="paused dark 16px"><span>16</span></div><div class="cell"><img src="paused-dark.svg" width="20" height="20" alt="paused dark 20px"><span>20</span></div><div class="cell"><img src="paused-dark.svg" width="24" height="24" alt="paused dark 24px"><span>24</span></div><div class="cell"><img src="paused-dark.svg" width="32" height="32" alt="paused dark 32px"><span>32</span></div></div><div class="state"><b>failed</b><div class="cell"><img src="failed-dark.svg" width="16" height="16" alt="failed dark 16px"><span>16</span></div><div class="cell"><img src="failed-dark.svg" width="20" height="20" alt="failed dark 20px"><span>20</span></div><div class="cell"><img src="failed-dark.svg" width="24" height="24" alt="failed dark 24px"><span>24</span></div><div class="cell"><img src="failed-dark.svg" width="32" height="32" alt="failed dark 32px"><span>32</span></div></div></div>
+<h2>Dark taskbar (#202020) — the <code>-dark</code> variant — greyscale</h2><div class="strip dark grey-out"><div class="state"><b>idle</b><div class="cell"><img src="idle-dark.svg" width="16" height="16" alt="idle dark 16px"><span>16</span></div><div class="cell"><img src="idle-dark.svg" width="20" height="20" alt="idle dark 20px"><span>20</span></div><div class="cell"><img src="idle-dark.svg" width="24" height="24" alt="idle dark 24px"><span>24</span></div><div class="cell"><img src="idle-dark.svg" width="32" height="32" alt="idle dark 32px"><span>32</span></div></div><div class="state"><b>running</b><div class="cell"><img src="running-00-dark.svg" width="16" height="16" alt="running dark 16px"><span>16</span></div><div class="cell"><img src="running-00-dark.svg" width="20" height="20" alt="running dark 20px"><span>20</span></div><div class="cell"><img src="running-00-dark.svg" width="24" height="24" alt="running dark 24px"><span>24</span></div><div class="cell"><img src="running-00-dark.svg" width="32" height="32" alt="running dark 32px"><span>32</span></div></div><div class="state"><b>attention</b><div class="cell"><img src="attention-dark.svg" width="16" height="16" alt="attention dark 16px"><span>16</span></div><div class="cell"><img src="attention-dark.svg" width="20" height="20" alt="attention dark 20px"><span>20</span></div><div class="cell"><img src="attention-dark.svg" width="24" height="24" alt="attention dark 24px"><span>24</span></div><div class="cell"><img src="attention-dark.svg" width="32" height="32" alt="attention dark 32px"><span>32</span></div></div><div class="state"><b>paused</b><div class="cell"><img src="paused-dark.svg" width="16" height="16" alt="paused dark 16px"><span>16</span></div><div class="cell"><img src="paused-dark.svg" width="20" height="20" alt="paused dark 20px"><span>20</span></div><div class="cell"><img src="paused-dark.svg" width="24" height="24" alt="paused dark 24px"><span>24</span></div><div class="cell"><img src="paused-dark.svg" width="32" height="32" alt="paused dark 32px"><span>32</span></div></div><div class="state"><b>failed</b><div class="cell"><img src="failed-dark.svg" width="16" height="16" alt="failed dark 16px"><span>16</span></div><div class="cell"><img src="failed-dark.svg" width="20" height="20" alt="failed dark 20px"><span>20</span></div><div class="cell"><img src="failed-dark.svg" width="24" height="24" alt="failed dark 24px"><span>24</span></div><div class="cell"><img src="failed-dark.svg" width="32" height="32" alt="failed dark 32px"><span>32</span></div></div></div>
+<h2>macOS menu bar — the template image, as macOS draws it</h2><div class="strip menubar"><div class="state"><b>idle</b><div class="cell"><img src="idle-template.svg" width="16" height="16" alt="idle template 16px"><span>16</span></div><div class="cell"><img src="idle-template.svg" width="20" height="20" alt="idle template 20px"><span>20</span></div><div class="cell"><img src="idle-template.svg" width="24" height="24" alt="idle template 24px"><span>24</span></div><div class="cell"><img src="idle-template.svg" width="32" height="32" alt="idle template 32px"><span>32</span></div></div><div class="state"><b>running</b><div class="cell"><img src="running-00-template.svg" width="16" height="16" alt="running template 16px"><span>16</span></div><div class="cell"><img src="running-00-template.svg" width="20" height="20" alt="running template 20px"><span>20</span></div><div class="cell"><img src="running-00-template.svg" width="24" height="24" alt="running template 24px"><span>24</span></div><div class="cell"><img src="running-00-template.svg" width="32" height="32" alt="running template 32px"><span>32</span></div></div><div class="state"><b>attention</b><div class="cell"><img src="attention-template.svg" width="16" height="16" alt="attention template 16px"><span>16</span></div><div class="cell"><img src="attention-template.svg" width="20" height="20" alt="attention template 20px"><span>20</span></div><div class="cell"><img src="attention-template.svg" width="24" height="24" alt="attention template 24px"><span>24</span></div><div class="cell"><img src="attention-template.svg" width="32" height="32" alt="attention template 32px"><span>32</span></div></div><div class="state"><b>paused</b><div class="cell"><img src="paused-template.svg" width="16" height="16" alt="paused template 16px"><span>16</span></div><div class="cell"><img src="paused-template.svg" width="20" height="20" alt="paused template 20px"><span>20</span></div><div class="cell"><img src="paused-template.svg" width="24" height="24" alt="paused template 24px"><span>24</span></div><div class="cell"><img src="paused-template.svg" width="32" height="32" alt="paused template 32px"><span>32</span></div></div><div class="state"><b>failed</b><div class="cell"><img src="failed-template.svg" width="16" height="16" alt="failed template 16px"><span>16</span></div><div class="cell"><img src="failed-template.svg" width="20" height="20" alt="failed template 20px"><span>20</span></div><div class="cell"><img src="failed-template.svg" width="24" height="24" alt="failed template 24px"><span>24</span></div><div class="cell"><img src="failed-template.svg" width="32" height="32" alt="failed template 32px"><span>32</span></div></div></div>
+<h2>macOS menu bar — the template image, as macOS draws it — greyscale</h2><div class="strip menubar grey-out"><div class="state"><b>idle</b><div class="cell"><img src="idle-template.svg" width="16" height="16" alt="idle template 16px"><span>16</span></div><div class="cell"><img src="idle-template.svg" width="20" height="20" alt="idle template 20px"><span>20</span></div><div class="cell"><img src="idle-template.svg" width="24" height="24" alt="idle template 24px"><span>24</span></div><div class="cell"><img src="idle-template.svg" width="32" height="32" alt="idle template 32px"><span>32</span></div></div><div class="state"><b>running</b><div class="cell"><img src="running-00-template.svg" width="16" height="16" alt="running template 16px"><span>16</span></div><div class="cell"><img src="running-00-template.svg" width="20" height="20" alt="running template 20px"><span>20</span></div><div class="cell"><img src="running-00-template.svg" width="24" height="24" alt="running template 24px"><span>24</span></div><div class="cell"><img src="running-00-template.svg" width="32" height="32" alt="running template 32px"><span>32</span></div></div><div class="state"><b>attention</b><div class="cell"><img src="attention-template.svg" width="16" height="16" alt="attention template 16px"><span>16</span></div><div class="cell"><img src="attention-template.svg" width="20" height="20" alt="attention template 20px"><span>20</span></div><div class="cell"><img src="attention-template.svg" width="24" height="24" alt="attention template 24px"><span>24</span></div><div class="cell"><img src="attention-template.svg" width="32" height="32" alt="attention template 32px"><span>32</span></div></div><div class="state"><b>paused</b><div class="cell"><img src="paused-template.svg" width="16" height="16" alt="paused template 16px"><span>16</span></div><div class="cell"><img src="paused-template.svg" width="20" height="20" alt="paused template 20px"><span>20</span></div><div class="cell"><img src="paused-template.svg" width="24" height="24" alt="paused template 24px"><span>24</span></div><div class="cell"><img src="paused-template.svg" width="32" height="32" alt="paused template 32px"><span>32</span></div></div><div class="state"><b>failed</b><div class="cell"><img src="failed-template.svg" width="16" height="16" alt="failed template 16px"><span>16</span></div><div class="cell"><img src="failed-template.svg" width="20" height="20" alt="failed template 20px"><span>20</span></div><div class="cell"><img src="failed-template.svg" width="24" height="24" alt="failed template 24px"><span>24</span></div><div class="cell"><img src="failed-template.svg" width="32" height="32" alt="failed template 32px"><span>32</span></div></div></div>
+<h2>running — 12 frames, 30° apart</h2><div class="strip dark"><div class="cell"><img src="running-00-dark.svg" width="32" height="32" alt="running dark 32px"><span>00</span></div><div class="cell"><img src="running-01-dark.svg" width="32" height="32" alt="running dark 32px"><span>01</span></div><div class="cell"><img src="running-02-dark.svg" width="32" height="32" alt="running dark 32px"><span>02</span></div><div class="cell"><img src="running-03-dark.svg" width="32" height="32" alt="running dark 32px"><span>03</span></div><div class="cell"><img src="running-04-dark.svg" width="32" height="32" alt="running dark 32px"><span>04</span></div><div class="cell"><img src="running-05-dark.svg" width="32" height="32" alt="running dark 32px"><span>05</span></div><div class="cell"><img src="running-06-dark.svg" width="32" height="32" alt="running dark 32px"><span>06</span></div><div class="cell"><img src="running-07-dark.svg" width="32" height="32" alt="running dark 32px"><span>07</span></div><div class="cell"><img src="running-08-dark.svg" width="32" height="32" alt="running dark 32px"><span>08</span></div><div class="cell"><img src="running-09-dark.svg" width="32" height="32" alt="running dark 32px"><span>09</span></div><div class="cell"><img src="running-10-dark.svg" width="32" height="32" alt="running dark 32px"><span>10</span></div><div class="cell"><img src="running-11-dark.svg" width="32" height="32" alt="running dark 32px"><span>11</span></div></div>

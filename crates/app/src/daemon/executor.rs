@@ -232,8 +232,15 @@ pub struct KopiaExecutor {
     /// Kept so the executor can be built and tested without a `Runtime`'s
     /// full startup path; identical to `runtime.paths`.
     paths: Paths,
-    /// Whether this run may write. A dry run prepares and reports but never
-    /// creates a repository or a snapshot.
+    /// Whether this executor exists to rehearse.
+    ///
+    /// `SnapshotRequest` carries its own `dry_run` and that is the authority
+    /// for the snapshot itself. This flag exists for the one decision the
+    /// request cannot carry: `PrepareRequest` has no `dry_run` field and the
+    /// runner passes `create_if_missing: true` for every run, so without it a
+    /// rehearsal against a destination that has no repository yet would
+    /// *create* one — a visible, surprising side effect of an operation the
+    /// user was told writes nothing.
     dry_run: bool,
 }
 
@@ -323,6 +330,8 @@ impl KopiaExecutor {
         match driver.connect_repository(&ctx).await {
             Ok(()) => {}
             Err(e) if e.failure == KopiaFailure::RepositoryNotFound => {
+                // A rehearsal never materialises a repository, whatever
+                // `create_if_missing` says — see the `dry_run` field.
                 if !request.create_if_missing || self.dry_run {
                     return Err(ExecutorError::new(
                         ErrorCode::RepoNotConnected,
@@ -457,22 +466,19 @@ impl KopiaExecutor {
     }
 
     /// The mirror branch: no repository, no kopia, no secrets.
-    async fn snapshot_mirror(&self, request: SnapshotRequest) -> ExecutorResult<SnapshotOutcome> {
-        if self.dry_run {
-            // A mirror's dry run is honest about doing nothing rather than
-            // copying and calling it a rehearsal.
-            request.progress.finish(Progress::default());
-            return Ok(SnapshotOutcome {
-                snapshot_id: None,
-                progress: Progress::default(),
-                warnings: vec![format!(
-                    "Dry run: nothing was written to \"{}\".",
-                    request.destination.name
-                )],
-            });
-        }
+    ///
+    /// Reached only when something drives the executor directly — the runner
+    /// dispatches mirrors to [`MirrorEngine`] itself. Kept correct anyway, and
+    /// `MirrorOptions::dry_run` is what makes the rehearsal real rather than a
+    /// refusal.
+    async fn snapshot_mirror(
+        &self,
+        request: SnapshotRequest,
+        rehearsal: bool,
+    ) -> ExecutorResult<SnapshotOutcome> {
         let mut options = MirrorOptions::from_exclusions(&request.exclusions);
         options.follow_symlinks = request.sources.iter().any(|s| s.follow_symlinks);
+        options.dry_run = rehearsal;
         self.mirror
             .run(MirrorRequest {
                 run_id: request.run_id,
@@ -594,15 +600,24 @@ impl BackupExecutor for KopiaExecutor {
             if request.cancel.is_cancelled() {
                 return Err(ExecutorError::cancelled());
             }
+            // `SnapshotRequest::dry_run` is the authority; the executor's own
+            // flag only matters for the one decision the request cannot carry
+            // (see `prepare`). Honouring both means a rehearsal is a rehearsal
+            // whichever way the caller expressed it.
+            let rehearsal = request.dry_run || self.dry_run;
             if request.destination.kind.is_repository() {
-                if self.dry_run {
+                if rehearsal {
                     // Deliberately not `snapshot create --dry-run`: kopia has
-                    // no such flag, and estimating is the honest equivalent.
+                    // no such flag. `snapshot estimate` is the honest
+                    // equivalent, and where even that is unavailable the
+                    // source is reported as un-rehearsable rather than
+                    // snapshotted for real — which is the contract
+                    // `SnapshotRequest::dry_run` documents.
                     return dry_run_estimate(self, request).await;
                 }
                 self.snapshot_repository(request).await
             } else {
-                self.snapshot_mirror(request).await
+                self.snapshot_mirror(request, rehearsal).await
             }
         })
     }
@@ -696,6 +711,10 @@ async fn dry_run_estimate(
 }
 
 /// A [`KopiaExecutor`] that reports what it would do without writing.
+///
+/// Used by [`super::dryrun`], alongside `RunRequest::dry_run`. The request
+/// flag is what stops the *mirror* engine writing; this is what stops
+/// `prepare` creating a repository.
 pub fn dry_run(runtime: Arc<Runtime>, clock: Arc<dyn Clock>) -> KopiaExecutor {
     KopiaExecutor { dry_run: true, ..KopiaExecutor::new(runtime, clock) }
 }

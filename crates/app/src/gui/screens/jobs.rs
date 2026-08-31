@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 use superbackup_core::ipc::protocol::Request;
 use superbackup_core::model::Job;
-use superbackup_core::state::RunStatus;
 
 use crate::gui::copy;
 use crate::gui::app::App;
@@ -184,7 +183,7 @@ impl App {
             ui.spacing().item_spacing.x,
             &JOB_COLUMNS,
         );
-        let has = |key: &str| shown.iter().any(|k| *k == key);
+        let has = |key: &str| shown.contains(&key);
 
         widgets::scroll_area(ui, "jobs", |ui| {
             for (heading, rows) in &groups {
@@ -619,10 +618,4 @@ impl App {
         }
         self.screens.jobs.selected.clear();
     }
-}
-
-/// The status a row's spine and icon use, exposed for tests of the fan-out
-/// rule: a run that failed at one destination is never drawn as a success.
-pub fn row_status(run: &superbackup_core::state::JobRun) -> RunStatus {
-    run.derive_status()
 }

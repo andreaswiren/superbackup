@@ -861,7 +861,7 @@ pub mod dest {
 }
 
 pub fn dest_used_by(count: usize) -> String {
-    format!("{count} jobs")
+    format::plural(count, "job", "jobs")
 }
 pub fn dest_folder_free(free: u64, total: u64) -> String {
     format!("{} free of {}", format::bytes(free), format::bytes(total))
@@ -1059,7 +1059,7 @@ pub mod prov {
 }
 
 pub fn prov_used_by(count: usize) -> String {
-    format!("{count} destinations")
+    format::plural(count, "destination", "destinations")
 }
 pub fn prov_type_filled(flavour: &str) -> String {
     format!("Endpoint and region filled in for {flavour}. Change them if your account differs.")

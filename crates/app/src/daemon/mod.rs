@@ -217,12 +217,23 @@ pub async fn run(
             warning.to_string(),
         ));
     }
-    if settings.use_os_keychain && !keychain::available() {
-        runtime.record_event(Event::new(
-            Severity::Warning,
-            "vault.keychain_unavailable",
-            keychain::explain_unavailable().to_string(),
-        ));
+    if settings.use_os_keychain {
+        if !keychain::available() {
+            runtime.record_event(Event::new(
+                Severity::Warning,
+                "vault.keychain_unavailable",
+                keychain::explain_unavailable().to_string(),
+            ));
+        } else if !keychain::has_local(&paths) {
+            // Distinguishing "nothing saved yet" from "saved but unusable"
+            // matters: the first needs one manual unlock and then resolves
+            // itself, the second needs the user to do something.
+            runtime.record_event(Event::info(
+                "vault.keychain_empty",
+                "Nothing is saved in this machine's credential store yet. Unlock superbackup \
+                 once and your passphrase will be remembered from then on.",
+            ));
+        }
     }
 
     // 4. A service can reach less than a tray can, and the user must be told

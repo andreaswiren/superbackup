@@ -4,6 +4,11 @@
 //! The ids are constants so a test can navigate straight to a fixture's editor,
 //! and so a screenshot is byte-identical between runs of the same build.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

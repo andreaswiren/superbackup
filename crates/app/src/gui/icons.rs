@@ -12,6 +12,11 @@
 //! [`Icon::for_destination_kind`] and friends, so one concept can never be two
 //! icons in two places.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, Vec2};
 
 /// Every icon the interface uses, named after the Lucide glyph it draws.

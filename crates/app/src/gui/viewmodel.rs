@@ -4,6 +4,11 @@
 //! state machine live here rather than inside a `show()` function, so the rules
 //! can be tested against the specification without a rendering context.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
@@ -447,10 +452,10 @@ pub fn visible_jobs<'a>(
 
 /// Group headings, in the order they are drawn. Jobs with no project are last,
 /// under `Ungrouped`.
-pub fn group_jobs<'a>(
-    rows: Vec<(&'a Job, JobView)>,
+pub fn group_jobs(
+    rows: Vec<(&Job, JobView)>,
     group: GroupBy,
-) -> Vec<(String, Vec<(&'a Job, JobView)>)> {
+) -> Vec<(String, Vec<(&Job, JobView)>)> {
     match group {
         GroupBy::None => vec![(String::new(), rows)],
         GroupBy::Project => {

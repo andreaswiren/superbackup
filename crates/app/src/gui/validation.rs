@@ -4,6 +4,11 @@
 //! blur, and never blocks typing; a form with problems disables its Save button
 //! and the button's tooltip names the count.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use std::path::Path;
 
 use superbackup_core::model::{
@@ -818,8 +823,9 @@ pub fn wizard_blocked(step: WizardStep, draft: &Job, destinations: &[Destination
 
 /// The onboarding flow's own gating. Steps 1–3 are mandatory; the rest are
 /// skippable, and the vault is created when O-3 is confirmed, not before.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OnboardingStep {
+    #[default]
     Welcome,
     Passphrase,
     NoRecovery,
@@ -945,7 +951,7 @@ mod tests {
         let existing = job("Dev code", vec![d.id]);
         let mut candidate = job("dev CODE", vec![d.id]);
         candidate.id = Uuid::new_v4();
-        let report = validate_job(&candidate, std::slice::from_ref(&existing), &[d.clone()]);
+        let report = validate_job(&candidate, std::slice::from_ref(&existing), std::slice::from_ref(&d));
         assert!(report.for_field(Field::Name).is_some());
     }
 
@@ -957,7 +963,7 @@ mod tests {
             DestinationKind::LocalRepository { path: PathBuf::from(root) },
         );
         let j = job("Dev code", vec![d.id]);
-        let report = validate_job(&j, &[], &[d]);
+        let report = validate_job(&j, &[], std::slice::from_ref(&d));
         assert!(
             report.for_field(Field::Sources).is_some(),
             "a backup that contains its own destination must be refused"
@@ -971,7 +977,7 @@ mod tests {
             DestinationKind::LocalMirror { path: PathBuf::from("/mirror") },
         );
         let j = job("Docs", vec![d.id]);
-        let report = validate_job(&j, &[], &[d]);
+        let report = validate_job(&j, &[], std::slice::from_ref(&d));
         assert!(report.ok(), "the warning must not block saving");
         assert!(report.warnings.iter().any(|w| w.contains("folder mirror")));
     }
@@ -1101,12 +1107,12 @@ mod tests {
 
         draft.sources.push(Source::new(if cfg!(windows) { r"C:\dev" } else { "/dev" }));
         assert!(wizard_blocked(WizardStep::Sources, &draft, &[]).is_none());
-        assert!(wizard_blocked(WizardStep::Destinations, &draft, &[d.clone()]).is_some());
+        assert!(wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_some());
 
         draft.destination_ids.push(d.id);
-        assert!(wizard_blocked(WizardStep::Destinations, &draft, &[d.clone()]).is_none());
-        assert!(wizard_blocked(WizardStep::Schedule, &draft, &[d.clone()]).is_none());
-        assert!(wizard_blocked(WizardStep::Exclusions, &draft, &[d]).is_none());
+        assert!(wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_none());
+        assert!(wizard_blocked(WizardStep::Schedule, &draft, std::slice::from_ref(&d)).is_none());
+        assert!(wizard_blocked(WizardStep::Exclusions, &draft, std::slice::from_ref(&d)).is_none());
     }
 
     #[test]
@@ -1117,7 +1123,7 @@ mod tests {
         );
         d.enabled = false;
         let draft = job("Dev code", vec![d.id]);
-        assert!(wizard_blocked(WizardStep::Destinations, &draft, &[d]).is_some());
+        assert!(wizard_blocked(WizardStep::Destinations, &draft, std::slice::from_ref(&d)).is_some());
     }
 
     #[test]

@@ -23,7 +23,6 @@ pub mod wizard;
 /// Every screen's state, owned by the app.
 #[derive(Default)]
 pub struct Screens {
-    pub dashboard: dashboard::State,
     pub jobs: jobs::State,
     pub job_editor: job_editor::State,
     pub destinations: destinations::State,

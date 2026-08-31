@@ -34,3 +34,6 @@ tiny-skia = "0.12.0"
 usvg = "0.45.1"
 open = "5.4.2"
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "crypto-rust", "tokio"] }
+
+[build-dependencies]
+winresource = "0.1.31"

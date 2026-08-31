@@ -445,3 +445,148 @@ async fn health_drives_the_icon_and_the_daemon_owns_the_rule() {
     harness.shutdown().await.expect("clean shutdown");
 }
 
+
+/// The cached passphrase is destroyed when the vault locks.
+///
+/// This is the invariant that makes `vault.lock` mean something on an install
+/// that opted into caching: a machine which re-opens itself the instant it is
+/// asked to shut has not locked anything. The platform half is not touched
+/// here — the sidecar is the marker, and destroying it is what makes any
+/// surviving key useless.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn locking_destroys_the_cached_passphrase() {
+    let mut harness = Harness::start("keychain-lock", |config, _| {
+        config.settings.auto_lock_minutes = 0;
+    })
+    .await;
+    let client = harness.client().await;
+
+    client
+        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
+        .await
+        .expect("unlock");
+
+    // Seed the local half directly, so the test never writes to the machine's
+    // real credential store.
+    let key = superbackup_core::crypto::random_bytes(32).expect("key");
+    daemon::keychain::seal_local(
+        &harness.paths,
+        &key,
+        &superbackup_core::secret::Secret::from_str(PASSPHRASE),
+    )
+    .expect("seal the sidecar");
+    assert!(daemon::keychain::has_local(&harness.paths));
+
+    harness.call(&client, Request::VaultLock {}).await;
+
+    assert!(
+        !daemon::keychain::has_local(&harness.paths),
+        "locking must destroy the cached passphrase"
+    );
+    assert!(
+        daemon::keychain::open_local(&harness.paths, &key)
+            .expect("a missing sidecar is not an error")
+            .is_none(),
+        "the cache must be unusable after a lock"
+    );
+
+    drop(client);
+    harness.shutdown().await.expect("clean shutdown");
+}
+
+/// Turning the setting off destroys what was already cached.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn withdrawing_consent_destroys_the_cache() {
+    let mut harness = Harness::start("keychain-off", |config, _| {
+        config.settings.use_os_keychain = true;
+        config.settings.auto_lock_minutes = 0;
+    })
+    .await;
+    let client = harness.client().await;
+    client
+        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
+        .await
+        .expect("unlock");
+
+    let key = superbackup_core::crypto::random_bytes(32).expect("key");
+    daemon::keychain::seal_local(
+        &harness.paths,
+        &key,
+        &superbackup_core::secret::Secret::from_str(PASSPHRASE),
+    )
+    .expect("seal the sidecar");
+
+    let Reply::Settings(settings) =
+        harness.call(&client, Request::SettingsGet {}).await
+    else {
+        panic!("expected a settings reply")
+    };
+    let mut updated = (*settings.settings).clone();
+    updated.use_os_keychain = false;
+    harness
+        .call(&client, Request::SettingsUpdate { settings: Box::new(updated) })
+        .await;
+
+    assert!(
+        !daemon::keychain::has_local(&harness.paths),
+        "switching the setting off must destroy the cache: the setting is the consent"
+    );
+
+    drop(client);
+    harness.shutdown().await.expect("clean shutdown");
+}
+
+/// A rotation never leaves a cache that opens the old passphrase.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rotating_the_passphrase_invalidates_the_cache() {
+    let mut harness = Harness::start("keychain-rotate", |config, _| {
+        config.settings.auto_lock_minutes = 0;
+    })
+    .await;
+    let client = harness.client().await;
+    client
+        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
+        .await
+        .expect("unlock");
+
+    let key = superbackup_core::crypto::random_bytes(32).expect("key");
+    daemon::keychain::seal_local(
+        &harness.paths,
+        &key,
+        &superbackup_core::secret::Secret::from_str(PASSPHRASE),
+    )
+    .expect("seal the sidecar");
+
+    let replacement = "an-entirely-different-passphrase-77";
+    harness
+        .call(
+            &client,
+            Request::VaultChangePassphrase {
+                current: SecretString::from_string(PASSPHRASE.to_string()),
+                replacement: SecretString::from_string(replacement.to_string()),
+            },
+        )
+        .await;
+
+    // `use_os_keychain` is off in this fixture, so nothing is re-cached: what
+    // matters is that the *old* one is gone. A stale key that still opens a
+    // vault whose passphrase has moved on is the failure this guards.
+    assert!(
+        !daemon::keychain::has_local(&harness.paths),
+        "a rotation must destroy the cached passphrase"
+    );
+
+    // And the new passphrase is what actually opens the vault now.
+    harness.call(&client, Request::VaultLock {}).await;
+    client
+        .unlock(SecretString::from_string(replacement.to_string()))
+        .await
+        .expect("the new passphrase must open the vault");
+    let stale = client
+        .unlock(SecretString::from_string(PASSPHRASE.to_string()))
+        .await;
+    assert!(stale.is_ok(), "unlocking an already-open vault is a no-op");
+
+    drop(client);
+    harness.shutdown().await.expect("clean shutdown");
+}

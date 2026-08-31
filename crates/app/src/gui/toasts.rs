@@ -4,6 +4,11 @@
 //! the timer, and an identical toast inside sixty seconds is suppressed rather
 //! than stacked — a second copy of the same sentence tells the user nothing.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use std::time::{Duration, Instant};
 
 use egui::{Align, Layout, Rect, Sense, Stroke, StrokeKind, Vec2};

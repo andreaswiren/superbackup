@@ -9,6 +9,11 @@
 //!
 //! Nothing here touches egui, so all of it is unit-testable without a context.
 
+// The interface is a library-shaped tree inside a binary crate. Its components,
+// view models and fixtures are also compiled by `crates/app/tests/gui_app.rs`
+// as a separate crate, so items that are used and tested there look unused from
+// the binary's side. The allow is scoped to this module rather than the crate.
+#![allow(dead_code)]
 use chrono::{DateTime, Datelike, Local, TimeZone, Utc};
 
 // ---------------------------------------------------------------------------
@@ -189,6 +194,8 @@ pub fn count(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {
+        // Not `is_multiple_of`: that is stable since 1.87 and this
+        // workspace supports 1.82.
         if i > 0 && (digits.len() - i) % 3 == 0 {
             out.push(',');
         }

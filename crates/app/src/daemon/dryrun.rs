@@ -24,26 +24,26 @@
 //! It also refuses while the vault is locked, because a dry run against a
 //! repository still has to connect to it.
 //!
-//! ## Folder mirrors cannot be rehearsed, and are left out rather than faked
+//! ## Every destination kind is rehearsed, including folder mirrors
 //!
-//! [`Runner::attempt_destination`](superbackup_core::engine::Runner) branches
-//! on `DestinationKind` *itself* and drives
+//! `RunRequest::dry_run` is the authority, not the choice of executor, and
+//! that distinction is load-bearing.
+//! [`Runner`](superbackup_core::engine::Runner) branches on
+//! `DestinationKind` itself and drives
 //! [`MirrorEngine`](superbackup_core::engine::MirrorEngine) directly for a
-//! mirror — the executor is never consulted. A dry-run executor therefore
-//! cannot suppress a mirror copy: the runner would copy the files for real
-//! and the "rehearsal" would have written to the user's disk.
-//!
-//! Rather than lie about that, mirror destinations are excluded from the
-//! rehearsal and the reply says how many were skipped. Reporting a dry run
-//! that quietly copied gigabytes would be far worse than reporting one that
-//! covered fewer destinations than the real thing will.
+//! mirror, so an executor-level flag could never have suppressed a mirror
+//! copy — a "rehearsal" would have written the files for real. With the flag
+//! on the request, the runner forwards it to
+//! `MirrorOptions::dry_run` and to `SnapshotRequest::dry_run`, and the
+//! guarantee holds for every destination kind: no directory created, no file
+//! copied, nothing pruned, and the counts still reported.
 
 use std::sync::Arc;
 
 use superbackup_core::engine::runner::{destination_is_usable, RunRequest, Runner};
 use superbackup_core::engine::EVENT_CHANNEL_CAPACITY;
 use superbackup_core::ipc::protocol::StartedReply;
-use superbackup_core::model::{DestinationKind, Job};
+use superbackup_core::model::Job;
 use superbackup_core::state::Trigger;
 use superbackup_core::{Error, Result};
 use uuid::Uuid;
@@ -57,38 +57,25 @@ pub async fn start(runtime: &Arc<Runtime>, job: Job) -> Result<StartedReply> {
         return Err(Error::JobRunning(job.name.clone()));
     }
 
-    let (config, destinations, skipped_mirrors) = {
+    let (config, destinations) = {
         let store = runtime.store.lock().await;
         let config = store.config().clone();
-        let usable: Vec<&superbackup_core::model::Destination> = job
+        // Every kind, mirrors included: `RunRequest::dry_run` reaches the
+        // mirror engine, so there is nothing left to exclude.
+        let destinations: Vec<Arc<superbackup_core::model::Destination>> = job
             .destination_ids
             .iter()
             .filter_map(|id| config.destination(id))
             .filter(|d| destination_is_usable(d))
-            .collect();
-        let skipped: Vec<String> = usable
-            .iter()
-            .filter(|d| matches!(d.kind, DestinationKind::LocalMirror { .. }))
-            .map(|d| d.name.clone())
-            .collect();
-        let destinations: Vec<Arc<superbackup_core::model::Destination>> = usable
-            .into_iter()
-            .filter(|d| !matches!(d.kind, DestinationKind::LocalMirror { .. }))
             .map(|d| Arc::new(d.clone()))
             .collect();
-        (config, destinations, skipped)
+        (config, destinations)
     };
     if destinations.is_empty() {
-        return Err(Error::Validation(if skipped_mirrors.is_empty() {
-            format!("\"{}\" has no usable destination to rehearse against", job.name)
-        } else {
-            format!(
-                "\"{}\" writes only to folder mirrors ({}), which cannot be rehearsed without \
-                 copying the files for real. Run it normally instead.",
-                job.name,
-                skipped_mirrors.join(", ")
-            )
-        }));
+        return Err(Error::Validation(format!(
+            "\"{}\" has no usable destination to rehearse against",
+            job.name
+        )));
     }
 
     let clock = Arc::new(superbackup_core::engine::SystemClock::new());
@@ -114,6 +101,7 @@ pub async fn start(runtime: &Arc<Runtime>, job: Job) -> Result<StartedReply> {
         destinations,
         settings: Arc::new(config.settings.clone()),
         trigger: Trigger::Manual,
+        dry_run: true,
         // A child of the engine's token where there is one, so shutting the
         // daemon down stops a rehearsal too.
         cancel: runtime
@@ -131,18 +119,12 @@ pub async fn start(runtime: &Arc<Runtime>, job: Job) -> Result<StartedReply> {
         drop(events);
     });
 
-    let mut note = format!(
-        "Dry run: \"{}\" will report what it would copy and write nothing.",
-        job.name
-    );
-    if !skipped_mirrors.is_empty() {
-        note.push_str(&format!(
-            " {} folder mirror{} ({}) cannot be rehearsed and {} left out.",
-            skipped_mirrors.len(),
-            if skipped_mirrors.len() == 1 { "" } else { "s" },
-            skipped_mirrors.join(", "),
-            if skipped_mirrors.len() == 1 { "was" } else { "were" }
-        ));
-    }
-    Ok(StartedReply { run_id, started: true, note: Some(note) })
+    Ok(StartedReply {
+        run_id,
+        started: true,
+        note: Some(format!(
+            "Dry run: \"{}\" will report what it would copy and write nothing.",
+            job.name
+        )),
+    })
 }

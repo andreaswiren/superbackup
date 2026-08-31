@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/tray/idle.svg" width="72" height="72" alt="">
+<img src="assets/icons/png/superbackup-256.png" width="96" height="96" alt="">
 
 # superbackup
 

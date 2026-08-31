@@ -98,7 +98,7 @@ pub struct PendingMigration {
     /// what is still pending without re-reading the file, and so a resume
     /// after a restart starts from the same picture.
     #[allow(dead_code)]
-    pub report: super::rekey::StoredReport,
+    pub report: superbackup_core::crypto::rekey::MigrationReport,
 }
 
 impl PendingMigration {

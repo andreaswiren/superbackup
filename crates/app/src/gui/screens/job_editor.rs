@@ -411,10 +411,13 @@ impl App {
         let mut toggle_onefs: Option<usize> = None;
 
         widgets::table_frame(ui, |ui| {
+            let gap = ui.spacing().item_spacing.x;
+            let path_width =
+                (ui.available_width() - 110.0 - 90.0 - 90.0 - 32.0 - gap * 5.0).max(200.0);
             egui_extras::TableBuilder::new(ui)
                 .id_salt("job-sources")
                 .cell_layout(Layout::left_to_right(Align::Center))
-                .column(egui_extras::Column::remainder().at_least(200.0))
+                .column(egui_extras::Column::exact(path_width))
                 .column(egui_extras::Column::exact(110.0))
                 .column(egui_extras::Column::exact(90.0))
                 .column(egui_extras::Column::exact(90.0))

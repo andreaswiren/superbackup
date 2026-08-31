@@ -74,18 +74,22 @@ impl App {
             ui.spacing().item_spacing.x,
             &PROVIDER_COLUMNS,
         );
-        let has = |key: &str| shown.iter().any(|k| *k == key);
+        let has = |key: &str| shown.contains(&key);
         let mut open: Option<Uuid> = None;
         let mut test: Option<Uuid> = None;
         let mut menu: Option<(&'static str, Uuid)> = None;
 
         widgets::table_frame(ui, |ui| {
+            let gap = ui.spacing().item_spacing.x;
+            let fixed =
+                36.0 + 190.0 + 120.0 + 104.0 + if has("verified") { 104.0 + gap } else { 0.0 };
+            let endpoint_width = (ui.available_width() - fixed - gap * 4.0).max(180.0);
             let mut builder = egui_extras::TableBuilder::new(ui)
                 .id_salt("providers")
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(36.0))
                 .column(egui_extras::Column::exact(190.0))
-                .column(egui_extras::Column::remainder().at_least(200.0))
+                .column(egui_extras::Column::exact(endpoint_width))
                 .column(egui_extras::Column::exact(120.0));
             if has("verified") {
                 builder = builder.column(egui_extras::Column::exact(104.0));
