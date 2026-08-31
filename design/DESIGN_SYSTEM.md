@@ -453,22 +453,70 @@ Design canvas: **32 × 32** units (the 2× raster of a 16pt tray slot). All
 geometry centred on (16, 16). Stroke joins and caps are round.
 
 - **Ring**: circle centred (16, 16), radius **10.5**, stroke width **3.0**.
-- **Open ring**: the same circle drawn as a **280° arc**, leaving an 80° gap
-  centred on the +45° direction (down-right). Arc start 85°, sweep 280°
-  clockwise (0° = east, y down).
-- **Pip**: circle centred (**23.0, 23.0**), radius **6.0**, filled. Separated
-  from the arc by a **1.5 unit** knockout drawn in the tray background colour
-  (transparent in the exported asset, achieved with an even-odd cutout so the
-  mark composites correctly on any taskbar colour).
-- **Pip glyph**: stroke width **2.4**, drawn in `pip.ink`.
+- **Pip**: circle centred (**23.0, 23.0**), filled, separated from the arc by a
+  **1.5 unit** knockout. The knockout is a real cutout in the alpha, not a
+  stroke painted in the background colour — a stroke in "the taskbar colour" is
+  wrong the moment the user changes their accent, and always wrong on a Linux
+  panel whose colour we did not guess.
+- **Open ring**: the same circle drawn as an arc, leaving a gap centred on the
+  +45° direction (down-right), **derived from the pip** — see below.
 - Safe area: nothing within 1 unit of the 32 × 32 edge.
 
+#### Two size profiles
+
+The original single profile did not survive contact with a 16 px taskbar, and
+this section records what rasterising it actually showed.
+
+At 16 px the pip is 3 px across and its glyph stroke was 1.2 px — under this
+document's own 1.5 px floor. The exclamation's dot came out at 0.65 px. Both
+rendered as a smear, so `attention` and `failed` were separated only by the
+*lightness* of that smear, and in the macOS template, where both are the same
+hole, they were the same picture. §7.2 states the shape distinction as a hard
+requirement, and it was failing at exactly the sizes Windows uses most.
+
+| | `LARGE` (≥ 24 px) | `SMALL` (≤ 20 px) |
+|---|---|---|
+| Pip radius | 6.0 | **7.6** |
+| Glyph stroke | 2.4 | **3.2** (1.60 px at 16 px) |
+| Knockout half-angle | 43.0° | 52.9° |
+| Gap | **106.5°** | **126.2°** |
+| Sweep | **253.5°** | **233.8°** |
+| Arc start | **98.2°** | **108.1°** |
+
+**The gap is computed from the pip, not fixed.** The previous "80° gap, 280°
+sweep" was not what the drawing showed: the 1.5-unit knockout intersects the
+ring over 45° ± 43°, i.e. 2°–88°, which is *wider* than the 5°–85° gap it was
+meant to clear — so both round terminals of the arc were being truncated into
+flat crescents. The span is now derived as knockout half-angle + round-cap
+angle + 2°, which keeps the caps intact by construction. Widening the gap was
+chosen over shrinking the pip because the pip is what carries the state.
+
+**The renderer must rasterise at the size the tray will display.** Handing
+Windows a 32 px bitmap and letting it downscale defeats the small profile
+entirely; the tray reads `GetSystemMetrics(SM_CXSMICON)` and re-rasterises on a
+DPI change.
+
 ### 7.2 The five states
+
+> **Colour note.** The base and moving arcs of `Running` are variant-aware.
+> A single `#3A4250` base was 9.12:1 on a light taskbar and **1.61:1** on a
+> dark one, so on dark the ring vanished and only the moving arc remained —
+> `running` lost the silhouette that makes the five marks read as one
+> application. Fixing only the base would have left the *moving* arc at 2.50:1
+> on light, so both are paired. No new colour was introduced; the light moving
+> arc is §2.2's `info`.
+>
+> The `attention` and `failed` pip fills are **not** yet variant-aware
+> (`#E0A83A` is 1.92:1 on light, `#C2313A` is 2.94:1 on dark). Repainting the
+> two colours that identify those states is a deliberate design decision rather
+> than a defect fix, and is left open.
+
+
 
 | `Health` | Asset stem | Silhouette | Colour (Windows/Linux) | Greyscale-distinct? |
 |---|---|---|---|---|
 | `Idle` | `idle` | **Closed ring** (full 360°), plus a solid disc r = 3.0 at centre. No pip. | Ring + disc `#8B93A5` dark taskbar / `#5E6774` light taskbar | Yes — the only closed ring with a centre dot |
-| `Running` | `running` | **Open ring** (280° arc) with **no pip**, plus a 90° arc at radius 10.5, stroke 3.0, rotating. 12 frames, 30° per frame. | Base arc `#3A4250`, moving arc `#5B9BFF` | Yes — the only animated state, and the only one with no pip and no centre dot |
+| `Running` | `running` | **Open ring** (280° arc) with **no pip**, plus a 90° arc at radius 10.5, stroke 3.0, rotating. 12 frames, 30° per frame. | Base arc `#3A4250` light / `#8B93A5` dark; moving arc `#155FCC` light / `#5B9BFF` dark | Yes — the only animated state, and the only one with no pip and no centre dot |
 | `Attention` | `attention` | **Open ring** + pip containing an exclamation: vertical rounded bar from (23.0, 19.8) to (23.0, 23.4), plus a dot r = 1.3 at (23.0, 26.0). | Ring `#8B93A5`, pip fill `#E0A83A`, `pip.ink` `#1A1206` | Yes — pip with vertical bar |
 | `Paused` | `paused` | **Closed ring** + two vertical rounded bars inside: each 3.4 wide × 11.0 tall, radius 1.7, centred at x = 13.3 and x = 18.7, y from 10.5 to 21.5. No pip. | Ring and bars `#8B93A5` dark / `#5E6774` light | Yes — the only state with two interior bars |
 | `Failed` | `failed` | **Open ring** + pip containing a cross: two strokes from (20.9, 20.9)→(25.1, 25.1) and (25.1, 20.9)→(20.9, 25.1). | Ring `#8B93A5`, pip fill `#C2313A`, `pip.ink` `#FFFFFF` | Yes — pip with an X |
