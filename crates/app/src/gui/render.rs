@@ -429,11 +429,17 @@ pub fn capture(shot: &Shot) -> image::RgbaImage {
     } else {
         superbackup_core::model::Theme::Light
     };
+    app.preview_mode();
     (shot.setup)(&mut app);
 
     let pixels_per_point = 2.0;
+    let width = (shot.size[0] * pixels_per_point) as usize;
+    let height = (shot.size[1] * pixels_per_point) as usize;
+    let mut canvas = Canvas::new(width, height);
     let mut output = None;
-    // Several frames: fonts, layout and the animation clock all settle.
+    // Several frames: fonts, layout and the animation clock all settle. The
+    // font atlas is built incrementally, so every frame's texture delta is
+    // applied — keeping only the last one would leave most glyphs unrasterised.
     for _ in 0..4 {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
@@ -451,16 +457,13 @@ pub fn capture(shot: &Shot) -> image::RgbaImage {
             ..Default::default()
         };
         ctx.set_pixels_per_point(pixels_per_point);
-        output = Some(ctx.run(input, |ctx| app.frame(ctx)));
+        let frame = ctx.run(input, |ctx| app.frame(ctx));
+        canvas.textures.apply(&frame.textures_delta);
+        output = Some(frame);
     }
 
     let output = output.expect("at least one frame was run");
     let primitives = ctx.tessellate(output.shapes, pixels_per_point);
-    let width = (shot.size[0] * pixels_per_point) as usize;
-    let height = (shot.size[1] * pixels_per_point) as usize;
-
-    let mut canvas = Canvas::new(width, height);
-    canvas.textures.apply(&output.textures_delta);
     canvas.draw(&primitives, pixels_per_point);
     canvas.into_image()
 }

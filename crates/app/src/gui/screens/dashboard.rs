@@ -95,9 +95,7 @@ impl App {
             return;
         }
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        widgets::scroll_area(ui, "dashboard", |ui| {
                 self.health_strip(ui, now);
                 ui.add_space(space::XL);
 
@@ -119,10 +117,10 @@ impl App {
                     self.open_modal(Modal::Wizard(Box::new(wizard)));
                 }
                 ui.add_space(space::L);
-                self.job_grid(ui, now);
-                ui.add_space(space::XL);
-                let _ = t;
-            });
+            self.job_grid(ui, now);
+            ui.add_space(space::XL);
+            let _ = t;
+        });
     }
 
     // -- health strip -------------------------------------------------------
@@ -301,33 +299,54 @@ impl App {
                         let uploaded: u64 = days.iter().map(|d| d.uploaded).sum();
                         let runs: usize = days.iter().map(|d| d.total()).sum();
                         let failed: usize = days.iter().map(|d| d.failed).sum();
+                        // The tile is the narrowest thing on the dashboard, so
+                        // the strip is sized to what is left rather than to a
+                        // fixed column width that would push the totals out of
+                        // the card. Below 210px the totals drop and the strip
+                        // keeps the tile, exactly as the reflow rules ask.
+                        let inner = ui.available_width();
+                        let totals = if inner >= 210.0 { 92.0 } else { 0.0 };
+                        let strip = (inner - totals - if totals > 0.0 { space::L } else { 0.0 })
+                            .clamp(84.0, 200.0);
                         ui.horizontal(|ui| {
-                            self.week_strip(ui, &days);
-                            ui.add_space(space::L);
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = space::XXS;
-                                if runs == 0 {
-                                    widgets::text(
-                                        ui,
-                                        copy::dash::WEEK_NONE,
-                                        Type::Small,
-                                        t.text_muted,
-                                    );
-                                } else {
-                                    widgets::text(
-                                        ui,
-                                        format::bytes(uploaded),
-                                        Type::H2,
-                                        t.text_primary,
-                                    );
-                                    widgets::text(
-                                        ui,
-                                        copy::dash_week_summary(runs, failed),
-                                        Type::Small,
-                                        t.text_muted,
-                                    );
-                                }
-                            });
+                            self.week_strip(ui, &days, strip);
+                            if totals > 0.0 {
+                                ui.add_space(space::L);
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(totals, 44.0),
+                                    Layout::top_down(Align::Min),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing.y = space::XXS;
+                                        if runs == 0 {
+                                            widgets::elided(
+                                                ui,
+                                                copy::dash::WEEK_NONE,
+                                                Type::Small,
+                                                t.text_muted,
+                                                totals,
+                                                false,
+                                            );
+                                        } else {
+                                            widgets::elided(
+                                                ui,
+                                                &format::bytes(uploaded),
+                                                Type::H2,
+                                                t.text_primary,
+                                                totals,
+                                                false,
+                                            );
+                                            widgets::elided(
+                                                ui,
+                                                &copy::dash_week_summary(runs, failed),
+                                                Type::Small,
+                                                t.text_muted,
+                                                totals,
+                                                false,
+                                            );
+                                        }
+                                    },
+                                );
+                            }
                         });
                     });
                 },
@@ -362,16 +381,18 @@ impl App {
         }
     }
 
-    fn week_strip(&mut self, ui: &mut Ui, days: &[crate::gui::data::DayOutcome]) {
+    fn week_strip(&mut self, ui: &mut Ui, days: &[crate::gui::data::DayOutcome], width: f32) {
         let t = theme::tokens(ui.ctx());
-        let column = 24.0;
+        let count = days.len().max(1) as f32;
+        let gap = 4.0;
+        let column = ((width - gap * (count - 1.0)) / count).clamp(8.0, 24.0);
         let (rect, _) = ui.allocate_exact_size(
-            Vec2::new(column * days.len() as f32 + 4.0 * (days.len() as f32 - 1.0), 44.0),
+            Vec2::new(column * count + gap * (count - 1.0), 44.0),
             Sense::hover(),
         );
         let max = days.iter().map(|d| d.total()).max().unwrap_or(0).max(1) as f32;
         for (index, day) in days.iter().enumerate() {
-            let x = rect.left() + index as f32 * (column + 4.0);
+            let x = rect.left() + index as f32 * (column + gap);
             let bar = Rect::from_min_size(egui::Pos2::new(x, rect.top()), Vec2::new(column, 28.0));
             let response = ui.interact(
                 bar,
@@ -500,11 +521,13 @@ impl App {
             ui.add_space(space::XS);
             let fraction = run.overall_fraction();
             let files_done: u64 = run.destinations.iter().map(|d| d.progress.files_processed).sum();
+            // Summed, not maxed: the same source is written to every
+            // destination, so `250,800 of 120,000 files` is the shape of a lie.
             let files_total: u64 =
-                run.destinations.iter().filter_map(|d| d.progress.files_total).max().unwrap_or(0);
+                run.destinations.iter().filter_map(|d| d.progress.files_total).sum();
             let bytes_done: u64 = run.destinations.iter().map(|d| d.progress.bytes_processed).sum();
             let bytes_total: u64 =
-                run.destinations.iter().filter_map(|d| d.progress.bytes_total).max().unwrap_or(0);
+                run.destinations.iter().filter_map(|d| d.progress.bytes_total).sum();
             let rate: f64 = run.destinations.iter().map(|d| d.progress.bytes_per_second).sum();
             let skipped: u64 = run.destinations.iter().map(|d| d.progress.errors_ignored).sum();
             let fill = if skipped > 0 { t.progress_fill_warn } else { t.progress_fill };

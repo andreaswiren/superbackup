@@ -18,7 +18,7 @@ use crate::gui::modals::{self, Modal};
 use crate::gui::nav::Route;
 use crate::gui::screens::job_editor::destination_location;
 use crate::gui::theme::{self, size, space, Type};
-use crate::gui::viewmodel::{self, DestinationStatus};
+use crate::gui::viewmodel::{self, ColumnSpec, DestinationStatus};
 use crate::gui::widgets::{self, Button};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +76,17 @@ const KIND_FILTERS: [&str; 5] = [
     copy::badge::DISABLED,
 ];
 
+/// `UX_SPEC.md` §8.1. Location is the remainder column; the rest drop in the
+/// specification's order: size, then last verified, then used by.
+const DESTINATION_COLUMNS: [ColumnSpec; 6] = [
+    ColumnSpec::keep("kind", 36.0),
+    ColumnSpec::keep("name", 180.0),
+    ColumnSpec::droppable("used_by", 84.0, 3),
+    ColumnSpec::droppable("verified", 104.0, 2),
+    ColumnSpec::keep("status", 104.0),
+    ColumnSpec::keep("actions", 104.0),
+];
+
 impl App {
     pub(crate) fn destinations_actions(&mut self, ui: &mut Ui) {
         let mut new_destination = false;
@@ -84,7 +95,15 @@ impl App {
         }
         let options: Vec<String> = KIND_FILTERS.iter().map(|s| s.to_string()).collect();
         let mut index = self.screens.destinations.kind_filter.unwrap_or(0);
-        if widgets::combo(ui, "dest-filter", &mut index, &options, 160.0, true) {
+        if widgets::combo_labelled(
+            ui,
+            "dest-filter",
+            Some(copy::col::STATUS),
+            &mut index,
+            &options,
+            190.0,
+            true,
+        ) {
             self.screens.destinations.kind_filter = (index > 0).then_some(index);
         }
         widgets::Field::new()
@@ -135,7 +154,13 @@ impl App {
             .cloned()
             .collect();
 
-        let narrow = ui.available_width() < 840.0;
+        let shown = viewmodel::fit_columns(
+            ui.available_width(),
+            200.0,
+            ui.spacing().item_spacing.x,
+            &DESTINATION_COLUMNS,
+        );
+        let has = |key: &str| shown.iter().any(|k| *k == key);
         let mut open: Option<Uuid> = None;
         let mut verify: Option<Uuid> = None;
         let mut menu: Option<(&'static str, Uuid)> = None;
@@ -145,15 +170,17 @@ impl App {
                 .id_salt("destinations")
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(36.0))
-                .column(egui_extras::Column::exact(200.0))
+                .column(egui_extras::Column::exact(180.0))
                 .column(egui_extras::Column::remainder().at_least(200.0));
-            if !narrow {
-                builder = builder.column(egui_extras::Column::exact(90.0));
-                builder = builder.column(egui_extras::Column::exact(120.0));
+            if has("used_by") {
+                builder = builder.column(egui_extras::Column::exact(84.0));
+            }
+            if has("verified") {
+                builder = builder.column(egui_extras::Column::exact(104.0));
             }
             builder = builder
-                .column(egui_extras::Column::exact(100.0))
-                .column(egui_extras::Column::exact(120.0));
+                .column(egui_extras::Column::exact(104.0))
+                .column(egui_extras::Column::exact(104.0));
 
             builder
                 .header(size::TABLE_HEADER_H, |mut header| {
@@ -166,10 +193,12 @@ impl App {
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::LOCATION, None);
                     });
-                    if !narrow {
+                    if has("used_by") {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::USED_BY, None);
                         });
+                    }
+                    if has("verified") {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::LAST_VERIFIED, None);
                         });
@@ -208,7 +237,7 @@ impl App {
                                     &destination.name,
                                     Type::BodyStrong,
                                     theme::alpha(t.text_primary, dim),
-                                    if destination.auto_discovered { 160.0 } else { 186.0 },
+                                    if destination.auto_discovered { 140.0 } else { 166.0 },
                                     false,
                                 );
                                 if destination.auto_discovered {
@@ -231,7 +260,7 @@ impl App {
                                 false,
                             );
                         });
-                        if !narrow {
+                        if has("used_by") {
                             row.col(|ui| {
                                 let jobs = self.data.jobs_using(&destination.id);
                                 let response = widgets::count_pill(
@@ -244,6 +273,8 @@ impl App {
                                     response.on_hover_text(names.join("\n"));
                                 }
                             });
+                        }
+                        if has("verified") {
                             row.col(|ui| match destination.last_verified_at {
                                 Some(at) => {
                                     widgets::text(

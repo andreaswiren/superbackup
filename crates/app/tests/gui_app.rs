@@ -57,6 +57,9 @@ fn seeded_app() -> (App, egui::Context, Arc<MockHandler>) {
     let ctx = egui::Context::default();
     let mut app = App::new_with_daemon(&ctx, Arc::new(MockDaemon::new(handler.clone())));
     fixtures::seed(&mut app.data);
+    // Keep the fixture machine on screen: without this the mock's own empty
+    // replies would land on the first frame and replace it.
+    app.preview_mode();
     (app, ctx, handler)
 }
 
@@ -268,3 +271,44 @@ fn screenshots() {
     gui::render::write_gallery(std::path::Path::new("../../design/screenshots"))
         .expect("the gallery could not be written");
 }
+
+/// Nothing may be laid out past the window's own edge.
+///
+/// egui does not clip a child that allocates more than its parent offered, so
+/// a column sized to a fixed number rather than to the space available silently
+/// slides under the scroll bar. This catches that on every screen at both
+/// supported window sizes.
+#[test]
+fn no_screen_draws_outside_the_window() {
+    for size in [egui::vec2(1100.0, 720.0), egui::vec2(900.0, 600.0)] {
+        let (mut app, ctx, _handler) = seeded_app();
+        for route in gui::nav::Route::every() {
+            app.go(route.clone());
+            for _ in 0..2 {
+                frame(&mut app, &ctx, size);
+            }
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                },
+                |ctx| app.frame(ctx),
+            );
+            let widest = ctx
+                .tessellate(output.shapes, 1.0)
+                .iter()
+                .filter_map(|p| match &p.primitive {
+                    egui::epaint::Primitive::Mesh(mesh) => Some(
+                        mesh.vertices.iter().map(|v| v.pos.x).fold(0.0f32, f32::max),
+                    ),
+                    _ => None,
+                })
+                .fold(0.0f32, f32::max);
+            assert!(
+                widest <= size.x + 1.0,
+                "{route:?} at {size:?} laid out to x={widest:.0}, past the window edge"
+            );
+        }
+    }
+}
+

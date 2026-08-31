@@ -47,11 +47,19 @@
 //!
 //! ## 3. One job may mix repository and mirror destinations
 //!
-//! The runner hands destinations to the executor one at a time, so the
-//! dispatch is per destination rather than per job. A job that writes to a
+//! Dispatch is per destination rather than per job, so a job that writes to a
 //! kopia repository *and* a plain folder mirror is normal, and one of the two
-//! failing must not stop the other — which is the runner's job, and works
-//! because both branches return the same `ExecutorResult`.
+//! failing does not stop the other.
+//!
+//! **Where that dispatch happens is worth knowing.**
+//! [`engine::Runner::attempt_destination`](superbackup_core::engine::Runner)
+//! already branches on `DestinationKind::is_repository()` and drives
+//! [`MirrorEngine`] itself for the mirror half; the executor is only asked
+//! about repository destinations. The mirror branch below is therefore a
+//! safety net for any other caller — the dry-run runner, a future maintenance
+//! pass — rather than the path a scheduled backup takes. It is kept, and kept
+//! correct, because an executor that answered "not a repository" to a mirror
+//! would be a trap for the next person to call it directly.
 //!
 //! ## 4. Progress is forwarded, not polled
 //!
@@ -450,7 +458,6 @@ impl KopiaExecutor {
 
     /// The mirror branch: no repository, no kopia, no secrets.
     async fn snapshot_mirror(&self, request: SnapshotRequest) -> ExecutorResult<SnapshotOutcome> {
-        tracing::info!(dry_run = self.dry_run, "XDEBUG snapshot_mirror");
         if self.dry_run {
             // A mirror's dry run is honest about doing nothing rather than
             // copying and calling it a rehearsal.

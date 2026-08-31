@@ -94,8 +94,10 @@ fn recover_write<T>(m: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
 pub struct PendingMigration {
     /// Destinations still on the old repository password.
     pub destinations: BTreeSet<Uuid>,
-    /// The last report written to disk, for the status line and for a resume
-    /// after a restart.
+    /// The last report written to disk. Carried so a status line can name
+    /// what is still pending without re-reading the file, and so a resume
+    /// after a restart starts from the same picture.
+    #[allow(dead_code)]
     pub report: super::rekey::StoredReport,
 }
 
@@ -109,6 +111,13 @@ impl PendingMigration {
 #[derive(Debug)]
 pub struct Runtime {
     pub paths: Paths,
+    /// Whether this instance shows a tray.
+    ///
+    /// Carried so that anything holding a `Runtime` can tell whether there is
+    /// a user in front of it — the difference between raising a toast and
+    /// writing a log line. `daemon::run` decides the notifier from it before
+    /// the `Runtime` exists, so nothing inside reads it yet.
+    #[allow(dead_code)]
     pub surface: Surface,
     /// Configuration and vault. `tokio` mutex: its critical sections write
     /// files.
@@ -270,6 +279,11 @@ impl Runtime {
         let _ = self.shutdown.send(ShutdownRequest { stop_runs });
     }
 
+    /// Whether shutdown has already been requested.
+    ///
+    /// Answerable without a subscription, for anything that wants to skip
+    /// work rather than start it during teardown.
+    #[allow(dead_code)]
     pub fn is_shutting_down(&self) -> bool {
         self.shutting_down.load(Ordering::SeqCst)
     }
@@ -314,11 +328,6 @@ impl Runtime {
         if self.stream.send(item).is_err() {
             self.lost_events.fetch_add(1, Ordering::Relaxed);
         }
-    }
-
-    /// Items dropped because no client was subscribed. Diagnostics only.
-    pub fn undelivered(&self) -> u64 {
-        self.lost_events.load(Ordering::Relaxed)
     }
 
     pub fn subscribe_stream(&self, _topics: &[Topic]) -> broadcast::Receiver<StreamItem> {
@@ -595,10 +604,6 @@ impl Runtime {
     // ------------------------------------------------------------------
     // Status snapshot
     // ------------------------------------------------------------------
-
-    pub fn started_at(&self) -> DateTime<Utc> {
-        self.started_at
-    }
 
     pub fn uptime_seconds(&self) -> u64 {
         (Utc::now() - self.started_at).num_seconds().max(0) as u64

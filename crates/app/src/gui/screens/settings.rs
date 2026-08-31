@@ -89,10 +89,7 @@ impl App {
             widgets::vertical_rule(ui, ui.available_height());
             ui.add_space(space::H3);
             ui.vertical(|ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt(("settings", section))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                widgets::scroll_area(ui, ("settings", section), |ui| {
                         match section {
                             SettingsSection::General => self.settings_general(ui),
                             SettingsSection::Scheduling => self.settings_scheduling(ui),
@@ -384,10 +381,13 @@ impl App {
                 egui_extras::TableBuilder::new(ui)
                     .id_salt("upcoming")
                     .cell_layout(Layout::left_to_right(Align::Center))
-                    .column(egui_extras::Column::exact(180.0))
-                    .column(egui_extras::Column::remainder().at_least(140.0))
-                    .column(egui_extras::Column::exact(120.0))
-                    .column(egui_extras::Column::exact(140.0))
+                    // The settings pane is 200px narrower than a full screen,
+                    // so these are sized for it rather than for the content
+                    // column the other tables live in.
+                    .column(egui_extras::Column::exact(150.0))
+                    .column(egui_extras::Column::remainder().at_least(120.0))
+                    .column(egui_extras::Column::exact(80.0))
+                    .column(egui_extras::Column::exact(110.0))
                     .header(crate::gui::theme::size::TABLE_HEADER_H, |mut header| {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::WHEN, None);
@@ -957,7 +957,7 @@ impl App {
             changed = true;
         }
         if !automatic {
-            ui.horizontal(|ui| {
+            ui.horizontal_top(|ui| {
                 ui.add_space(28.0);
                 widgets::Field::new()
                     .width(400.0)

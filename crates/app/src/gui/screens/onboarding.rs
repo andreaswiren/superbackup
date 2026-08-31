@@ -110,10 +110,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     );
     content.add_space(space::H2);
 
-    egui::ScrollArea::vertical()
-        .id_salt(("onboarding", state.step))
-        .auto_shrink([false, false])
-        .show(&mut content, |ui| match state.step {
+    widgets::scroll_area(&mut content, ("onboarding", state.step), |ui| match state.step {
             OnboardingStep::Welcome => welcome(ui),
             OnboardingStep::Passphrase => passphrase(ui, &mut state),
             OnboardingStep::NoRecovery => no_recovery(ui, &mut state, app),

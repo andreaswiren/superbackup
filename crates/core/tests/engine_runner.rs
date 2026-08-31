@@ -49,6 +49,7 @@ fn harness_with(retry: RetryPolicy) -> Harness {
 
 fn request(job: Job, destinations: Vec<Destination>, cancel: CancelToken) -> RunRequest {
     RunRequest {
+        dry_run: false,
         run_id: Uuid::new_v4(),
         job: Arc::new(job),
         destinations: destinations.into_iter().map(Arc::new).collect(),

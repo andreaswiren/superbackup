@@ -48,7 +48,7 @@ impl App {
         let mut copy_summary = false;
         let mut browse: Option<Uuid> = None;
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        widgets::scroll_area(ui, "run-detail", |ui| {
             // Summary card.
             widgets::card(ui, |ui| {
                 ui.set_width(ui.available_width());

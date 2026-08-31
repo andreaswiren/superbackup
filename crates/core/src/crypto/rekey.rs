@@ -74,7 +74,7 @@ use super::vault::Vault;
 use crate::error::{Error, Result};
 use crate::model::{Config, DestinationKind, PassphraseSource};
 use crate::secret::Secret;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -82,7 +82,7 @@ use uuid::Uuid;
 /// which therefore has to be re-passworded when the master passphrase changes.
 ///
 /// Everything here is non-secret and safe to render in a confirmation dialog.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerivedRepository {
     pub destination_id: Uuid,
     pub destination_name: String,
@@ -184,7 +184,7 @@ pub enum MigrationState {
 }
 
 /// One repository's slot in the migration, with no secret material.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepositoryMigration {
     pub destination_id: Uuid,
     pub destination_name: String,
@@ -220,7 +220,7 @@ pub struct RepositoryCredentials {
 /// write it into its own state file and pick the migration back up after a
 /// restart, at which point [`Rekey::resume`] rebuilds the secret half from the
 /// two vault files and the two passphrases.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationReport {
     pub vault_id: Uuid,
     pub total: usize,

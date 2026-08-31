@@ -166,6 +166,13 @@ impl Item {
     }
 
     /// Flatten for assertions: every label in the menu, submenus included.
+    ///
+    /// This and [`Item::find`] are the plan's inspection API. They exist so
+    /// that `UX_SPEC.md` §14's rules — "Back up now is disabled, not removed",
+    /// "Stop all appears only with two or more runs" — can be asserted without
+    /// a windowing system, which is the only way those rules stay true. The
+    /// daemon binary itself never calls them.
+    #[allow(dead_code)]
     pub fn labels(items: &[Item]) -> Vec<String> {
         let mut out = Vec::new();
         for item in items {
@@ -182,6 +189,7 @@ impl Item {
     }
 
     /// Find an item by the action it performs, submenus included.
+    #[allow(dead_code)]
     pub fn find(items: &[Item], action: &Action) -> Option<Item> {
         for item in items {
             match item {
@@ -199,6 +207,7 @@ impl Item {
         None
     }
 
+    #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         match self {
             Item::Entry { enabled, .. }

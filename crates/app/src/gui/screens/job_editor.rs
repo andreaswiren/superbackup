@@ -286,7 +286,7 @@ impl App {
             }
         }
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        widgets::scroll_area(ui, "job-editor", |ui| {
             match tab {
                 0 => self.job_tab_sources(ui, &report),
                 1 => self.job_tab_destinations(ui, &report),

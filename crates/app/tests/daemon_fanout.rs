@@ -176,20 +176,34 @@ async fn stopping_a_run_leaves_no_kopia_behind() {
         return;
     }
 
+    let mut destination_id = None;
     let mut harness = Harness::start("cancel", |config, home| {
         let sources = seed_tree(home, 2);
         let destination = repository("slow disk", home.join("repo"));
+        destination_id = Some(destination.id);
         let backup = job("big", sources, vec![destination.id]);
         config.destinations.push(destination);
         config.jobs.push(backup);
     })
     .await;
+    let destination_id = destination_id.expect("id");
 
     let client = harness.client().await;
     client
         .unlock(SecretString::from_string(PASSPHRASE.to_string()))
         .await
         .expect("unlock");
+    // The repository has to exist before a run can reach kopia at all: that
+    // is what puts its passphrase in the vault.
+    harness
+        .call(
+            &client,
+            Request::DestinationRepoCreate {
+                destination: destination_id.to_string(),
+                encryption: None,
+            },
+        )
+        .await;
 
     // From here on, every kopia invocation hangs until it is killed.
     let heartbeat = harness.kopia_dir.join("heartbeat.txt");
@@ -266,20 +280,32 @@ async fn shutting_down_mid_backup_stops_kopia_first() {
         return;
     }
 
+    let mut destination_id = None;
     let mut harness = Harness::start("shutdown-mid", |config, home| {
         let sources = seed_tree(home, 2);
         let destination = repository("disk", home.join("repo"));
+        destination_id = Some(destination.id);
         let backup = job("long", sources, vec![destination.id]);
         config.destinations.push(destination);
         config.jobs.push(backup);
     })
     .await;
+    let destination_id = destination_id.expect("id");
 
     let client = harness.client().await;
     client
         .unlock(SecretString::from_string(PASSPHRASE.to_string()))
         .await
         .expect("unlock");
+    harness
+        .call(
+            &client,
+            Request::DestinationRepoCreate {
+                destination: destination_id.to_string(),
+                encryption: None,
+            },
+        )
+        .await;
 
     let heartbeat = harness.kopia_dir.join("heartbeat.txt");
     let _ = std::fs::remove_file(&heartbeat);

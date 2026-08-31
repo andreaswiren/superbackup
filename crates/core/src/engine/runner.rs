@@ -71,6 +71,15 @@ pub struct RunRequest {
     /// This run's own token — a child of the engine token, so a shutdown stops
     /// it but stopping it touches no other run.
     pub cancel: CancelToken,
+    /// Report what would happen without writing anything.
+    ///
+    /// This has to live on the request rather than being a property of the
+    /// executor. The runner dispatches on [`DestinationKind::is_repository`]
+    /// and drives [`MirrorEngine`] directly for mirrors, so a caller that
+    /// swapped in a rehearsal executor still had its mirrors copied for real —
+    /// a "dry run" that wrote gigabytes. The mirror engine is told here
+    /// instead, so the guarantee holds for every destination kind.
+    pub dry_run: bool,
 }
 
 /// Executes runs. One instance is shared by the scheduler and by every manual
@@ -368,6 +377,7 @@ impl Runner {
         let executor = Arc::clone(&self.executor);
         let mirror = self.mirror.clone();
         let retention = effective_retention(&job, &destination);
+        let dry_run = request.dry_run;
 
         let mut handle = tokio::spawn(async move {
             if destination.kind.is_repository() {
@@ -392,6 +402,7 @@ impl Runner {
                         progress: sink,
                         cancel,
                         attempt,
+                        dry_run,
                     })
                     .await?;
                 outcome.warnings.extend(prepared.warnings);
@@ -402,7 +413,8 @@ impl Runner {
                 // load-bearing enough that switching it on has to be a
                 // deliberate act at a layer that can also warn the user, not a
                 // default inherited from an exclusion set.
-                let options = MirrorOptions::from_exclusions(&job.exclusions);
+                let mut options = MirrorOptions::from_exclusions(&job.exclusions);
+                options.dry_run = dry_run;
                 mirror
                     .run(MirrorRequest {
                         run_id,

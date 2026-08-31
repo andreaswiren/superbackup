@@ -681,3 +681,85 @@ async fn the_mirror_clock_is_the_injected_one() {
     assert_eq!(outcome.progress.bytes_per_second, 0.0);
     assert_eq!(clock.now_utc().to_rfc3339(), "2025-01-01T00:00:00+00:00");
 }
+
+/// A dry run must not create, write, or delete anything at all.
+///
+/// The runner dispatches on `DestinationKind::is_repository()` and drives the
+/// mirror engine directly, so swapping in a rehearsal executor never reached a
+/// mirror — a "dry run" against a mirror destination copied every byte for
+/// real. That is the one destination kind where the mistake writes gigabytes to
+/// the user's disk, so the guarantee is pinned here.
+#[tokio::test]
+async fn a_dry_run_writes_absolutely_nothing() {
+    let scratch = Scratch::new("mirror-dryrun");
+    let source = scratch.root.join("src");
+    let mirror_root = scratch.root.join("mirror");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("a.txt"), vec![b'a'; 4096]).unwrap();
+    fs::write(source.join("nested/b.bin"), vec![b'b'; 16_384]).unwrap();
+
+    let mut options = MirrorOptions::default();
+    options.dry_run = true;
+
+    let cancel = CancelToken::new();
+    let (req, _rx) =
+        request(&source, &mirror_root, ExclusionSet::default(), options, cancel.clone());
+    let engine = MirrorEngine::new(Arc::new(SystemClock::new()));
+    let outcome = engine.run(req).await.expect("a dry run should succeed");
+
+    // Nothing on disk. Not even the mirror root, because on a removable drive
+    // a stray empty folder is the difference between "nothing happened" and
+    // "something happened".
+    assert!(
+        !mirror_root.exists(),
+        "the dry run created {} — it must not touch the filesystem",
+        mirror_root.display()
+    );
+
+    // But it must still report what it *would* have done, or the rehearsal is
+    // useless.
+    assert!(
+        outcome.progress.files_processed >= 2,
+        "a dry run must still count the files it would copy, saw {}",
+        outcome.progress.files_processed
+    );
+    assert!(
+        outcome.progress.bytes_processed >= 20_480,
+        "a dry run must still total the bytes it would copy, saw {}",
+        outcome.progress.bytes_processed
+    );
+}
+
+/// The same guarantee when the destination already exists and pruning is on:
+/// a rehearsal must not delete a file whose source has gone.
+#[tokio::test]
+async fn a_dry_run_never_prunes() {
+    let scratch = Scratch::new("mirror-dryrun-prune");
+    let source = scratch.root.join("src");
+    let mirror_root = scratch.root.join("mirror");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("kept.txt"), b"kept").unwrap();
+
+    // A file in the mirror whose source has disappeared: the prune candidate.
+    let job_dir = mirror_root.join("mirror");
+    fs::create_dir_all(&job_dir).unwrap();
+    let orphan = job_dir.join("gone.txt");
+    fs::write(&orphan, b"precious").unwrap();
+
+    let mut options = MirrorOptions::default();
+    options.delete_extraneous = true;
+    options.dry_run = true;
+
+    let cancel = CancelToken::new();
+    let (req, _rx) =
+        request(&source, &mirror_root, ExclusionSet::default(), options, cancel.clone());
+    let engine = MirrorEngine::new(Arc::new(SystemClock::new()));
+    engine.run(req).await.expect("a dry run should succeed");
+
+    assert!(
+        orphan.exists(),
+        "the dry run deleted {} — a rehearsal must never destroy data",
+        orphan.display()
+    );
+    assert_eq!(fs::read(&orphan).unwrap(), b"precious");
+}

@@ -47,6 +47,9 @@ pub struct State {
     pub secret_key: String,
     pub revealed: bool,
     pub own_credentials: bool,
+    /// Validation is inline and on blur: a form nobody has filled in yet is not
+    /// a form full of mistakes. Set once the user tries to save.
+    pub show_errors: bool,
     pub pin_offline: bool,
     pub mirror_prune: bool,
 }
@@ -80,6 +83,9 @@ impl State {
             Some(d) => {
                 self.draft = Some(d.clone());
                 self.original = Some(d.clone());
+                // Stored values are real, so a problem with them is worth
+                // showing straight away.
+                self.show_errors = true;
                 self.path_input = d
                     .kind
                     .local_path()
@@ -107,6 +113,7 @@ impl State {
                 };
                 self.draft = Some(fresh);
                 self.original = None;
+                self.show_errors = false;
                 self.path_input.clear();
                 self.bucket_input.clear();
                 self.prefix_input = default_s3_prefix(machine_slug);
@@ -138,10 +145,13 @@ impl App {
         let slug = self.data.machine_slug().to_string();
         self.screens.destination_editor.load(existing.as_ref(), &slug);
 
-        let report = self.destination_report();
+        let mut report = self.destination_report();
+        if !self.screens.destination_editor.show_errors {
+            report.problems.clear();
+        }
         let creating = existing.is_none();
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        widgets::scroll_area(ui, "destination-editor", |ui| {
             self.destination_common(ui, &report, creating);
 
             let kind_index = self
@@ -306,7 +316,9 @@ impl App {
         }
 
         let mut browse = false;
-        ui.horizontal(|ui| {
+        // `horizontal_top`, not `horizontal`: a centred row pushes a field that
+        // carries helper or error text down, away from its own label.
+        ui.horizontal_top(|ui| {
             widgets::Field::new()
                 .width(520.0)
                 .mono()
@@ -623,7 +635,7 @@ impl App {
         ui.add_space(space::L);
 
         let mut browse = false;
-        ui.horizontal(|ui| {
+        ui.horizontal_top(|ui| {
             widgets::Field::new()
                 .width(520.0)
                 .mono()
@@ -1029,6 +1041,10 @@ impl App {
         });
 
         if save {
+            self.screens.destination_editor.show_errors = true;
+            if !report.ok() {
+                return;
+            }
             if let Some(draft) = self.screens.destination_editor.draft.clone() {
                 let name = draft.name.clone();
                 let request = if existing.is_some() {

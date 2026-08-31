@@ -692,7 +692,7 @@ mod tests {
         use superbackup_core::model::S3Credentials;
         let provider_id = Uuid::new_v4();
         let mut d = data(true);
-        let mut make = |override_creds: bool, name: &str| Destination {
+        let make = |override_creds: bool, name: &str| Destination {
             id: Uuid::new_v4(),
             name: name.into(),
             kind: DestinationKind::S3 {

@@ -9,11 +9,12 @@
 //!
 //! ## Two things the tests have to work around, and why
 //!
-//! **The IPC endpoint is a fixed name on Windows.**
-//! `Paths::ipc_endpoint()` returns `\\.\pipe\superbackup` whatever `--home`
-//! says, so two daemons under two private roots still collide — and so would a
-//! test and the developer's own running tray. `daemon::Hooks::endpoint`
-//! exists for that and is used here; production never sets it.
+//! **The IPC endpoint is chosen explicitly.** `Paths::ipc_endpoint()` derives
+//! its name from the configuration root, so private homes already do not
+//! collide — but a test must not depend on a core detail it does not own, and
+//! must never be reachable by the developer's own tray. `daemon::Hooks::endpoint`
+//! pins it to a name unique to this process and this test; production never
+//! sets it.
 //!
 //! **kopia is a real subprocess.** These tests use the scriptable fake from
 //! `crates/core/tests/kopia_support`, which `rustc` compiles at test time, and

@@ -18,7 +18,7 @@ use crate::gui::icons::Icon;
 use crate::gui::modals::{self, Modal};
 use crate::gui::nav::Route;
 use crate::gui::theme::{self, size, space, Type};
-use crate::gui::viewmodel::{self, CardState, GroupBy, JobFilter, SortKey};
+use crate::gui::viewmodel::{self, CardState, ColumnSpec, GroupBy, JobFilter, SortKey};
 use crate::gui::widgets::{self, Button};
 
 pub struct State {
@@ -44,6 +44,20 @@ impl Default for State {
     }
 }
 
+/// `UX_SPEC.md` §6.1. The widths are trimmed from the specification's own
+/// numbers, which sum wider than the content column they sit in; the drop
+/// order is the specification's: uploaded, then next run, then folders.
+const JOB_COLUMNS: [ColumnSpec; 8] = [
+    ColumnSpec::keep("status", 32.0),
+    ColumnSpec::keep("name", 184.0),
+    ColumnSpec::droppable("sources", 52.0, 4),
+    ColumnSpec::keep("destinations", 124.0),
+    ColumnSpec::keep("schedule", 132.0),
+    ColumnSpec::keep("last", 104.0),
+    ColumnSpec::droppable("next", 104.0, 3),
+    ColumnSpec::droppable("uploaded", 84.0, 1),
+];
+
 impl App {
     pub(crate) fn jobs_actions(&mut self, ui: &mut Ui) {
         let mut new_job = false;
@@ -55,14 +69,30 @@ impl App {
             JobFilter::ALL.iter().map(|f| f.title().to_string()).collect();
         let mut filter_index =
             JobFilter::ALL.iter().position(|f| *f == self.screens.jobs.filter).unwrap_or(0);
-        if widgets::combo(ui, "jobs-filter", &mut filter_index, &filters, 150.0, true) {
+        if widgets::combo_labelled(
+            ui,
+            "jobs-filter",
+            Some(copy::jobs::FILTER),
+            &mut filter_index,
+            &filters,
+            170.0,
+            true,
+        ) {
             self.screens.jobs.filter = JobFilter::ALL[filter_index];
         }
 
         let groups: Vec<String> = GroupBy::ALL.iter().map(|g| g.title().to_string()).collect();
         let mut group_index =
             GroupBy::ALL.iter().position(|g| *g == self.screens.jobs.group).unwrap_or(0);
-        if widgets::combo(ui, "jobs-group", &mut group_index, &groups, 130.0, true) {
+        if widgets::combo_labelled(
+            ui,
+            "jobs-group",
+            Some(copy::jobs::GROUP_BY),
+            &mut group_index,
+            &groups,
+            170.0,
+            true,
+        ) {
             self.screens.jobs.group = GroupBy::ALL[group_index];
         }
 
@@ -148,9 +178,15 @@ impl App {
         let mut run: Option<Job> = None;
         let mut menu: Option<(&'static str, Uuid)> = None;
         let mut sort_click: Option<SortKey> = None;
-        let narrow = ui.available_width() < 840.0;
+        let shown = viewmodel::fit_columns(
+            ui.available_width(),
+            92.0,
+            ui.spacing().item_spacing.x,
+            &JOB_COLUMNS,
+        );
+        let has = |key: &str| shown.iter().any(|k| *k == key);
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        widgets::scroll_area(ui, "jobs", |ui| {
             for (heading, rows) in &groups {
                 if grouped {
                     ui.horizontal(|ui| {
@@ -172,21 +208,11 @@ impl App {
                     let mut builder = TableBuilder::new(ui)
                         .id_salt(("jobs", heading))
                         .striped(false)
-                        .cell_layout(Layout::left_to_right(Align::Center))
-                        .column(Column::exact(32.0))
-                        .column(Column::exact(220.0))
-                        .column(Column::exact(60.0));
-                    if !narrow {
-                        builder = builder.column(Column::exact(150.0));
+                        .cell_layout(Layout::left_to_right(Align::Center));
+                    for spec in JOB_COLUMNS.iter().filter(|c| has(c.key)) {
+                        builder = builder.column(Column::exact(spec.width));
                     }
-                    builder = builder
-                        .column(Column::exact(130.0))
-                        .column(Column::exact(120.0));
-                    if !narrow {
-                        builder = builder.column(Column::exact(120.0));
-                        builder = builder.column(Column::exact(90.0));
-                    }
-                    builder = builder.column(Column::remainder().at_least(76.0));
+                    builder = builder.column(Column::remainder().at_least(92.0));
 
                     builder
                         .header(size::TABLE_HEADER_H, |mut header| {
@@ -206,10 +232,12 @@ impl App {
                                     sort_click = Some(SortKey::Name);
                                 }
                             });
-                            header.col(|ui| {
-                                widgets::table_header(ui, copy::col::SOURCES, None);
-                            });
-                            if !narrow {
+                            if has("sources") {
+                                header.col(|ui| {
+                                    widgets::table_header(ui, copy::col::SOURCES, None);
+                                });
+                            }
+                            if has("destinations") {
                                 header.col(|ui| {
                                     widgets::table_header(ui, copy::col::DESTINATIONS, None);
                                 });
@@ -229,7 +257,7 @@ impl App {
                                     sort_click = Some(SortKey::LastRun);
                                 }
                             });
-                            if !narrow {
+                            if has("next") {
                                 header.col(|ui| {
                                     if widgets::table_header(
                                         ui,
@@ -242,6 +270,8 @@ impl App {
                                         sort_click = Some(SortKey::NextRun);
                                     }
                                 });
+                            }
+                            if has("uploaded") {
                                 header.col(|ui| {
                                     widgets::table_header(ui, copy::col::UPLOADED, None);
                                 });
@@ -251,7 +281,15 @@ impl App {
                             });
                         })
                         .body(|body| {
-                            body.rows(size::TABLE_ROW_H, rows.len(), |mut row| {
+                            // 36px rows, 48 when any row carries a description
+                            // — the second line needs room to be legible.
+                            let row_height = if rows.iter().any(|(j, _)| !j.description.is_empty())
+                            {
+                                48.0
+                            } else {
+                                size::TABLE_ROW_H
+                            };
+                            body.rows(row_height, rows.len(), |mut row| {
                                 let index = row.index();
                                 let Some((job, view)) = rows.get(index) else {
                                     return;
@@ -268,12 +306,15 @@ impl App {
                                 row.col(|ui| {
                                     let (rect, response) =
                                         ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-                                    let icon = Icon::for_status(view.status);
-                                    icon.paint(
-                                        ui.painter(),
-                                        rect,
-                                        theme::alpha(t.status_for(view.status).mark, dim),
-                                    );
+                                    let (icon, mark) = if disabled {
+                                        (Icon::Pause, t.neutral.mark)
+                                    } else {
+                                        (
+                                            Icon::for_status(view.status),
+                                            t.status_for(view.status).mark,
+                                        )
+                                    };
+                                    icon.paint(ui.painter(), rect, theme::alpha(mark, dim));
                                     response.on_hover_text(view.badge.clone());
                                 });
                                 row.col(|ui| {
@@ -284,7 +325,7 @@ impl App {
                                             &job.name,
                                             Type::BodyStrong,
                                             theme::alpha(t.text_primary, dim),
-                                            196.0,
+                                            170.0,
                                             false,
                                         );
                                         if !job.description.is_empty() {
@@ -293,29 +334,31 @@ impl App {
                                                 &job.description,
                                                 Type::Small,
                                                 t.text_muted,
-                                                196.0,
+                                                170.0,
                                                 false,
                                             );
                                         }
                                     });
                                 });
-                                row.col(|ui| {
-                                    let response = widgets::text(
-                                        ui,
-                                        format::count(job.sources.len() as u64),
-                                        Type::MonoSmall,
-                                        t.text_secondary,
-                                    );
-                                    let paths: Vec<String> = job
-                                        .sources
-                                        .iter()
-                                        .map(|s| s.path.to_string_lossy().into_owned())
-                                        .collect();
-                                    if !paths.is_empty() {
-                                        response.on_hover_text(paths.join("\n"));
-                                    }
-                                });
-                                if !narrow {
+                                if has("sources") {
+                                    row.col(|ui| {
+                                        let response = widgets::text(
+                                            ui,
+                                            format::count(job.sources.len() as u64),
+                                            Type::MonoSmall,
+                                            t.text_secondary,
+                                        );
+                                        let paths: Vec<String> = job
+                                            .sources
+                                            .iter()
+                                            .map(|s| s.path.to_string_lossy().into_owned())
+                                            .collect();
+                                        if !paths.is_empty() {
+                                            response.on_hover_text(paths.join("\n"));
+                                        }
+                                    });
+                                }
+                                if has("destinations") {
                                     row.col(|ui| {
                                         self.destination_cell(ui, job);
                                     });
@@ -326,7 +369,7 @@ impl App {
                                         &viewmodel::schedule_string(&job.schedule),
                                         Type::Small,
                                         t.text_secondary,
-                                        118.0,
+                                        120.0,
                                         false,
                                     );
                                 });
@@ -340,11 +383,11 @@ impl App {
                                         &text,
                                         Type::Small,
                                         t.text_secondary,
-                                        108.0,
+                                        92.0,
                                         false,
                                     );
                                 });
-                                if !narrow {
+                                if has("next") {
                                     row.col(|ui| {
                                         let text = match summary.next_run {
                                             Some(at) if job.enabled => {
@@ -357,10 +400,12 @@ impl App {
                                             &text,
                                             Type::Small,
                                             t.text_muted,
-                                            108.0,
+                                            92.0,
                                             false,
                                         );
                                     });
+                                }
+                                if has("uploaded") {
                                     row.col(|ui| {
                                         widgets::numeric_cell(
                                             ui,

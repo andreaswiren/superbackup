@@ -138,12 +138,12 @@ pub struct Hooks {
     pub external_stop: Option<tokio::sync::oneshot::Receiver<()>>,
     /// Listen here instead of at [`Paths::ipc_endpoint`].
     ///
-    /// Exists for the integration tests, and it is not a convenience: on
-    /// Windows `ipc_endpoint()` is the fixed pipe name `\\.\pipe\superbackup`
-    /// **whatever `--home` says**, so two daemons under two private roots
-    /// still collide. Without an override, an end-to-end test would either
-    /// fight the developer's own running instance or have to be run one at a
-    /// time. Production never sets it.
+    /// For the integration tests. `ipc_endpoint()` derives its name from the
+    /// configuration root, so private homes already do not collide — but a
+    /// test must not depend on a core detail the daemon does not own, and must
+    /// never be reachable by the developer's own running instance. This pins
+    /// the endpoint to a name unique to one test in one process. Production
+    /// never sets it.
     pub endpoint: Option<String>,
 }
 
@@ -225,14 +225,27 @@ pub async fn run(
         ));
     }
 
-    // 4. A rotation that did not finish leaves destinations suppressed and the
+    // 4. A service can reach less than a tray can, and the user must be told
+    //    at start-up rather than three days later when their OneDrive backup
+    //    has never once run.
+    if paths.service_scope {
+        let config = { runtime.store.lock().await.config().clone() };
+        record_destination_report(
+            &runtime,
+            &config,
+            &platform::service::ServiceAccount::LocalSystem,
+            platform::ServiceScope::System,
+        );
+    }
+
+    // 5. A rotation that did not finish leaves destinations suppressed and the
     //    user told, rather than a schedule full of password failures.
     rekey::restore_after_restart(&runtime).await;
 
-    // 5. kopia, in the background. A failure here must not stop the daemon.
+    // 6. kopia, in the background. A failure here must not stop the daemon.
     let kopia_task = spawn_kopia_setup(Arc::clone(&runtime));
 
-    // 6. The engine.
+    // 7. The engine.
     let clock = Arc::new(SystemClock::new());
     let executor = Arc::new(executor::KopiaExecutor::new(Arc::clone(&runtime), clock.clone()));
     let config = { runtime.store.lock().await.config().clone() };
@@ -245,17 +258,17 @@ pub async fn run(
     runtime.set_scheduler(scheduler.clone());
     lifecycle::spawn_auto_lock(Arc::clone(&runtime));
 
-    // 7. An unattended machine unlocks itself here, when the user asked for it.
+    // 8. An unattended machine unlocks itself here, when the user asked for it.
     lifecycle::try_keychain_unlock(&runtime).await;
 
-    // 8. IPC. Clients may connect from this line onwards.
+    // 9. IPC. Clients may connect from this line onwards.
     let handler = Arc::new(handler::DaemonHandler::new(Arc::clone(&runtime)));
     let endpoint = hooks.endpoint.take().unwrap_or_else(|| paths.ipc_endpoint());
     let server = Server::bind(&endpoint, handler, ServerOptions::default())?;
     let server_handle = server.handle();
     let serving = tokio::spawn(server.serve());
 
-    // 9. The tray, last, because its absence is only cosmetic.
+    // 10. The tray, last, because its absence is only cosmetic.
     let tray = if surface.has_tray() {
         match crate::tray::spawn(Arc::clone(&runtime)) {
             Ok(tray) => Some(tray),
@@ -281,10 +294,10 @@ pub async fn run(
     runtime.publish_status().await;
     tracing::info!("superbackup is ready");
 
-    // 10. Wait.
+    // 11. Wait.
     let stop_runs = wait_for_stop(&runtime, hooks.external_stop.take()).await;
 
-    // 11. Unwind, in reverse.
+    // 12. Unwind, in reverse.
     tracing::info!(stop_runs, "superbackup is shutting down");
     server_handle.shutdown();
     if let Some(tray) = tray {
@@ -485,6 +498,51 @@ fn report_kopia_failure(runtime: &Arc<Runtime>, message: &str) {
              superbackup still works — open Settings → Kopia binary to fix it."
         ),
     ));
+}
+
+/// One line per destination a service running under `account` cannot fully
+/// reach.
+///
+/// Pure, so the honesty is testable: the answer comes from
+/// [`platform::service::destination_support`], which is itself pure, rather
+/// than from a guess made here. A LocalSystem service has no user profile, so
+/// it cannot see OneDrive, cannot see a mapped drive letter, and usually
+/// cannot reach a UNC share — and the user has to be told that at start-up
+/// rather than three days later.
+pub fn destination_report(
+    config: &superbackup_core::model::Config,
+    account: &platform::service::ServiceAccount,
+    scope: platform::ServiceScope,
+) -> Vec<String> {
+    use platform::service::SupportLevel;
+    let mut out = Vec::new();
+    for destination in &config.destinations {
+        match platform::service::destination_support(&destination.kind, account, scope) {
+            SupportLevel::Supported => {}
+            SupportLevel::Degraded { reason } => out.push(format!(
+                "\"{}\" works from the service with a caveat: {reason}",
+                destination.name
+            )),
+            SupportLevel::Unsupported { reason } => out.push(format!(
+                "\"{}\" CANNOT be backed up by this service: {reason}",
+                destination.name
+            )),
+        }
+    }
+    out
+}
+
+/// [`destination_report`] as activity-log events, for a running daemon.
+pub fn record_destination_report(
+    runtime: &Arc<Runtime>,
+    config: &superbackup_core::model::Config,
+    account: &platform::service::ServiceAccount,
+    scope: platform::ServiceScope,
+) {
+    for line in destination_report(config, account, scope) {
+        let severity = if line.contains("CANNOT") { Severity::Error } else { Severity::Warning };
+        runtime.record_event(Event::new(severity, "service.destination_reach", line));
+    }
 }
 
 // ---------------------------------------------------------------------------

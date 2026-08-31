@@ -59,7 +59,7 @@ pub mod menu;
 use std::sync::Arc;
 use std::time::Duration;
 
-use superbackup_core::state::{Health, StatusSnapshot};
+use superbackup_core::state::Health;
 use superbackup_core::{Error, Result};
 use tray_icon::menu::{
     CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu,
@@ -412,6 +412,7 @@ fn apply(state: &mut TrayState, plan: MenuPlan) {
 
 fn set_icon(state: &mut TrayState, health: Health) {
     let key = icons::IconKey::new(health, state.variant, state.frame);
+    tracing::trace!(mark = %key.stem(), "tray icon");
     match state.cache.get(key) {
         Ok(icon) => {
             if let Err(e) = state.icon.set_icon(Some(icon)) {
@@ -817,11 +818,6 @@ fn register_runtime_handle(handle: tokio::runtime::Handle) {
     if let Ok(mut slot) = RUNTIME_HANDLE.lock() {
         *slot = Some(handle);
     }
-}
-
-/// The tray's view of a snapshot, for tests and for the GUI's status strip.
-pub fn health_of(snapshot: &StatusSnapshot) -> Health {
-    snapshot.health
 }
 
 #[cfg(test)]

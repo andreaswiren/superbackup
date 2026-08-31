@@ -142,22 +142,21 @@ impl StoredReport {
             .collect()
     }
 
+    /// True when every repository has moved to the new password.
+    ///
+    /// The live walk asks [`Rekey::is_complete`] instead; this is the same
+    /// question asked of a report read back from disk, which is what a resume
+    /// after a restart needs.
+    #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
         self.pending().is_empty()
     }
 }
 
-/// Persist the report atomically. Failing to write it aborts the rotation
-/// *before* any repository is touched, which is the only point at which
-/// aborting is free.
-pub fn write_report(
-    paths: &superbackup_core::paths::Paths,
-    report: &MigrationReport,
-) -> Result<()> {
-    write_stored(paths, &StoredReport::from_report(report))
-}
-
-/// [`write_report`] for a report that is already in its persisted shape.
+/// Persist the report atomically.
+///
+/// Failing to write it aborts the rotation *before* any repository is
+/// touched, which is the only point at which aborting is free.
 pub fn write_stored(
     paths: &superbackup_core::paths::Paths,
     report: &StoredReport,

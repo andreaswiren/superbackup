@@ -646,6 +646,8 @@ impl Scheduler {
         self.active.insert(job.id, Active { run_id: pending.run_id, cancel: cancel.clone() });
 
         let request = RunRequest {
+            // The scheduler never rehearses; a dry run is always explicit.
+            dry_run: false,
             run_id: pending.run_id,
             job: Arc::new(job),
             destinations,

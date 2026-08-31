@@ -167,10 +167,10 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
                 assert_eq!(d, destination_id);
                 saw_progress = true;
             }
-            superbackup_core::ipc::StreamItem::Event { event } => {
-                if event.kind == "job.finished" {
-                    saw_finish = true;
-                }
+            superbackup_core::ipc::StreamItem::Event { event }
+                if event.kind == "job.finished" =>
+            {
+                saw_finish = true;
             }
             _ => {}
         }
@@ -227,7 +227,7 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
         .find(|argv| argv.iter().any(|a| a == "snapshot") && argv.iter().any(|a| a == "create"))
         .expect("a `snapshot create` invocation");
     assert!(
-        snapshot.iter().any(|a| a == "--progress"),
+        snapshot.iter().any(|a| a.starts_with("--progress")),
         "progress must be forced on, or the bar freezes: {snapshot:?}"
     );
     // The single most important assertion in the file: no argument anywhere
@@ -246,9 +246,16 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
     // ---- status reflects the finished run ---------------------------
     let status = client.status().await.expect("status");
     assert!(status.active_runs.is_empty(), "nothing is still running");
+    // The fake kopia reports one ignored unreadable file, exactly as a real
+    // one does over a source tree with a locked lockfile — so the honest
+    // outcome is "succeeded, with warnings", not a clean success.
     assert_eq!(
         status.jobs.get(&job_id).and_then(|j| j.last_status),
-        Some(RunStatus::Succeeded)
+        Some(RunStatus::SucceededWithWarnings)
+    );
+    assert!(
+        !run.destinations[0].warnings.is_empty(),
+        "an ignored file must reach the run record, not be swallowed"
     );
 
     drop(stream);
@@ -256,27 +263,48 @@ async fn a_job_runs_end_to_end_against_a_real_repository() {
     harness.shutdown().await.expect("clean shutdown");
 }
 
-/// A dry run reports and writes nothing.
+/// A dry run reports and writes nothing — and says what it could not rehearse.
+///
+/// `engine::Runner` drives the mirror engine itself for a `LocalMirror`
+/// destination, so a dry-run executor cannot stop it copying. Rather than
+/// silently write gigabytes during a "rehearsal", the daemon leaves mirrors
+/// out and says so.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_dry_run_reports_without_writing() {
     if !kopia_available() {
         eprintln!("SKIPPED: rustc is unavailable");
         return;
     }
+    let mut repo_id = None;
     let mut harness = Harness::start("dryrun", |config, home| {
         let sources = seed_tree(home, 2);
-        let destination = mirror("plain copy", home.join("mirror"));
-        let backup = job("docs", sources, vec![destination.id]);
-        config.destinations.push(destination);
+        let repo = repository("disk", home.join("repo"));
+        repo_id = Some(repo.id);
+        let copy = mirror("plain copy", home.join("mirror"));
+        let backup = job("docs", sources, vec![repo.id, copy.id]);
+        config.destinations.push(repo);
+        config.destinations.push(copy);
         config.jobs.push(backup);
     })
     .await;
+    let repo_id = repo_id.expect("id");
 
     let client = harness.client().await;
     client
         .unlock(SecretString::from_string(PASSPHRASE.to_string()))
         .await
         .expect("unlock");
+    // A rehearsal still has to connect to a real repository, so it has to
+    // exist — and creating it is what puts its passphrase in the vault.
+    harness
+        .call(
+            &client,
+            Request::DestinationRepoCreate {
+                destination: repo_id.to_string(),
+                encryption: None,
+            },
+        )
+        .await;
 
     let Reply::Started(started) = harness
         .call(&client, Request::JobRun { job: "docs".into(), dry_run: true })
@@ -284,15 +312,20 @@ async fn a_dry_run_reports_without_writing() {
     else {
         panic!("expected a started reply")
     };
-    assert!(started.note.is_some_and(|n| n.to_lowercase().contains("dry run")));
+    let note = started.note.expect("a dry run must explain itself");
+    assert!(note.to_lowercase().contains("dry run"), "{note}");
+    assert!(
+        note.contains("plain copy") && note.contains("cannot be rehearsed"),
+        "the reply must say which destinations were left out: {note}"
+    );
 
     assert!(
-        wait_for_async(Duration::from_secs(20), || {
+        wait_for_async(Duration::from_secs(30), || {
             let client = client.clone();
             async move {
                 matches!(
                     client.request(Request::JobHistory { job: None, limit: 5 }).await,
-                    Ok(Reply::Runs(r)) if !r.runs.is_empty()
+                    Ok(Reply::Runs(r)) if r.runs.iter().any(|run| run.status.is_terminal())
                 )
             }
         })
@@ -300,7 +333,7 @@ async fn a_dry_run_reports_without_writing() {
         "the dry run must be recorded"
     );
 
-    // The mirror root must not have been created, let alone written to.
+    // Nothing was written to the mirror.
     let mirror_root = harness.root.join("mirror");
     let written: Vec<String> = std::fs::read_dir(&mirror_root)
         .into_iter()
@@ -308,7 +341,36 @@ async fn a_dry_run_reports_without_writing() {
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    assert!(written.is_empty(), "a dry run wrote to the destination: {written:?}");
+    assert!(written.is_empty(), "a dry run wrote to a folder mirror: {written:?}");
+
+    // And kopia was asked to *estimate*, never to snapshot.
+    let invocations = harness.invocations();
+    assert!(
+        invocations
+            .iter()
+            .any(|argv| argv.iter().any(|a| a == "estimate")),
+        "a repository rehearsal must ask kopia what it would copy: {invocations:#?}"
+    );
+    assert!(
+        !invocations.iter().any(|argv| argv.iter().any(|a| a == "snapshot")
+            && argv.iter().any(|a| a == "create")),
+        "a dry run must never run `snapshot create`: {invocations:#?}"
+    );
+
+    // The run is recorded, with the dry-run warning attached to it.
+    let Reply::Runs(history) = harness
+        .call(&client, Request::JobHistory { job: None, limit: 5 })
+        .await
+    else {
+        panic!("expected runs")
+    };
+    let run = history.runs.first().expect("one run");
+    assert_eq!(run.destinations.len(), 1, "only the repository was rehearsed");
+    assert!(
+        run.destinations[0].warnings.iter().any(|w| w.starts_with("Dry run:")),
+        "the history must record that nothing was written: {:#?}",
+        run.destinations[0].warnings
+    );
 
     drop(client);
     harness.shutdown().await.expect("clean shutdown");

@@ -42,15 +42,10 @@
 //! install.
 
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use superbackup_core::config::ConfigStore;
-use superbackup_core::model::Config;
 use superbackup_core::paths::Paths;
-use superbackup_core::platform::service::{
-    destination_support, ServiceAccount, ServiceScope, SupportLevel,
-};
-use superbackup_core::state::{Event, Severity};
+use superbackup_core::platform::service::{ServiceAccount, ServiceScope};
 
 use crate::daemon::{self, Surface};
 
@@ -182,57 +177,16 @@ fn announce(paths: &Paths) {
 
 /// One line per destination the service cannot fully reach.
 ///
-/// Pure, so the honesty is testable: the answer comes from
-/// [`platform::service::destination_support`], which is itself pure, rather
-/// than from a guess made here.
-pub fn destination_report(
-    config: &Config,
-    account: &ServiceAccount,
-    scope: ServiceScope,
-) -> Vec<String> {
-    let mut out = Vec::new();
-    for destination in &config.destinations {
-        match destination_support(&destination.kind, account, scope) {
-            SupportLevel::Supported => {}
-            SupportLevel::Degraded { reason } => out.push(format!(
-                "\"{}\" works from the service with a caveat: {reason}",
-                destination.name
-            )),
-            SupportLevel::Unsupported { reason } => out.push(format!(
-                "\"{}\" CANNOT be backed up by this service: {reason}",
-                destination.name
-            )),
-        }
-    }
-    out
-}
-
-/// The same report, as activity-log events, for a running daemon.
-pub fn record_destination_report(
-    runtime: &Arc<crate::daemon::runtime::Runtime>,
-    config: &Config,
-    account: &ServiceAccount,
-    scope: ServiceScope,
-) {
-    for line in destination_report(config, account, scope) {
-        let severity =
-            if line.contains("CANNOT") { Severity::Error } else { Severity::Warning };
-        runtime.record_event(Event::new(severity, "service.destination_reach", line));
-    }
-}
-
-/// Whether a destination is worth offering in a service-mode configuration.
-pub fn usable_under_service(
-    destination: &superbackup_core::model::Destination,
-    account: &ServiceAccount,
-    scope: ServiceScope,
-) -> bool {
-    destination_support(&destination.kind, account, scope).is_usable()
-}
+/// Lives in [`crate::daemon`] rather than here so that the daemon can emit it
+/// at start-up without depending on this module — the dependency runs
+/// service → daemon, and a backwards edge would make the daemon untestable in
+/// isolation. Re-exported because this is where a reader looks for it.
+pub use crate::daemon::destination_report;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use superbackup_core::model::Config;
     use superbackup_core::engine::testing::{test_mirror, test_repository};
 
     fn config_with(destinations: Vec<superbackup_core::model::Destination>) -> Config {
@@ -300,6 +254,11 @@ mod tests {
     #[test]
     fn a_user_scoped_unit_reaches_everything_the_user_can() {
         let repo = test_repository("disk", "/home/me/backups");
-        assert!(usable_under_service(&repo, &ServiceAccount::LocalSystem, ServiceScope::User));
+        assert!(destination_report(
+            &config_with(vec![repo]),
+            &ServiceAccount::LocalSystem,
+            ServiceScope::User
+        )
+        .is_empty());
     }
 }

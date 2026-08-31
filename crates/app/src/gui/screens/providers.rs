@@ -15,12 +15,21 @@ use crate::gui::icons::Icon;
 use crate::gui::modals::{self, Modal};
 use crate::gui::nav::Route;
 use crate::gui::theme::{self, size, space, Type};
+use crate::gui::viewmodel::{self, ColumnSpec};
 use crate::gui::widgets::{self, Button};
 
 #[derive(Default)]
 pub struct State {
     pub search: String,
 }
+
+/// `UX_SPEC.md` §9.1. Endpoint is the remainder; last verified drops first.
+const PROVIDER_COLUMNS: [ColumnSpec; 4] = [
+    ColumnSpec::keep("flavour", 36.0),
+    ColumnSpec::keep("name", 190.0),
+    ColumnSpec::keep("used_by", 120.0),
+    ColumnSpec::droppable("verified", 104.0, 1),
+];
 
 impl App {
     pub(crate) fn providers_actions(&mut self, ui: &mut Ui) {
@@ -59,7 +68,13 @@ impl App {
             .cloned()
             .collect();
 
-        let narrow = ui.available_width() < 840.0;
+        let shown = viewmodel::fit_columns(
+            ui.available_width(),
+            200.0,
+            ui.spacing().item_spacing.x,
+            &PROVIDER_COLUMNS,
+        );
+        let has = |key: &str| shown.iter().any(|k| *k == key);
         let mut open: Option<Uuid> = None;
         let mut test: Option<Uuid> = None;
         let mut menu: Option<(&'static str, Uuid)> = None;
@@ -69,13 +84,13 @@ impl App {
                 .id_salt("providers")
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(36.0))
-                .column(egui_extras::Column::exact(220.0))
+                .column(egui_extras::Column::exact(190.0))
                 .column(egui_extras::Column::remainder().at_least(200.0))
-                .column(egui_extras::Column::exact(130.0));
-            if !narrow {
-                builder = builder.column(egui_extras::Column::exact(120.0));
+                .column(egui_extras::Column::exact(120.0));
+            if has("verified") {
+                builder = builder.column(egui_extras::Column::exact(104.0));
             }
-            builder = builder.column(egui_extras::Column::exact(120.0));
+            builder = builder.column(egui_extras::Column::exact(104.0));
 
             builder
                 .header(size::TABLE_HEADER_H, |mut header| {
@@ -91,7 +106,7 @@ impl App {
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::USED_BY, None);
                     });
-                    if !narrow {
+                    if has("verified") {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::LAST_VERIFIED, None);
                         });
@@ -123,7 +138,7 @@ impl App {
                                     &provider.name,
                                     Type::BodyStrong,
                                     t.text_primary,
-                                    206.0,
+                                    176.0,
                                     false,
                                 );
                                 if !provider.notes.is_empty() {
@@ -132,7 +147,7 @@ impl App {
                                         &provider.notes,
                                         Type::Small,
                                         t.text_muted,
-                                        206.0,
+                                        176.0,
                                         false,
                                     );
                                 }
@@ -179,7 +194,7 @@ impl App {
                                     .on_hover_text(names.join("\n"));
                             }
                         });
-                        if !narrow {
+                        if has("verified") {
                             row.col(|ui| match provider.last_verified_at {
                                 Some(at) => {
                                     widgets::text(

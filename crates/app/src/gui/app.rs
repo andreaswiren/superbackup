@@ -125,6 +125,14 @@ impl App {
         matches!(self.modal, Some(Modal::Unlock(_)))
     }
 
+    /// For screenshots and render tests: keep whatever has been put into
+    /// `data` rather than replacing it with the daemon's first replies.
+    pub fn preview_mode(&mut self) {
+        self.opened = true;
+        self.data.loading = false;
+        self.data.link_up = true;
+    }
+
     pub fn begin_onboarding(&mut self) {
         self.onboarding = Some(screens::onboarding::Onboarding::default());
     }
@@ -795,7 +803,7 @@ impl App {
                     if minutes == 0 {
                         None
                     } else {
-                        Some(copy::vault_locks_in(&format::duration(minutes as i64 * 60)))
+                        Some(copy::vault_locks_in(&format::minutes(minutes)))
                     }
                 } else {
                     Some(copy::vault::LOCKED_SUB.to_string())
@@ -822,9 +830,7 @@ impl App {
             }
         }
         let announce = if unlocked {
-            copy::a11y_vault_unlocked(&format::duration(
-                self.data.settings.auto_lock_minutes as i64 * 60,
-            ))
+            copy::a11y_vault_unlocked(&format::minutes(self.data.settings.auto_lock_minutes))
         } else {
             copy::A11Y_VAULT_LOCKED.to_string()
         };
@@ -989,7 +995,6 @@ impl App {
 
         if !self.data.link_up && !self.data.loading {
             if shown < 2 {
-                shown += 1;
                 let mut retry = false;
                 widgets::banner(
                     ui,

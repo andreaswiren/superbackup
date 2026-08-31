@@ -347,6 +347,12 @@ pub struct SnapshotRequest {
     /// Which attempt this is, starting at 1. Drivers may use it to widen a
     /// timeout or to log; the engine owns the retry decision.
     pub attempt: u32,
+    /// Report what would be backed up without creating a snapshot.
+    ///
+    /// An implementation that cannot rehearse must return an error rather than
+    /// quietly performing the real thing: a dry run that writes is worse than
+    /// one that refuses, because the user believed nothing would happen.
+    pub dry_run: bool,
 }
 
 /// The result of a successful snapshot.

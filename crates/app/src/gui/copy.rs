@@ -1286,7 +1286,13 @@ pub fn restore_compare_result(added: u64, changed: u64, removed: u64) -> String 
     format!("{added} added · {changed} changed · {removed} removed")
 }
 pub fn restore_browse_selected(count: usize, size: u64) -> String {
-    format!("{count} items selected · about {}", format::bytes(size))
+    // A folder's size is not known until it has been walked, and claiming
+    // "about 0 B" for a directory tree would be a lie.
+    if size == 0 {
+        format!("{count} items selected")
+    } else {
+        format!("{count} items selected · about {}", format::bytes(size))
+    }
 }
 pub fn restore_browse_moved_up(path: &str) -> String {
     format!("That folder does not exist in this snapshot. Showing {path} instead.")

@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8">
+<style>
+ body{background:#0c0e12;color:#E8ECF2;font:13px/1.4 system-ui,sans-serif;margin:0;padding:16px}
+ .row{display:flex;align-items:center;gap:18px;margin:0 0 18px;padding:0 0 14px;border-bottom:1px solid #262b34}
+ .lab{width:110px;font-weight:600;font-size:12px}
+ .cell{display:flex;flex-direction:column;align-items:center;gap:4px;color:#8A94A1;font-size:10px}
+ .lt{background:#F3F3F3;padding:5px;border-radius:4px}
+</style>
+<body><div id="out"></div>
+<script>
+const ink="#E8ECF2", acc="#5B9BFF", dim="#79839459".slice(0,7), dim2="#5A6472";
+const D="#798394";
+const marks = {
+"N1 solid cascade": id=>`
+ <defs><mask id="n1${id}"><rect width="64" height="64" fill="#fff"/>
+  <rect x="16.4" y="16.4" width="26.2" height="26.2" rx="7.4" fill="#000"/>
+  <rect x="25.4" y="25.4" width="26.2" height="26.2" rx="7.4" fill="#000"/></mask>
+  <mask id="n1b${id}"><rect width="64" height="64" fill="#fff"/>
+  <rect x="25.4" y="25.4" width="26.2" height="26.2" rx="7.4" fill="#000"/></mask></defs>
+ <g mask="url(#n1${id})"><rect x="9" y="9" width="23" height="23" rx="6" fill="${dim2}"/></g>
+ <g mask="url(#n1b${id})"><rect x="18" y="18" width="23" height="23" rx="6" fill="${D}"/></g>
+ <rect x="27" y="27" width="23" height="23" rx="6" fill="${acc}"/>`,
+
+"N2 bracket ghost": id=>`
+ <path d="M12 26 V17 a5 5 0 0 1 5-5 h9" fill="none" stroke="${dim2}" stroke-width="4" stroke-linecap="round"/>
+ <path d="M22 34 V25 a5 5 0 0 1 5-5 h9" fill="none" stroke="${D}" stroke-width="4" stroke-linecap="round"/>
+ <rect x="30" y="28" width="24" height="24" rx="7" fill="${acc}"/>`,
+
+"N3 sliced block": id=>`
+ <defs><clipPath id="n3${id}"><rect x="10" y="10" width="44" height="44" rx="11"/></clipPath></defs>
+ <g clip-path="url(#n3${id})">
+  <rect x="0" y="0" width="64" height="64" fill="${D}"/>
+  <path d="M-10 26 L40 -24 L52 -12 L2 38 Z" fill="#0c0e12" transform="translate(0,0)"/>
+ </g>
+ <g clip-path="url(#n3${id})">
+   <path d="M-6 64 L64 -6 L64 8 L8 64 Z" fill="${acc}"/>
+ </g>`,
+
+"N4 strongbox": id=>`
+ <rect x="10" y="20" width="44" height="34" rx="8" fill="${D}"/>
+ <rect x="10" y="20" width="44" height="10" rx="5" fill="${ink}"/>
+ <circle cx="32" cy="41" r="6" fill="${acc}"/>`,
+
+"N5 pack": id=>`
+ <g fill="${D}"><rect x="9" y="9" width="10" height="10" rx="2.6"/><rect x="23" y="9" width="10" height="10" rx="2.6"/>
+ <rect x="9" y="23" width="10" height="10" rx="2.6"/></g>
+ <rect x="25" y="25" width="30" height="30" rx="8" fill="${acc}"/>`,
+
+"N6 stair pills": id=>`
+ <rect x="8" y="12" width="26" height="11" rx="5.5" fill="${dim2}"/>
+ <rect x="17" y="27" width="26" height="11" rx="5.5" fill="${D}"/>
+ <rect x="26" y="42" width="26" height="11" rx="5.5" fill="${acc}"/>`,
+
+"N7 keep": id=>`
+ <path d="M12 54 V22 l10-6 v-6 h6 v6 l4-2.4 4 2.4 v-6 h6 v6 l10 6 v32 z" fill="${D}"/>
+ <rect x="26" y="36" width="12" height="18" rx="6" fill="${acc}"/>`,
+};
+function plate(inner,size,bg,filter){
+  return `<svg width="${size}" height="${size}" viewBox="0 0 64 64" ${filter?'style="filter:'+filter+'"':''}>
+   <rect width="64" height="64" rx="14" fill="${bg||'#181D26'}"/>${inner}</svg>`;
+}
+const sizes=[96,48,32,24,16];
+let html="",i=0;
+for(const [name,fn] of Object.entries(marks)){ i++; const inner=fn(i);
+  html+=`<div class="row"><div class="lab">${name}</div>`+
+   sizes.map(s=>`<div class="cell">${plate(inner,s)}<span>${s}</span></div>`).join("")+
+   `<div class="cell"><div class="lt">${plate(inner,32)}</div><span>lt32</span></div>`+
+   `<div class="cell"><div class="lt">${plate(inner,16)}</div><span>lt16</span></div>`+
+   `<div class="cell">${plate(inner,48,null,"grayscale(1)")}<span>grey</span></div>`+
+   `<div class="cell">${plate(inner,48,"#000","brightness(0) invert(1)")}<span>sil</span></div>`+
+   `</div>`;}
+document.getElementById("out").innerHTML=html;
+</script>

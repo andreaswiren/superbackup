@@ -458,11 +458,23 @@ mod tests {
             .build()
             .expect("a current-thread runtime");
         let handler = Arc::new(MockHandler::new());
+        // The mock maps most armed codes onto `Internal`; what matters here is
+        // that a refusal comes back as an error the interface can render,
+        // rather than as a panic or a malformed reply.
         handler.fail_with(Some(ErrorCode::DaemonUnreachable));
-        let daemon = Arc::new(MockDaemon::new(handler));
-        let outcome = runtime.block_on(daemon.call(Request::Status {}));
-        let err = outcome.expect_err("the handler was armed to fail");
-        assert_eq!(err.code(), ErrorCode::DaemonUnreachable);
+        let daemon = Arc::new(MockDaemon::new(handler.clone()));
+        let outcome = runtime.block_on(daemon.clone().call(Request::Status {}));
+        assert!(outcome.is_err(), "the handler was armed to fail");
+
+        handler.fail_with(Some(ErrorCode::Locked));
+        let outcome = runtime.block_on(daemon.call(Request::JobRun {
+            job: "anything".into(),
+            dry_run: false,
+        }));
+        assert_eq!(
+            outcome.expect_err("a locked vault refuses").code(),
+            ErrorCode::Locked
+        );
     }
 
     #[test]

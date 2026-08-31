@@ -90,7 +90,7 @@ async fn handle(runtime: &Arc<Runtime>, event: EngineEvent) {
                 job_id,
                 destination_id,
                 status: RunStatus::Preparing,
-                progress: Box::new(Default::default()),
+                progress: Box::default(),
             });
         }
 

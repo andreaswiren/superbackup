@@ -14,7 +14,7 @@ use crate::gui::icons::Icon;
 use crate::gui::modals::Modal;
 use crate::gui::nav::Route;
 use crate::gui::theme::{self, size, space, Type};
-use crate::gui::viewmodel::{self, RunFilters, TimeRange};
+use crate::gui::viewmodel::{self, ColumnSpec, RunFilters, TimeRange};
 use crate::gui::widgets::{self, Button};
 
 pub struct State {
@@ -48,6 +48,17 @@ impl State {
     }
 }
 
+/// `UX_SPEC.md` §10.1. Destinations is the remainder — the fan-out is the one
+/// column that must never be dropped — and uploaded goes first.
+const RUN_COLUMNS: [ColumnSpec; 6] = [
+    ColumnSpec::keep("status", 32.0),
+    ColumnSpec::keep("started", 120.0),
+    ColumnSpec::keep("job", 160.0),
+    ColumnSpec::droppable("trigger", 84.0, 2),
+    ColumnSpec::droppable("duration", 76.0, 3),
+    ColumnSpec::droppable("uploaded", 84.0, 1),
+];
+
 impl App {
     pub(crate) fn activity_actions(&mut self, ui: &mut Ui) {
         let mut export = false;
@@ -57,7 +68,15 @@ impl App {
         let ranges: Vec<String> = TimeRange::ALL.iter().map(|r| r.title().to_string()).collect();
         let mut index =
             TimeRange::ALL.iter().position(|r| *r == self.screens.activity.range).unwrap_or(1);
-        if widgets::combo(ui, "activity-range", &mut index, &ranges, 160.0, true) {
+        if widgets::combo_labelled(
+            ui,
+            "activity-range",
+            Some(copy::col::WHEN),
+            &mut index,
+            &ranges,
+            200.0,
+            true,
+        ) {
             self.screens.activity.range = TimeRange::ALL[index];
         }
         widgets::Field::new()
@@ -158,7 +177,13 @@ impl App {
             return;
         }
 
-        let narrow = ui.available_width() < 840.0;
+        let shown = viewmodel::fit_columns(
+            ui.available_width(),
+            150.0,
+            ui.spacing().item_spacing.x,
+            &RUN_COLUMNS,
+        );
+        let has = |key: &str| shown.iter().any(|k| *k == key);
         let mut open: Option<Uuid> = None;
 
         widgets::table_frame(ui, |ui| {
@@ -166,15 +191,17 @@ impl App {
                 .id_salt("activity-runs")
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(32.0))
-                .column(egui_extras::Column::exact(130.0))
-                .column(egui_extras::Column::exact(180.0));
-            if !narrow {
-                builder = builder.column(egui_extras::Column::exact(90.0));
+                .column(egui_extras::Column::exact(120.0))
+                .column(egui_extras::Column::exact(160.0));
+            if has("trigger") {
+                builder = builder.column(egui_extras::Column::exact(84.0));
             }
             builder = builder.column(egui_extras::Column::remainder().at_least(150.0));
-            if !narrow {
-                builder = builder.column(egui_extras::Column::exact(80.0));
-                builder = builder.column(egui_extras::Column::exact(90.0));
+            if has("duration") {
+                builder = builder.column(egui_extras::Column::exact(76.0));
+            }
+            if has("uploaded") {
+                builder = builder.column(egui_extras::Column::exact(84.0));
             }
             builder = builder.column(egui_extras::Column::exact(32.0));
 
@@ -189,7 +216,7 @@ impl App {
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::JOB, None);
                     });
-                    if !narrow {
+                    if has("trigger") {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::TRIGGER, None);
                         });
@@ -197,10 +224,12 @@ impl App {
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::DESTINATIONS, None);
                     });
-                    if !narrow {
+                    if has("duration") {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::DURATION, None);
                         });
+                    }
+                    if has("uploaded") {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::UPLOADED, None);
                         });
@@ -254,11 +283,11 @@ impl App {
                                 &run.job_name,
                                 Type::BodyStrong,
                                 t.text_primary,
-                                166.0,
+                                146.0,
                                 false,
                             );
                         });
-                        if !narrow {
+                        if has("trigger") {
                             row.col(|ui| {
                                 widgets::text(
                                     ui,
@@ -289,7 +318,7 @@ impl App {
                                 );
                             });
                         });
-                        if !narrow {
+                        if has("duration") {
                             row.col(|ui| {
                                 let text = run
                                     .duration_seconds()
@@ -297,6 +326,8 @@ impl App {
                                     .unwrap_or_else(|| "—".to_string());
                                 widgets::numeric_cell(ui, &text);
                             });
+                        }
+                        if has("uploaded") {
                             row.col(|ui| {
                                 let uploaded: u64 = run
                                     .destinations

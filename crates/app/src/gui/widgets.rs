@@ -54,6 +54,11 @@ pub fn paragraph(ui: &mut Ui, value: impl Into<String>, ty: Type, color: Color32
     paragraph_at(ui, value, ty, color, width)
 }
 
+/// Wrapped text at a declared measure, capped at what the caller actually has.
+///
+/// The design system's 68-character measure is a maximum, not a minimum: a
+/// paragraph asked to be 560px wide inside a 533px settings pane must wrap at
+/// 533, not spill out of it.
 pub fn paragraph_at(
     ui: &mut Ui,
     value: impl Into<String>,
@@ -61,6 +66,7 @@ pub fn paragraph_at(
     color: Color32,
     width: f32,
 ) -> Response {
+    let width = width.min(ui.available_width().max(80.0));
     let g = galley_wrapped(ui, value, ty, color, width);
     let (rect, response) = ui.allocate_exact_size(g.size(), Sense::hover());
     if ui.is_rect_visible(rect) {
@@ -79,6 +85,7 @@ pub fn elided(
     width: f32,
     from_left: bool,
 ) -> Response {
+    let width = width.min(ui.available_width().max(40.0));
     let shown = elide_to_width(ui, value, ty, width, from_left);
     let g = galley(ui, shown.clone(), ty, color);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, g.size().y), Sense::hover());
@@ -822,8 +829,11 @@ pub fn checkbox(
     enabled: bool,
 ) -> Response {
     let t = theme::tokens(ui.ctx());
+    if helper.is_none() {
+        return checkbox_row(ui, checked, label, enabled);
+    }
     let response = ui
-        .scope(|ui| {
+        .vertical(|ui| {
             ui.spacing_mut().item_spacing.y = space::XS;
             let hit = ui.horizontal(|ui| {
                 let g = galley(ui, label, Type::Body, t.text_primary);
@@ -874,6 +884,42 @@ pub fn checkbox(
             hit.inner
         })
         .inner;
+    response
+}
+
+/// The single row of a checkbox, without the helper line beneath it.
+fn checkbox_row(ui: &mut Ui, checked: &mut bool, label: &str, enabled: bool) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let g = galley(ui, label, Type::Body, t.text_primary);
+    let width = 16.0 + if label.is_empty() { 0.0 } else { space::M + g.size().x };
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(width, g.size().y.max(20.0)),
+        if enabled { Sense::click() } else { Sense::hover() },
+    );
+    if response.clicked() && enabled {
+        *checked = !*checked;
+    }
+    if ui.is_rect_visible(rect) {
+        let box_rect =
+            Rect::from_min_size(Pos2::new(rect.left(), rect.center().y - 8.0), Vec2::splat(16.0));
+        paint_check_box(ui, box_rect, *checked, enabled, false);
+        if response.has_focus() {
+            focus_ring(ui, box_rect, CornerRadius::same(4));
+        }
+        if !label.is_empty() {
+            let fg = if enabled { t.text_primary } else { t.text_disabled };
+            let g = galley(ui, label, Type::Body, fg);
+            let h = g.size().y;
+            ui.painter().galley(
+                Pos2::new(rect.left() + 16.0 + space::M, rect.center().y - h / 2.0),
+                g,
+                fg,
+            );
+        }
+    }
+    let is_checked = *checked;
+    response
+        .widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, is_checked, label));
     response
 }
 
@@ -929,7 +975,7 @@ pub fn radio(
 ) -> Response {
     let t = theme::tokens(ui.ctx());
     let inner = ui
-        .scope(|ui| {
+        .vertical(|ui| {
             ui.spacing_mut().item_spacing.y = space::XS;
             let response = ui
                 .horizontal(|ui| {
@@ -1013,7 +1059,10 @@ pub fn toggle(
     enabled: bool,
 ) -> Response {
     let t = theme::tokens(ui.ctx());
-    ui.scope(|ui| {
+    if helper.is_none() {
+        return toggle_row(ui, on, label, enabled);
+    }
+    ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = space::XS;
         let response = ui
             .horizontal(|ui| {
@@ -1086,6 +1135,70 @@ pub fn toggle(
         response
     })
     .inner
+}
+
+/// The single row of a toggle, without the helper line beneath it.
+fn toggle_row(ui: &mut Ui, on: &mut bool, label: &str, enabled: bool) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let g = galley(ui, label, Type::Body, t.text_primary);
+    let width = 36.0 + if label.is_empty() { 0.0 } else { space::M + g.size().x };
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(width, 20.0_f32.max(g.size().y)),
+        if enabled { Sense::click() } else { Sense::hover() },
+    );
+    if response.clicked() && enabled {
+        *on = !*on;
+    }
+    if ui.is_rect_visible(rect) {
+        paint_toggle(ui, rect, *on, enabled, response.has_focus());
+        if !label.is_empty() {
+            let fg = if enabled { t.text_primary } else { t.text_disabled };
+            let g = galley(ui, label, Type::Body, fg);
+            let h = g.size().y;
+            ui.painter().galley(
+                Pos2::new(rect.left() + 36.0 + space::M, rect.center().y - h / 2.0),
+                g,
+                fg,
+            );
+        }
+    }
+    let is_on = *on;
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, is_on, label));
+    response
+}
+
+/// The 36 × 20 track and its knob, shared by both toggle shapes.
+fn paint_toggle(ui: &Ui, rect: Rect, on: bool, enabled: bool, focused: bool) {
+    let t = theme::tokens(ui.ctx());
+    let track =
+        Rect::from_min_size(Pos2::new(rect.left(), rect.center().y - 10.0), Vec2::new(36.0, 20.0));
+    let cr = CornerRadius::same(10);
+    if on && enabled {
+        ui.painter().rect_filled(track, cr, t.accent_fill);
+        ui.painter().circle_filled(
+            Pos2::new(track.right() - 10.0, track.center().y),
+            8.0,
+            Color32::WHITE,
+        );
+    } else {
+        let fill = if enabled { t.bg_raised } else { theme::alpha(t.bg_raised, 0.5) };
+        ui.painter().rect(
+            track,
+            cr,
+            fill,
+            Stroke::new(1.0_f32, if enabled { t.border_control } else { t.border_subtle }),
+            StrokeKind::Inside,
+        );
+        let knob_x = if on { track.right() - 10.0 } else { track.left() + 10.0 };
+        ui.painter().circle_filled(
+            Pos2::new(knob_x, track.center().y),
+            8.0,
+            if enabled { t.text_secondary } else { t.text_disabled },
+        );
+    }
+    if focused {
+        focus_ring(ui, track, cr);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1277,7 +1390,21 @@ impl<'a> Field<'a> {
     pub fn show(self, ui: &mut Ui, value: &mut String) -> Response {
         let t = theme::tokens(ui.ctx());
         let mut response = None;
-        ui.scope(|ui| {
+        // `ui.scope` would inherit the caller's layout, which lays a label,
+        // an input and its helper text out side by side inside a horizontal
+        // row. A field is always a vertical stack of a known width.
+        let bare = self.label.is_none()
+            && self.helper.is_none()
+            && self.error.is_none()
+            && self.char_limit.is_none()
+            && self.multiline_rows.is_none();
+        let block = Vec2::new(
+            self.width.max(if self.label.is_some() { 120.0 } else { 40.0 }),
+            // A bare field is exactly one control tall, so a centred layout —
+            // a header bar — puts it on the same baseline as the buttons.
+            if bare { size::CONTROL_H } else { 0.0 },
+        );
+        ui.allocate_ui_with_layout(block, Layout::top_down(Align::Min), |ui| {
             ui.spacing_mut().item_spacing.y = space::S;
             if let Some(l) = self.label {
                 text(ui, l, Type::H3, t.text_primary);
@@ -1478,8 +1605,27 @@ pub fn combo(
     width: f32,
     enabled: bool,
 ) -> bool {
+    combo_labelled(ui, id, None, selected, options, width, enabled)
+}
+
+/// The same, with the control's name carried in the closed state — a filter
+/// that reads `All` tells the user nothing; `Filter: All` tells them what it
+/// filters.
+pub fn combo_labelled(
+    ui: &mut Ui,
+    id: impl std::hash::Hash,
+    label: Option<&str>,
+    selected: &mut usize,
+    options: &[String],
+    width: f32,
+    enabled: bool,
+) -> bool {
     let mut changed = false;
-    let current = options.get(*selected).cloned().unwrap_or_default();
+    let value = options.get(*selected).cloned().unwrap_or_default();
+    let current = match label {
+        Some(label) => format!("{label}: {value}"),
+        None => value,
+    };
     ui.add_enabled_ui(enabled, |ui| {
         egui::ComboBox::from_id_salt(id)
             .selected_text(current)
@@ -1496,6 +1642,31 @@ pub fn combo(
     });
     changed
 }
+
+/// A vertical scroll area whose content stops short of the scroll bar.
+///
+/// egui draws the bar over the content, so a table's last column or a card's
+/// right border would otherwise be clipped the moment a list grew past the
+/// fold. Reserving the width here keeps every screen's right edge stable
+/// whether or not it scrolls.
+pub fn scroll_area<R>(
+    ui: &mut Ui,
+    id: impl std::hash::Hash,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let width = (ui.available_width() - SCROLL_RESERVE).max(120.0);
+            ui.set_max_width(width);
+            add(ui)
+        })
+        .inner
+}
+
+/// Scroll-bar width plus its inner margin (`DESIGN_SYSTEM.md` §4.2).
+pub const SCROLL_RESERVE: f32 = 14.0;
 
 // ---------------------------------------------------------------------------
 // 8.13 Empty state

@@ -76,6 +76,20 @@ pub fn eta(seconds: u64) -> String {
     duration(seconds as i64)
 }
 
+/// `27 min`, `2 hours`, `1 day` — a countdown at minute resolution, which is
+/// what the auto-lock line wants; `duration` would render `27m 00s`.
+pub fn minutes(total: u32) -> String {
+    match total {
+        0 => "now".to_string(),
+        1 => "1 minute".to_string(),
+        m if m < 60 => format!("{m} min"),
+        m if m < 120 => "1 hour".to_string(),
+        m if m < 1440 => format!("{} hours", m / 60),
+        m if m < 2880 => "1 day".to_string(),
+        m => format!("{} days", m / 1440),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Times
 // ---------------------------------------------------------------------------
@@ -363,6 +377,16 @@ mod tests {
         assert_eq!(relative_future(now + Duration::minutes(12), now), "in 12 minutes");
         assert_eq!(relative_future(now + Duration::hours(4), now), "in 4 hours");
         assert!(relative_future(now + Duration::hours(30), now).starts_with("tomorrow"));
+    }
+
+    #[test]
+    fn the_lock_countdown_is_minute_resolution() {
+        assert_eq!(minutes(0), "now");
+        assert_eq!(minutes(1), "1 minute");
+        assert_eq!(minutes(27), "27 min");
+        assert_eq!(minutes(90), "1 hour");
+        assert_eq!(minutes(240), "4 hours");
+        assert_eq!(minutes(2_880), "2 days");
     }
 
     #[test]

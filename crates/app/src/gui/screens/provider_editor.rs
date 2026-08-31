@@ -43,6 +43,8 @@ pub struct State {
     pub replacing_secret: bool,
     pub show_buckets: bool,
     pub impact_open: bool,
+    /// As in the destination editor: an untouched form shows no errors.
+    pub show_errors: bool,
     probes: HashMap<Uuid, ProbeState>,
     known_refs: Vec<SecretRef>,
 }
@@ -89,6 +91,7 @@ impl State {
                 self.draft = Some(p.clone());
                 self.original = Some(p.clone());
                 self.replacing_secret = false;
+                self.show_errors = true;
             }
             None => {
                 let id = Uuid::new_v4();
@@ -109,6 +112,7 @@ impl State {
                 });
                 self.original = None;
                 self.replacing_secret = true;
+                self.show_errors = false;
             }
         }
         self.access_key.clear();
@@ -135,12 +139,15 @@ impl App {
         }
         self.screens.provider_editor.load(existing.as_ref());
 
-        let report = self.provider_report();
+        let mut report = self.provider_report();
+        if !self.screens.provider_editor.show_errors {
+            report.problems.clear();
+        }
         let mut save = false;
         let mut test = false;
         let mut rotate = false;
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        widgets::scroll_area(ui, "provider-editor", |ui| {
             // The impact strip: used by N destinations across M jobs.
             if let Some(provider) = &existing {
                 let (inheriting, overriding) = self.data.destinations_using(&provider.id);
@@ -250,7 +257,10 @@ impl App {
         });
 
         if save {
-            self.save_provider(existing.is_some());
+            self.screens.provider_editor.show_errors = true;
+            if report.ok() {
+                self.save_provider(existing.is_some());
+            }
         }
         if test {
             if let Some(id) = existing.map(|p| p.id) {

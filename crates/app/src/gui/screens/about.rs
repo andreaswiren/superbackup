@@ -21,7 +21,7 @@ impl App {
         let info = superbackup_core::build_info();
         let mut open: Option<String> = None;
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        widgets::scroll_area(ui, "about", |ui| {
             ui.allocate_ui_with_layout(
                 Vec2::new(ui.available_width(), 0.0),
                 Layout::top_down(Align::Center),

@@ -493,6 +493,71 @@ pub fn group_jobs<'a>(
 }
 
 // ---------------------------------------------------------------------------
+// Table columns (DESIGN_SYSTEM L5, UX_SPEC §4.4)
+// ---------------------------------------------------------------------------
+
+/// One column of a table: a fixed width, and how willing it is to be dropped.
+///
+/// `egui_extras::TableBuilder` cannot size a column to its content, so every
+/// width is declared. The specification's own column sets are wider than the
+/// content column they sit in — the jobs table's nine columns sum to 998px
+/// inside 819px — so rather than squeezing them (which L5 forbids) the
+/// interface drops whole columns in the documented priority order until the
+/// set fits, at whatever width the window happens to be.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColumnSpec {
+    pub key: &'static str,
+    pub width: f32,
+    /// `None` for a column that is never dropped; otherwise lower goes first.
+    pub drop_order: Option<u8>,
+}
+
+impl ColumnSpec {
+    pub const fn keep(key: &'static str, width: f32) -> ColumnSpec {
+        ColumnSpec { key, width, drop_order: None }
+    }
+    pub const fn droppable(key: &'static str, width: f32, order: u8) -> ColumnSpec {
+        ColumnSpec { key, width, drop_order: Some(order) }
+    }
+}
+
+/// The columns that fit, in their original order.
+///
+/// `spacing` is the gap the table puts between columns, which is part of the
+/// width whether or not anyone remembers it.
+pub fn fit_columns(
+    available: f32,
+    remainder_min: f32,
+    spacing: f32,
+    specs: &[ColumnSpec],
+) -> Vec<&'static str> {
+    let mut kept: Vec<&ColumnSpec> = specs.iter().collect();
+    loop {
+        let gaps = spacing * kept.len() as f32;
+        let total: f32 = kept.iter().map(|c| c.width).sum::<f32>() + remainder_min + gaps;
+        if total <= available {
+            break;
+        }
+        // Drop the most expendable column that is still present.
+        let victim = kept
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| c.drop_order.map(|o| (o, i)))
+            .max_by_key(|(order, _)| std::cmp::Reverse(*order))
+            .map(|(_, i)| i);
+        match victim {
+            Some(index) => {
+                kept.remove(index);
+            }
+            // Nothing left to drop: the remaining columns are all essential,
+            // and the table scrolls horizontally rather than lying about them.
+            None => break,
+        }
+    }
+    kept.into_iter().map(|c| c.key).collect()
+}
+
+// ---------------------------------------------------------------------------
 // Destination status (UX_SPEC §8.1)
 // ---------------------------------------------------------------------------
 
@@ -997,7 +1062,7 @@ mod tests {
     }
 
     fn run(statuses: Vec<RunStatus>) -> JobRun {
-        JobRun {
+        let mut run = JobRun {
             run_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             job_name: "Dev code".into(),
@@ -1020,7 +1085,57 @@ mod tests {
                     warnings: vec![],
                 })
                 .collect(),
+        };
+        // Never hand-written: the roll-up is the core's rule, not the test's.
+        run.status = run.derive_status();
+        run
+    }
+
+    #[test]
+    fn columns_drop_in_the_documented_priority_order() {
+        let specs = [
+            ColumnSpec::keep("status", 32.0),
+            ColumnSpec::keep("name", 190.0),
+            ColumnSpec::droppable("sources", 52.0, 4),
+            ColumnSpec::keep("destinations", 124.0),
+            ColumnSpec::keep("schedule", 118.0),
+            ColumnSpec::keep("last", 104.0),
+            ColumnSpec::droppable("next", 104.0, 3),
+            ColumnSpec::droppable("uploaded", 84.0, 1),
+        ];
+        // Everything fits in a very wide window.
+        assert_eq!(fit_columns(2000.0, 84.0, 8.0, &specs).len(), specs.len());
+
+        // `Uploaded` is always the first to go, then `Next run`, then
+        // `Folders` — the specification's own order.
+        let mut dropped: Vec<&str> = Vec::new();
+        let mut width = 1000.0;
+        while width > 300.0 {
+            let kept = fit_columns(width, 84.0, 8.0, &specs);
+            for spec in &specs {
+                if !kept.contains(&spec.key) && !dropped.contains(&spec.key) {
+                    dropped.push(spec.key);
+                }
+            }
+            width -= 20.0;
         }
+        assert_eq!(dropped, vec!["uploaded", "next", "sources"]);
+        assert!(
+            fit_columns(400.0, 84.0, 8.0, &specs).contains(&"name"),
+            "the name column is never dropped"
+        );
+
+        // The gaps between columns count: the same set does not fit twice.
+        assert!(
+            fit_columns(830.0, 84.0, 0.0, &specs).len()
+                >= fit_columns(830.0, 84.0, 8.0, &specs).len()
+        );
+
+        // A column with no drop order survives even when nothing fits.
+        let cramped = fit_columns(100.0, 84.0, 8.0, &specs);
+        assert!(cramped.contains(&"status"));
+        assert!(cramped.contains(&"name"));
+        assert!(!cramped.contains(&"sources"));
     }
 
     #[test]

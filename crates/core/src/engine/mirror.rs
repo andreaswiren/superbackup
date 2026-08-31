@@ -94,6 +94,13 @@ pub struct MirrorOptions {
     /// Whether the copy is allowed to leave the source tree through a symlink
     /// or a junction. Taken from [`Source::follow_symlinks`], per source.
     pub follow_symlinks: bool,
+    /// Walk and count, but never create, write, or delete anything.
+    ///
+    /// A mirror has no repository to rehearse against, so a dry run has to be
+    /// honoured here or not at all. Without it, swapping in a rehearsal
+    /// executor left mirrors copying for real — the one destination kind where
+    /// "dry run" would have written gigabytes to the user's disk.
+    pub dry_run: bool,
 }
 
 impl Default for MirrorOptions {
@@ -103,6 +110,7 @@ impl Default for MirrorOptions {
             max_file_size_mb: None,
             respect_cachedir_tag: true,
             follow_symlinks: false,
+            dry_run: false,
         }
     }
 }
@@ -116,6 +124,7 @@ impl MirrorOptions {
             max_file_size_mb: exclusions.max_file_size_mb,
             respect_cachedir_tag: exclusions.respect_cachedir_tag,
             follow_symlinks: false,
+            dry_run: false,
         }
     }
 }
@@ -165,20 +174,34 @@ impl MirrorEngine {
         let started = self.clock.now_utc();
         let mut acc = Accumulator::new(request.progress.clone(), Arc::clone(&self.clock), started);
 
-        std::fs::create_dir_all(&root).map_err(|e| {
-            ExecutorError::new(
-                ErrorCode::Io,
-                format!("cannot create the mirror folder {}: {e}", root.display()),
-            )
-            .permanent()
-        })?;
-        let root = canonical(&root).map_err(|e| {
-            ExecutorError::new(
-                ErrorCode::Io,
-                format!("cannot resolve the mirror folder {}: {e}", root.display()),
-            )
-            .permanent()
-        })?;
+        // A dry run must not bring the mirror folder into existence either:
+        // creating it is a visible side effect, and on a removable drive it is
+        // the difference between "nothing happened" and a stray folder.
+        if !request.options.dry_run {
+            std::fs::create_dir_all(&root).map_err(|e| {
+                ExecutorError::new(
+                    ErrorCode::Io,
+                    format!("cannot create the mirror folder {}: {e}", root.display()),
+                )
+                .permanent()
+            })?;
+        }
+        // Canonicalising requires the directory to exist, and a dry run has
+        // deliberately not created it. Fall back to the path as given: nothing
+        // is written, so the only consequence is that reported paths are not
+        // canonical, and `safe_join` still guards every computed destination
+        // lexically.
+        let root = match canonical(&root) {
+            Ok(resolved) => resolved,
+            Err(_) if request.options.dry_run => root.clone(),
+            Err(e) => {
+                return Err(ExecutorError::new(
+                    ErrorCode::Io,
+                    format!("cannot resolve the mirror folder {}: {e}", root.display()),
+                )
+                .permanent());
+            }
+        };
 
         let matcher = Arc::new(ExclusionMatcher::build(&request.exclusions)?);
         let bucket =
@@ -216,7 +239,7 @@ impl MirrorEngine {
             )
             .await?;
 
-            if options.delete_extraneous {
+            if options.delete_extraneous && !options.dry_run {
                 self.prune(&src_root, &target, &request.cancel, &mut acc).await?;
             }
         }
@@ -246,17 +269,29 @@ impl MirrorEngine {
         cancel: &CancelToken,
         acc: &mut Accumulator,
     ) -> ExecutorResult<()> {
-        std::fs::create_dir_all(target).map_err(|e| {
-            ExecutorError::new(
-                ErrorCode::Io,
-                format!("cannot create {}: {e}", display_path(target)),
-            )
-            .permanent()
-        })?;
-        let target = canonical(target).map_err(|e| {
-            ExecutorError::new(ErrorCode::Io, format!("cannot resolve the mirror subfolder: {e}"))
+        if !options.dry_run {
+            std::fs::create_dir_all(target).map_err(|e| {
+                ExecutorError::new(
+                    ErrorCode::Io,
+                    format!("cannot create {}: {e}", display_path(target)),
+                )
                 .permanent()
-        })?;
+            })?;
+        }
+        // As with the root: a dry run has not created this, so resolution is
+        // best-effort. The symlink re-check below is skipped only in that case,
+        // and it is a guard on *writing* — which a dry run does not do.
+        let target = match canonical(target) {
+            Ok(resolved) => resolved,
+            Err(_) if options.dry_run => target.to_path_buf(),
+            Err(e) => {
+                return Err(ExecutorError::new(
+                    ErrorCode::Io,
+                    format!("cannot resolve the mirror subfolder: {e}"),
+                )
+                .permanent());
+            }
+        };
         // Re-check after canonicalisation: the target may itself be a symlink
         // pointing back inside the source.
         guard_containment(src_root, &target)?;
@@ -284,8 +319,10 @@ impl MirrorEngine {
                         ));
                         continue;
                     };
-                    if let Err(e) = std::fs::create_dir_all(&dest) {
-                        acc.warn(format!("cannot create {}: {e}", display_path(&dest)));
+                    if !options.dry_run {
+                        if let Err(e) = std::fs::create_dir_all(&dest) {
+                            acc.warn(format!("cannot create {}: {e}", display_path(&dest)));
+                        }
                     }
                 }
                 ScanItem::File { rel, len, mtime } => {
@@ -297,6 +334,12 @@ impl MirrorEngine {
                     acc.set_current(&rel);
                     if is_up_to_date(&dest, len, mtime) {
                         acc.cached(len);
+                        continue;
+                    }
+                    if options.dry_run {
+                        // Count it as it would have been copied, so the
+                        // rehearsal reports the real figures, and write nothing.
+                        acc.copied(len);
                         continue;
                     }
                     match self

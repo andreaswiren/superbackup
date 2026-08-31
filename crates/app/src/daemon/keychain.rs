@@ -60,7 +60,7 @@ pub fn entry_name(paths: &Paths) -> String {
     let scope = if paths.service_scope { "service" } else { "user" };
     // The config directory is not a secret, and including it keeps portable
     // installs under `SUPERBACKUP_HOME` distinct from the default one.
-    format!("{scope}:{}", paths.config_dir.display())
+    format!("{SERVICE}/{scope}:{}", paths.config_dir.display())
 }
 
 /// Whether this build can reach a platform keychain at all.
@@ -107,8 +107,8 @@ mod tests {
         let user = Paths::rooted_at("/tmp/sb", false);
         let service = Paths::rooted_at("/tmp/sb", true);
         assert_ne!(entry_name(&user), entry_name(&service));
-        assert!(entry_name(&user).starts_with("user:"));
-        assert!(entry_name(&service).starts_with("service:"));
+        assert!(entry_name(&user).starts_with("superbackup/user:"));
+        assert!(entry_name(&service).starts_with("superbackup/service:"));
     }
 
     #[test]

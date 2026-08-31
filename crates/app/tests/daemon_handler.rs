@@ -108,6 +108,9 @@ async fn every_command_answers_or_refuses_cleanly() {
     let provider_id = created.provider.id;
 
     let mut covered: BTreeSet<String> = BTreeSet::new();
+    // Created above, before the coverage set existed, because every provider
+    // command below needs something to act on.
+    covered.insert("provider.create".into());
 
     macro_rules! run {
         ($name:literal, $request:expr) => {{

@@ -33,7 +33,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use superbackup_core::engine::CancelToken;
 use superbackup_core::ipc::protocol::*;
 use superbackup_core::ipc::{Handler, RequestContext, StreamItem, Topic};
 use superbackup_core::kopia::{
@@ -45,7 +44,7 @@ use superbackup_core::model::{
 };
 use superbackup_core::platform::{self, ServiceScope};
 use superbackup_core::secret::Secret;
-use superbackup_core::state::{Event, Progress, RunStatus, Severity, Trigger};
+use superbackup_core::state::{Event, RunStatus, Trigger};
 use superbackup_core::{Error, ErrorCode, Result};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -75,10 +74,6 @@ pub struct DaemonHandler {
 impl DaemonHandler {
     pub fn new(runtime: Arc<Runtime>) -> DaemonHandler {
         DaemonHandler { runtime }
-    }
-
-    pub fn runtime(&self) -> &Arc<Runtime> {
-        &self.runtime
     }
 
     /// Refuse anything that needs secret material while the vault is locked.
@@ -222,7 +217,7 @@ pub fn browse_target(snapshot: &str, path: &str) -> Result<String> {
         .split(['/', '\\'])
         .filter(|p| !p.is_empty() && *p != ".")
         .collect();
-    if cleaned.iter().any(|p| *p == "..") {
+    if cleaned.contains(&"..") {
         return Err(Error::Validation(
             "a path inside a snapshot cannot contain `..`".into(),
         ));
@@ -1117,17 +1112,12 @@ impl Handler for DaemonHandler {
             let created_at = slot.created_at;
             // Credential handles are the daemon's, not the client's — see
             // `update_destination` for the same reasoning.
-            let existing = match &slot.kind {
-                ProviderKind::S3 { credentials, .. } => Some(credentials.clone()),
-                _ => None,
-            };
+            let ProviderKind::S3 { credentials, .. } = &slot.kind;
+            let existing = credentials.clone();
             *slot = stored;
             slot.created_at = created_at;
-            if let (ProviderKind::S3 { credentials, .. }, Some(previous)) =
-                (&mut slot.kind, existing)
-            {
-                *credentials = previous;
-            }
+            let ProviderKind::S3 { credentials, .. } = &mut slot.kind;
+            *credentials = existing;
             Ok(())
         })
         .await?;
@@ -1244,12 +1234,10 @@ impl Handler for DaemonHandler {
         }
         let config = self.config().await;
         let target = resolve_provider(&config, &provider)?.clone();
-        let ProviderKind::S3 { credentials, .. } = &target.kind else {
-            return Err(Error::Validation(format!(
-                "\"{}\" has no access keys to rotate",
-                target.name
-            )));
-        };
+        // `ProviderKind` has one variant today, so this is an irrefutable
+        // binding rather than a match; a second variant would make it a
+        // compile error here, which is where the decision belongs.
+        let ProviderKind::S3 { credentials, .. } = &target.kind;
 
         let mut store = self.runtime.store.lock().await;
         store.put_secret(credentials.access_key_ref.clone(), access_key_id.into_secret())?;
@@ -2073,29 +2061,6 @@ pub fn service_reach_summary(config: &superbackup_core::model::Config) -> String
         parts.push(format!("{} will work with caveats.", degraded.join(", ")));
     }
     parts.join(" ")
-}
-
-/// A cancel token that is already fired, for the paths that must refuse work.
-#[allow(dead_code)]
-fn refused() -> CancelToken {
-    let token = CancelToken::new();
-    token.cancel(superbackup_core::engine::CancelReason::Requested);
-    token
-}
-
-/// Terminal progress, for a run that never started.
-#[allow(dead_code)]
-fn no_progress() -> Progress {
-    Progress::default()
-}
-
-/// The severity a run's terminal status deserves in the activity log.
-pub fn severity_for(status: RunStatus) -> Severity {
-    match status {
-        RunStatus::Failed => Severity::Error,
-        RunStatus::SucceededWithWarnings | RunStatus::Cancelled => Severity::Warning,
-        _ => Severity::Info,
-    }
 }
 
 #[cfg(test)]

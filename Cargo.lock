@@ -5265,6 +5265,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "image",
+ "keyring",
  "open",
  "resvg",
  "rfd",

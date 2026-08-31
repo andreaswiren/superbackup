@@ -262,10 +262,7 @@ impl App {
         ui.add_space(space::M);
 
         let mut select: Option<Uuid> = None;
-        egui::ScrollArea::vertical()
-            .id_salt("restore-sources")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        widgets::scroll_area(ui, "restore-sources", |ui| {
                 for destination in repositories {
                     let selected = self.screens.restore.selected_destination == Some(destination.id);
                     let (rect, response) = ui.allocate_exact_size(
@@ -923,7 +920,7 @@ pub fn show_options(
                 state.conflict = Some(ConflictPolicy::Skip);
             }
             if !state.to_original {
-                ui.horizontal(|ui| {
+                ui.horizontal_top(|ui| {
                     ui.add_space(28.0);
                     widgets::Field::new().width(340.0).mono().show(ui, &mut state.target);
                     if Button::secondary(copy::action::BROWSE).show(ui).clicked() {
