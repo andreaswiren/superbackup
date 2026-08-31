@@ -16,9 +16,20 @@
 //! ever holds that role, because two processes driving one Kopia repository
 //! risks corrupting it. See `docs/ARCHITECTURE.md`.
 
-// The tray/GUI build must not flash a console window on Windows. Debug builds
-// keep the console so `cargo run` still shows tracing output.
-#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+// This binary is deliberately a **console** application on Windows, even though
+// its default mode is a tray icon.
+//
+// The obvious choice is `windows_subsystem = "windows"`, and it was wrong. A
+// GUI-subsystem process has no console, so `superbackup status` typed at a
+// PowerShell prompt printed nothing at all — and worse, the shell does not
+// *wait* for a GUI-subsystem process, so it returned immediately and never set
+// an exit code. A CLI that prints nothing and reports no status is not a CLI,
+// and this one is a headline feature that an agent is meant to drive.
+//
+// So: console subsystem, and the tray and GUI detach from the console at
+// startup (see `detach_console`). The cost is one brief console flash when the
+// tray is launched from Explorer or at login. The alternative cost was a silent
+// CLI in every terminal, which is far worse.
 
 mod cli;
 mod daemon;
@@ -31,8 +42,39 @@ use std::process::ExitCode;
 use clap::Parser;
 use superbackup_core::paths::Paths;
 
+/// Release the console this process was given, for modes that have a window
+/// instead of a terminal.
+///
+/// The tray and the GUI are long-lived and must not hold a console open behind
+/// them. `FreeConsole` closes it immediately; when the process was launched
+/// from an existing terminal there is nothing to close and this is a no-op that
+/// simply detaches.
+#[cfg(windows)]
+fn detach_console() {
+    use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+
+    // SAFETY: both calls take no memory we own. Hiding before freeing keeps the
+    // window from lingering for a frame on slower machines.
+    unsafe {
+        let window = GetConsoleWindow();
+        if !window.is_null() {
+            ShowWindow(window, SW_HIDE);
+        }
+        FreeConsole();
+    }
+}
+
 fn main() -> ExitCode {
     let parsed = cli::Cli::parse();
+
+    // Modes that own a window rather than a terminal give the console back.
+    // `daemon` deliberately keeps it: it logs to stdout and is usually run in a
+    // terminal on purpose.
+    #[cfg(windows)]
+    if matches!(parsed.command, None | Some(cli::Command::Gui)) {
+        detach_console();
+    }
     let global = parsed.global.clone();
 
     let paths = match resolve_paths(&global) {

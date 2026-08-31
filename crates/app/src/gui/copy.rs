@@ -122,7 +122,7 @@ pub mod onboarding {
         "superbackup runs Kopia, an open-source backup engine. See kopia.io.";
 
     pub const PASS_TITLE: &str = "Create your master passphrase";
-    pub const PASS_LEAD: &str = "This passphrase unlocks the vault that holds your repository passphrases and storage keys. You will type it when you start superbackup, and when a backup needs to run unattended.";
+    pub const PASS_LEAD: &str = "This passphrase unlocks the vault that holds your repository encryption keys and storage keys. You will type it when you start superbackup, and when a backup needs to run unattended.";
     pub const PASS_NOT_REPO: &str = "This is not the passphrase of any single backup repository. It is the one that protects all of them.";
     pub const PASS_FIELD: &str = "Master passphrase";
     pub const PASS_CONFIRM: &str = "Confirm passphrase";
@@ -161,7 +161,7 @@ pub mod onboarding {
     pub const JOB_DESTINATIONS: &str = "Where to keep the copies";
     pub const JOB_LATER: &str =
         "Object storage such as StorJ or S3 can be added later, in Destinations.";
-    pub const JOB_DERIVED: &str = "The repository passphrase is worked out from your master passphrase, so there is only one secret to keep safe.";
+    pub const JOB_DERIVED: &str = "The repository encryption key is worked out from your master passphrase, so there is only one secret to keep safe.";
     pub const JOB_DERIVED_CHANGE: &str = "Change…";
     pub const JOB_NAME: &str = "Job name";
     pub const JOB_REVIEW: &str = "Ready to create";
@@ -270,7 +270,7 @@ pub mod vault {
     pub const BANNER_ACTION: &str = "Unlock";
 
     pub const UNLOCK_TITLE: &str = "Unlock superbackup";
-    pub const UNLOCK_BODY: &str = "Your master passphrase decrypts the repository passphrases and storage keys needed to run backups.";
+    pub const UNLOCK_BODY: &str = "Your master passphrase decrypts the repository encryption keys and storage keys needed to run backups.";
     pub const UNLOCK_FIELD: &str = "Master passphrase";
     pub const UNLOCK_REMEMBER: &str = "Remember until I sign out";
     pub const UNLOCK_BUTTON: &str = "Unlock";
@@ -290,7 +290,7 @@ pub mod locked {
     pub const INLINE_PROMPT: &str = "Unlock to enter credentials";
     pub const RESTORE_TITLE: &str = "Unlock to browse your backups";
     pub const RESTORE_BODY: &str =
-        "Listing snapshots needs the repository passphrase, which is kept in the vault.";
+        "Listing snapshots needs the repository encryption key, which is kept in the vault.";
     pub const NEXT_RUN: &str = "blocked while locked";
     pub const PAUSED_NEXT_RUN: &str = "blocked while paused";
 }
@@ -844,7 +844,7 @@ pub mod dest {
     pub const CONNECT_BODY: &str = "There is already a repository at this location. Its passphrase is needed once, and is then kept in your vault.";
     pub const CONNECT_DERIVE: &str = "Work it out from my master passphrase";
     pub const CONNECT_TYPE: &str = "I will type it";
-    pub const CONNECT_FIELD: &str = "Repository passphrase";
+    pub const CONNECT_FIELD: &str = "Repository encryption key";
     pub const CONNECT_WRONG: &str = "That passphrase did not open this repository.";
     pub const CONNECT_SETTINGS_NOTE: &str =
         "These settings were chosen when the repository was created and cannot be changed.";
@@ -930,7 +930,7 @@ pub mod enc {
     pub const ECC_OVERHEAD: &str = "Overhead";
     pub const ECC_ALGORITHM: &str = "Reed-Solomon with CRC32";
 
-    pub const PASS_TITLE: &str = "Repository passphrase";
+    pub const PASS_TITLE: &str = "Repository encryption key";
     pub const PASS_GENERATED: &str = "Generate one for me";
     pub const PASS_GENERATED_BODY: &str = "superbackup generates 256 random bits and keeps them in your vault. You are shown the passphrase once and asked to save it.";
     pub const PASS_SUPPLIED: &str = "I will choose it";
@@ -1429,7 +1429,14 @@ pub mod set {
     pub const NOTIF_DEDUPE: &str = "Do not repeat the same problem within";
     pub const NOTIF_DEDUPE_UNIT: &str = "minutes";
     pub const NOTIF_TEST: &str = "Send a test notification";
-    pub const NOTIF_TEST_BODY: &str = "A test notification was sent. If nothing appeared, notifications may be switched off for superbackup in your system settings.";
+    pub const NOTIF_TEST_BODY: &str = "Test notification sent. If nothing appeared on your desktop, notifications may be switched off for superbackup in your system settings.";
+    /// The title of the notification the operating system actually shows.
+    pub const NOTIF_TEST_TITLE: &str = "superbackup";
+    pub const NOTIF_TEST_SENT: &str = "This is a test notification. Backups are not affected.";
+    pub const NOTIF_TEST_UNAVAILABLE: &str =
+        "This system has no notification service available, so nothing was shown.";
+    pub const NOTIF_TEST_FAILED: &str = "The system refused the notification.";
+    pub const NOTIF_TEST_SUPPRESSED: &str = "The notification was suppressed before it was sent.";
     pub const NOTIF_BLOCKED: &str = "Your system is not showing notifications from superbackup.";
     pub const NOTIF_BLOCKED_ACTION: &str = "Open system settings";
 
@@ -1444,10 +1451,10 @@ pub mod set {
     pub const SEC_CHANGE_NEW: &str = "New passphrase";
     pub const SEC_CHANGE_CONFIRM: &str = "Confirm new passphrase";
     pub const SEC_CHANGE_DONE_TITLE: &str = "Master passphrase changed";
-    pub const SEC_CHANGE_DONE_BODY: &str = "The vault has been re-encrypted and a backup of the old one saved. Repository passphrases worked out from the master passphrase have been recalculated, so no repository needs creating again.";
-    pub const SEC_EXPORT: &str = "Export repository passphrases…";
-    pub const SEC_EXPORT_TITLE: &str = "Export repository passphrases";
-    pub const SEC_EXPORT_BODY: &str = "This writes every repository passphrase to a plain text file you choose. The file is not encrypted. Treat it exactly as you would treat the passphrases.";
+    pub const SEC_CHANGE_DONE_BODY: &str = "The vault has been re-encrypted and a backup of the old one saved. Repository encryption keys worked out from the master passphrase have been recalculated, so no repository needs creating again.";
+    pub const SEC_EXPORT: &str = "Export repository encryption keys…";
+    pub const SEC_EXPORT_TITLE: &str = "Export repository encryption keys";
+    pub const SEC_EXPORT_BODY: &str = "This writes every repository encryption key to a plain text file you choose. The file is not encrypted. Treat it exactly as you would treat the passphrases.";
     pub const SEC_EXPORT_CONFIRM: &str = "Enter your master passphrase to continue";
     pub const SEC_EXPORT_BUTTON: &str = "Choose a file and export";
     pub const SEC_BACKUPS: &str = "Vault backups";
@@ -1455,7 +1462,7 @@ pub mod set {
     pub const SEC_BACKUPS_RESTORE: &str = "Restore a backup…";
     pub const SEC_RESET: &str = "Reset the vault and start over";
     pub const SEC_RESET_TITLE: &str = "Reset the vault?";
-    pub const SEC_RESET_BODY: &str = "Every stored secret is destroyed: repository passphrases, storage keys and tokens. Repositories whose passphrase was generated or worked out from your master passphrase cannot be opened again unless you have exported the passphrase.";
+    pub const SEC_RESET_BODY: &str = "Every stored secret is destroyed: repository encryption keys, storage keys and tokens. Repositories whose passphrase was generated or worked out from your master passphrase cannot be opened again unless you have exported the passphrase.";
     pub const SEC_RESET_CONFIRM: &str = "Type superbackup to confirm";
     pub const SEC_RESET_BUTTON: &str = "Reset the vault";
 
@@ -1874,7 +1881,7 @@ pub fn toast_export_done(path: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub mod a11y {
-    pub const PASSPHRASE_BLOCK: &str = "Repository passphrase. Focus this and use your screen reader's character-by-character reading to hear it.";
+    pub const PASSPHRASE_BLOCK: &str = "Repository encryption key. Focus this and use your screen reader's character-by-character reading to hear it.";
 }
 
 pub fn a11y_rail_item(label: &str, index: usize, total: usize) -> String {

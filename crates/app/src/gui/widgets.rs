@@ -1505,10 +1505,15 @@ impl<'a> Field<'a> {
                     multi = multi
                         .hint_text(egui::RichText::new(p).color(t.text_muted).font(font.clone()));
                 }
-                ui.add_enabled(self.enabled, multi)
+                ui.scope(|ui| {
+                    suppress_builtin_frame_stroke(ui);
+                    ui.add_enabled(self.enabled, multi)
+                })
+                .inner
             } else {
                 ui.scope(|ui| {
                     ui.set_min_height(size::CONTROL_H);
+                    suppress_builtin_frame_stroke(ui);
                     ui.add_enabled(self.enabled, edit)
                 })
                 .inner
@@ -1584,6 +1589,31 @@ impl Default for Field<'_> {
     }
 }
 
+/// Stop egui drawing its own outline inside a text field.
+///
+/// `TextEdit` paints a frame — a background *and* a stroke — and this widget
+/// paints its own border over the top. The result was two concentric rounded
+/// rectangles a couple of pixels apart, most obvious when focused, where
+/// egui's `selection.stroke` is a bright accent: the field appeared to have a
+/// stray ring floating inside it.
+///
+/// The strokes are cleared rather than the whole frame disabled, because the
+/// frame is also what fills the background, and painting that ourselves after
+/// the widget would cover the text.
+fn suppress_builtin_frame_stroke(ui: &mut Ui) {
+    let v = ui.visuals_mut();
+    v.selection.stroke = Stroke::NONE;
+    for w in [
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+        &mut v.widgets.noninteractive,
+    ] {
+        w.bg_stroke = Stroke::NONE;
+    }
+}
+
 /// A passphrase field with the reveal toggle inside its right edge. Revealing
 /// is never persistent: the caller re-masks on blur and on window focus loss.
 pub fn passphrase_field(
@@ -1594,22 +1624,34 @@ pub fn passphrase_field(
     error: Option<&str>,
     width: f32,
 ) -> Response {
+    let t = theme::tokens(ui.ctx());
     let mut response = None;
-    ui.horizontal(|ui| {
-        let mut field = Field::new().label(label).width(width - 34.0).error(error);
-        if !*revealed {
-            field = field.password();
-        }
-        let r = field.show(ui, value);
-        response = Some(r);
-        ui.add_space(space::XS);
-        let icon = if *revealed { Icon::EyeOff } else { Icon::Eye };
-        let label = if *revealed { "Hide the passphrase" } else { "Show the passphrase" };
-        if icon_button(ui, icon, label, true).clicked() {
-            *revealed = !*revealed;
-        }
+    // The label is drawn here rather than by `Field`, and that is the whole
+    // fix. With the label inside the field, the row contained a two-line block
+    // (label above input) beside a one-line button, and egui centred the button
+    // against the *whole* block — putting the eye up beside the label instead
+    // of in the input. With the label outside, the row holds an input and a
+    // button that are both exactly `CONTROL_H` tall, so they align by
+    // construction rather than by a hand-tuned offset.
+    ui.vertical(|ui| {
+        text(ui, label, Type::H3, t.text_primary);
+        ui.add_space(space::S);
+        ui.horizontal_top(|ui| {
+            let mut field = Field::new().width(width - 34.0).error(error);
+            if !*revealed {
+                field = field.password();
+            }
+            let r = field.show(ui, value);
+            response = Some(r);
+            ui.add_space(space::XS);
+            let icon = if *revealed { Icon::EyeOff } else { Icon::Eye };
+            let hint = if *revealed { "Hide the passphrase" } else { "Show the passphrase" };
+            if icon_button(ui, icon, hint, true).clicked() {
+                *revealed = !*revealed;
+            }
+        });
     });
-    response.expect("the horizontal layout always runs")
+    response.expect("the vertical layout always runs")
 }
 
 /// A numeric field. egui has no spinner and no input mask (L11), so this is a

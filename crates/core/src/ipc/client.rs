@@ -762,15 +762,21 @@ impl AutoStart {
     /// command's output, which is how `--json` gets corrupted.
     fn spawn(&self) -> Result<()> {
         use std::process::{Command, Stdio};
-        Command::new(&self.program)
-            .args(&self.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                Error::io(format!("starting the daemon ({})", self.program.display()), e)
-            })?;
+        let mut command = Command::new(&self.program);
+        command.args(&self.args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            // Belt and braces: the daemon is a GUI-subsystem binary and so
+            // creates no console of its own, but a future console-subsystem
+            // build must not start flashing a window every time the CLI
+            // auto-starts it.
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        command.spawn().map_err(|e| {
+            Error::io(format!("starting the daemon ({})", self.program.display()), e)
+        })?;
         Ok(())
     }
 }

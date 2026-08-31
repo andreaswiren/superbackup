@@ -105,6 +105,15 @@ pub struct Toasts {
     announcement: Option<(String, Instant)>,
 }
 
+/// How much room the toast title actually has.
+///
+/// The bubble insets 40px on the left for the icon and 12px on the right, and
+/// the close button takes a compact control plus its spacing. Anything wider
+/// than this overflows the bubble, which is exactly what an unwrapped title did.
+fn title_width(toast_width: f32) -> f32 {
+    (toast_width - 40.0 - 12.0 - size::CONTROL_H_COMPACT - space::S).max(80.0)
+}
+
 impl Toasts {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
@@ -192,7 +201,22 @@ impl Toasts {
                     .y
                 })
                 .unwrap_or(0.0);
-            let height = (52.0_f32).max(24.0 + 20.0 + body_lines);
+            // The title has to be measured, not assumed to be one line. It was
+            // drawn unwrapped against a fixed 20px allowance, so any title
+            // longer than the bubble simply ran out of it — which is what a
+            // notification title routinely is, because it carries the whole
+            // sentence when there is no body.
+            let title_lines = widgets::galley_wrapped(
+                ui,
+                toast.title.clone(),
+                Type::BodyStrong,
+                t.text_primary,
+                title_width(width),
+            )
+            .size()
+            .y;
+            let body_gap = if toast.body.is_some() { space::XS } else { 0.0 };
+            let height = (52.0_f32).max(22.0 + title_lines + body_gap + body_lines);
             let rect = Rect::from_min_size(
                 egui::Pos2::new(area.right() - 16.0 - width, bottom - height),
                 Vec2::new(width, height),
@@ -236,9 +260,15 @@ impl Toasts {
                     .layout(Layout::top_down(Align::Min)),
             );
             child.spacing_mut().item_spacing.y = space::XS;
-            child.horizontal(|ui| {
-                widgets::text(ui, toast.title.clone(), Type::BodyStrong, t.text_primary);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            child.horizontal_top(|ui| {
+                widgets::paragraph_at(
+                    ui,
+                    toast.title.clone(),
+                    Type::BodyStrong,
+                    t.text_primary,
+                    title_width(width),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                     if widgets::icon_button_compact(ui, Icon::X, super::copy::action::CLOSE, true)
                         .clicked()
                     {

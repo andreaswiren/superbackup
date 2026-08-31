@@ -75,6 +75,9 @@ use menu::{Action, Item, MenuPlan};
 /// active; an idle tray raises no timer at all.
 const ANIMATION_INTERVAL: Duration = Duration::from_millis(120);
 
+/// Re-read the taskbar theme every this many animation ticks (~1 s at 120 ms).
+const THEME_CHECK_EVERY: u32 = 8;
+
 /// The menu's second header line updates at most once a second (§14.3), so the
 /// watcher coalesces progress at this rate rather than rebuilding a native
 /// menu on every frame — which on Windows would flicker an open menu.
@@ -189,6 +192,7 @@ fn spawn_watcher(runtime: Arc<Runtime>, commands: std::sync::mpsc::Sender<TrayCo
         refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut animation: Option<tokio::time::Interval> = None;
         let mut theme = icons::system_uses_light_theme();
+        let mut theme_ticks: u32 = 0;
 
         // Paint once immediately, so the icon is correct before the first
         // event rather than after it.
@@ -224,7 +228,15 @@ fn spawn_watcher(runtime: Arc<Runtime>, commands: std::sync::mpsc::Sender<TrayCo
                         (false, true) => animation = None,
                         _ => {}
                     }
-                    let now = icons::system_uses_light_theme();
+                    // Even a native registry read does not belong on a 120 ms
+                    // tick: the taskbar theme changes when a human changes it,
+                    // not eight times a second. Check about once a second.
+                    theme_ticks = theme_ticks.wrapping_add(1);
+                    let now = if theme_ticks % THEME_CHECK_EVERY == 0 {
+                        icons::system_uses_light_theme()
+                    } else {
+                        theme
+                    };
                     if now != theme {
                         theme = now;
                         if commands.send(TrayCommand::ThemeChanged).is_err() {
@@ -684,6 +696,17 @@ fn open_interface(runtime: &Arc<Runtime>, extra: &[&str]) {
         .arg(runtime.paths.config_dir.parent().unwrap_or(&runtime.paths.config_dir));
     for arg in extra {
         command.arg(arg);
+    }
+    #[cfg(windows)]
+    {
+        // This binary is a console application (so that its CLI works in a
+        // terminal at all), which means Windows allocates a console for any
+        // child launched from a process that has none — a black window that
+        // appears and vanishes each time the tray opens Settings or Activity.
+        // The GUI has a window of its own and never needs a console.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
     if let Err(e) = command.spawn() {
         tracing::warn!(error = %e, "could not open the interface");

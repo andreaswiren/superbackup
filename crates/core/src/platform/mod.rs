@@ -446,3 +446,34 @@ mod tests {
         }
     }
 }
+
+/// Does the user's taskbar use the light theme?
+///
+/// Windows keeps this in
+/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`.
+/// Every other platform is assumed dark, matching the design system's
+/// "Linux: full colour, dark-taskbar variant".
+///
+/// This lives here rather than in the tray because the tray crate cannot reach
+/// `win32::RegKey`, and its workaround was to shell out to `reg.exe` — a
+/// **console** application — from inside the animation tick. At a 120 ms tick
+/// that spawned roughly eight console windows a second for as long as a backup
+/// was running, which is precisely the "windows keep appearing and
+/// disappearing" a user reports. A registry read must never cost a process.
+pub fn system_uses_light_theme() -> bool {
+    #[cfg(windows)]
+    {
+        win32::RegKey::open(
+            win32::Hive::CurrentUser,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        )
+        .and_then(|k| k.dword("SystemUsesLightTheme"))
+        .map(|v| v != 0)
+        // Windows omits the value on some editions; dark is the modern default.
+        .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}

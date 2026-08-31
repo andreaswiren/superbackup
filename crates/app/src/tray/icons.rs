@@ -297,33 +297,13 @@ impl Variant {
 /// Every other platform is assumed dark, matching §7.4's "Linux: full colour,
 /// dark-taskbar variant".
 pub fn system_uses_light_theme() -> bool {
-    #[cfg(windows)]
-    {
-        // Read through the registry with the same query `reg.exe` performs.
-        // `platform::win32` is private to the core crate, so this reads the
-        // value with the tool Windows ships rather than duplicating a registry
-        // binding here — it runs once per theme check, not per frame.
-        let output = std::process::Command::new("reg")
-            .args([
-                "query",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-                "/v",
-                "SystemUsesLightTheme",
-            ])
-            .output();
-        if let Ok(output) = output {
-            let text = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = text.lines().find(|l| l.contains("SystemUsesLightTheme")) {
-                // `    SystemUsesLightTheme    REG_DWORD    0x1`
-                return line.rsplit_once("0x").map(|(_, v)| v.trim() != "0").unwrap_or(false);
-            }
-        }
-        false
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
+    // Reads the registry natively through the core platform layer.
+    //
+    // This used to shell out to `reg.exe`. That is a *console* application, and
+    // this function is called from the tray's animation tick — so at a 120 ms
+    // tick it spawned about eight console windows a second for the whole
+    // duration of a backup. Never spawn a process to read a registry value.
+    superbackup_core::platform::system_uses_light_theme()
 }
 
 /// One mark: a state, a variant, and (for `Running`) an animation frame.

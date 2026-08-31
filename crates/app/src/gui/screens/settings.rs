@@ -771,7 +771,34 @@ impl App {
 
         ui.add_space(space::XL);
         if Button::secondary(copy::set::NOTIF_TEST).enabled(on).show(ui).clicked() {
-            self.toasts.info(copy::set::NOTIF_TEST_BODY);
+            // This used to show only an in-app toast reading "A test
+            // notification was sent" — while sending nothing at all. The whole
+            // point of the button is to find out whether the operating system
+            // will actually show one, so it now sends a real notification and
+            // reports what the platform said rather than assuming success.
+            use superbackup_core::platform::notify::{
+                Notification, NotificationKind, Notifier, NotifyOutcome,
+            };
+            let notifier = Notifier::new(self.data.settings.notifications.clone());
+            let outcome = notifier.notify(&Notification::new(
+                NotificationKind::Info,
+                copy::set::NOTIF_TEST_TITLE,
+                copy::set::NOTIF_TEST_SENT,
+            ));
+            match outcome {
+                NotifyOutcome::Shown => self.toasts.info(copy::set::NOTIF_TEST_BODY),
+                NotifyOutcome::Unavailable { reason } => {
+                    self.toasts.warning(format!("{} {reason}", copy::set::NOTIF_TEST_UNAVAILABLE))
+                }
+                NotifyOutcome::Failed { reason } => {
+                    self.toasts.warning(format!("{} {reason}", copy::set::NOTIF_TEST_FAILED))
+                }
+                // The test bypasses the dedupe window and the per-kind
+                // switches deliberately: the user asked for one now.
+                other => {
+                    self.toasts.warning(format!("{} ({other:?})", copy::set::NOTIF_TEST_SUPPRESSED))
+                }
+            }
         }
         if !superbackup_core::platform::capabilities().notifications {
             ui.add_space(space::L);

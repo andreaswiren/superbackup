@@ -23,6 +23,17 @@
 //! A provider is defined once and reused by every destination that lives on
 //! it. A destination pins a bucket and a key prefix, and may override the
 //! provider credentials when that particular bucket uses its own key pair.
+//!
+//! # Chained destinations
+//!
+//! A destination may declare itself a **replica** of another
+//! ([`Destination::replicate_from`]): instead of the job's sources being read,
+//! chunked and encrypted a second time, the source destination's repository is
+//! copied blob-for-blob with `kopia repository sync-to`. See
+//! [`Destination::replicate_from`] for the constraints that fall out of how
+//! kopia implements that, the most important of which is that **a replica is
+//! the same repository, with the same encryption key and the same
+//! passphrase** — it is not, and cannot be, independently keyed.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -32,7 +43,24 @@ use uuid::Uuid;
 
 /// Bump when a breaking change lands in the on-disk shapes below. The loader
 /// migrates forward and refuses to load anything newer than it understands.
-pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+///
+/// * 1 — first versioned schema.
+/// * 2 — [`Destination::replicate_from`]. The bump is deliberate even though
+///   the field has a serde default: an older build would silently drop it and
+///   then *create a separate, independently keyed repository* at a destination
+///   the user believes is a replica. Refusing to open the document is the only
+///   safe way for an older build to behave, and refusing is exactly what the
+///   version check makes it do.
+pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+
+/// How many `replicate_from` hops a chain may have.
+///
+/// Kopia places no limit — a replica is byte-identical to its source, so a
+/// replica of a replica is well defined and works. The cap exists so a
+/// malformed or hostile document cannot make chain resolution walk a very long
+/// list, and so the run order of one job stays comprehensible to the person
+/// reading it. Eight is far beyond any real topology.
+pub const MAX_REPLICATION_DEPTH: usize = 8;
 
 // ---------------------------------------------------------------------------
 // Secret handles
@@ -133,6 +161,72 @@ impl Config {
     /// Every job that writes to a given destination.
     pub fn jobs_using(&self, destination_id: &Uuid) -> Vec<&Job> {
         self.jobs.iter().filter(|j| j.destination_ids.contains(destination_id)).collect()
+    }
+
+    /// The destination a replica is synchronised from, if it is one and the
+    /// source still exists.
+    pub fn replication_source(&self, destination: &Destination) -> Option<&Destination> {
+        self.destination(destination.replicate_from.as_ref()?)
+    }
+
+    /// Every destination that replicates *from* this one, in configuration
+    /// order. Direct dependants only, not the whole subtree.
+    pub fn replicas_of(&self, destination_id: &Uuid) -> Vec<&Destination> {
+        self.destinations
+            .iter()
+            .filter(|d| d.replicate_from.as_ref() == Some(destination_id))
+            .collect()
+    }
+
+    /// Walk `destination` up its chain to the destination that is actually
+    /// backed up from sources.
+    ///
+    /// This is the destination whose repository — and therefore whose
+    /// encryption key and passphrase — the whole chain shares, which is why
+    /// every secret lookup for a replica has to start here rather than at the
+    /// replica itself.
+    ///
+    /// Returns `None` when the chain is broken (a dangling `replicate_from`)
+    /// or cyclic. Both are rejected by [`crate::config::validate`], so a caller
+    /// holding a validated config may treat `None` as "not a replica"; a
+    /// caller holding a leniently loaded one must handle it, which is why this
+    /// returns an `Option` rather than looping forever or panicking.
+    pub fn replication_root<'a>(&'a self, destination: &'a Destination) -> Option<&'a Destination> {
+        let mut current = destination;
+        let mut seen: Vec<Uuid> = vec![current.id];
+        for _ in 0..MAX_REPLICATION_DEPTH {
+            let Some(parent_id) = current.replicate_from else { return Some(current) };
+            if seen.contains(&parent_id) {
+                return None;
+            }
+            seen.push(parent_id);
+            current = self.destination(&parent_id)?;
+        }
+        None
+    }
+
+    /// `destination`'s chain from its root down to itself, root first.
+    ///
+    /// Empty when the chain is broken or cyclic, for the reasons given on
+    /// [`Config::replication_root`].
+    pub fn replication_chain<'a>(&'a self, destination: &'a Destination) -> Vec<&'a Destination> {
+        let mut chain: Vec<&Destination> = Vec::new();
+        let mut current = destination;
+        for _ in 0..=MAX_REPLICATION_DEPTH {
+            chain.push(current);
+            let Some(parent_id) = current.replicate_from else {
+                chain.reverse();
+                return chain;
+            };
+            if chain.iter().any(|d| d.id == parent_id) {
+                return Vec::new();
+            }
+            match self.destination(&parent_id) {
+                Some(parent) => current = parent,
+                None => return Vec::new(),
+            }
+        }
+        Vec::new()
     }
 
     /// Resolve a job by UUID, by exact name, or by unambiguous name prefix.
@@ -668,12 +762,55 @@ pub struct Destination {
     /// Per-destination bandwidth ceiling, overriding the global setting.
     #[serde(default)]
     pub bandwidth: Option<BandwidthSettings>,
+    /// When set, this destination is a **replica** of the destination with
+    /// this id: its contents are produced by `kopia repository sync-to` from
+    /// that repository, not by reading the job's sources a second time.
+    ///
+    /// # What kopia actually does, and what follows from it
+    ///
+    /// `repository sync-to` is *blob-level replication*. It compares the two
+    /// storage locations' blob lists and copies what is missing — including
+    /// the `kopia.repository` format blob, which it writes to an empty
+    /// destination before anything else. If the destination already holds a
+    /// repository with a different unique id, kopia refuses outright with
+    /// `destination repository contains incompatible data`
+    /// (`ensureRepositoriesHaveSameFormatBlob` in `cli/command_repository_sync.go`).
+    ///
+    /// So a replica is not "another backup of the same data": it *is* the same
+    /// repository, at a second address. Three consequences, all load-bearing:
+    ///
+    /// 1. **The encryption key is not independent.** The replica has the
+    ///    source's format blob, so it has the source's master key and opens
+    ///    with the source's passphrase. A replica must therefore carry no
+    ///    `encryption` and no `passphrase_ref` of its own — the validator
+    ///    rejects a document where it does, because a user who believes the
+    ///    offsite copy has its own key has a false belief about the only thing
+    ///    that matters if the source machine is compromised.
+    /// 2. **A replica is never created.** Running `repository create` against
+    ///    it would mint a *different* unique id and every later sync would
+    ///    fail. The engine connects rather than creates.
+    /// 3. **The source must be a repository.** A
+    ///    [`DestinationKind::LocalMirror`] is a plain file copy with no blobs
+    ///    and no format blob, so there is nothing for kopia to replicate.
+    ///
+    /// Chains deeper than one hop are allowed (see [`MAX_REPLICATION_DEPTH`]):
+    /// a replica is byte-identical to its source, so replicating *it* onward is
+    /// the same operation again. Cycles are not, and are rejected at
+    /// validation.
+    #[serde(default)]
+    pub replicate_from: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     #[serde(default)]
     pub last_verified_at: Option<DateTime<Utc>>,
 }
 
 impl Destination {
+    /// True when this destination is filled by replication rather than by
+    /// backing up the job's sources.
+    pub fn is_replica(&self) -> bool {
+        self.replicate_from.is_some()
+    }
+
     pub fn secret_refs(&self) -> Vec<&SecretRef> {
         let mut v = Vec::new();
         if let Some(p) = &self.passphrase_ref {

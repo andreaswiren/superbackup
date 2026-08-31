@@ -229,6 +229,11 @@ fn shell_command(command: &str) -> tokio::process::Command {
         // `/C` runs and exits. The command is passed as one argument, so no
         // additional quoting is applied to what the user wrote.
         cmd.arg("/C").arg(command);
+        // `cmd.exe` is a console application, so a tray or service process
+        // spawning it flashes a console window on every hook — once per run,
+        // forever. The pipes we read the output from are unaffected.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
         cmd
     }
     #[cfg(not(windows))]
