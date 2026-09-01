@@ -513,7 +513,7 @@ fn snapshot_info(
     SnapshotInfo {
         id: manifest.id.clone(),
         destination_id,
-        job_id: manifest.tags.get("superbackup-job").and_then(|v| Uuid::parse_str(v).ok()),
+        job_id: manifest.tag("superbackup-job").and_then(|v| Uuid::parse_str(v).ok()),
         created_at: manifest.start_time.unwrap_or_else(Utc::now),
         source_path: manifest.source.path.clone(),
         file_count: totals.map(|(files, _)| files),

@@ -14,6 +14,21 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.1] - 2026-09-02
+
+### Fixed
+
+- **Restore could not find any snapshot to restore.** kopia prefixes every tag
+  key with `tag:` when it stores it, so a snapshot created with
+  `--tags=superbackup-job:<id>` comes back as `{"tag:superbackup-job": …}`.
+  The lookup used the bare name, so a snapshot's job was always unknown — which
+  made every job-filtered query empty. `superbackup restore Development`
+  answered "Development has no snapshots to restore from" about a repository
+  holding 134,833 files, and `superbackup snapshots Development` said none had
+  ever been taken. Verified against kopia 0.23.1 by writing a tag and reading it
+  back, and end to end by restoring a file out of the real 15.2 GB snapshot and
+  byte-comparing it with the original.
+
 ## [0.2.0] - 2026-09-01
 
 The release in which the backups actually run. 0.1.0 could not create a

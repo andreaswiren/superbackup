@@ -211,10 +211,32 @@ pub struct SnapshotManifest {
     pub incomplete_reason: String,
     #[serde(default, rename = "rootEntry")]
     pub root_entry: Option<DirEntry>,
+    /// Tags, **as kopia stores them**: every key carries a `tag:` prefix, so a
+    /// snapshot created with `--tags=superbackup-job:<id>` comes back as
+    /// `{"tag:superbackup-job": "<id>"}`. Read them with
+    /// [`SnapshotManifest::tag`] rather than indexing this map directly.
     #[serde(default)]
     pub tags: BTreeMap<String, String>,
     #[serde(default)]
     pub pins: Vec<String>,
+}
+
+impl SnapshotManifest {
+    /// A tag by the name it was *written* with.
+    ///
+    /// kopia prefixes every tag key with `tag:` when it stores it, so the name
+    /// passed to `--tags=name:value` is not the key that comes back out. The
+    /// bare name is accepted as a fallback in case a future kopia stops doing
+    /// this, and because a hand-made manifest in a test is easier to read
+    /// without the prefix.
+    ///
+    /// Reading `tags` directly is how `superbackup-job` came back `None` on
+    /// every snapshot ever taken — which made every job-filtered query empty,
+    /// and `superbackup restore <job>` answer "has no snapshots to restore
+    /// from" about a repository holding 134,833 files.
+    pub fn tag(&self, name: &str) -> Option<&str> {
+        self.tags.get(&format!("tag:{name}")).or_else(|| self.tags.get(name)).map(String::as_str)
+    }
 }
 
 impl SnapshotManifest {
@@ -336,6 +358,53 @@ pub fn parse_snapshot_list(text: &str) -> Vec<SnapshotManifest> {
 
 #[cfg(test)]
 mod tests {
+
+    /// kopia prefixes tag keys with `tag:` on the way out.
+    ///
+    /// Verified against kopia 0.23.1 by creating a repository, taking a
+    /// snapshot with `--tags=superbackup-job:<uuid>`, and reading
+    /// `snapshot list --json`: the key comes back as `tag:superbackup-job`.
+    /// Indexing `tags` with the bare name therefore always missed, which made
+    /// every job-filtered snapshot query return nothing and broke restore
+    /// completely.
+    #[test]
+    fn a_tag_is_found_under_kopias_prefixed_key() {
+        let json = r#"{
+            "id": "k1",
+            "source": {"host": "h", "userName": "u", "path": "/src"},
+            "tags": {"tag:superbackup-job": "11111111-2222-3333-4444-555555555555"}
+        }"#;
+        let manifest: SnapshotManifest = serde_json::from_str(json).expect("parses");
+        assert_eq!(
+            manifest.tag("superbackup-job"),
+            Some("11111111-2222-3333-4444-555555555555"),
+            "the `tag:` prefix kopia adds must not hide the tag"
+        );
+    }
+
+    #[test]
+    fn an_unprefixed_tag_still_resolves() {
+        // Belt and braces: if a future kopia stops prefixing, this keeps
+        // working rather than breaking restore a second time.
+        let json = r#"{
+            "id": "k1",
+            "source": {"host": "h", "userName": "u", "path": "/src"},
+            "tags": {"superbackup-job": "abc"}
+        }"#;
+        let manifest: SnapshotManifest = serde_json::from_str(json).expect("parses");
+        assert_eq!(manifest.tag("superbackup-job"), Some("abc"));
+    }
+
+    #[test]
+    fn a_missing_tag_is_none_rather_than_a_wrong_answer() {
+        let json = r#"{
+            "id": "k1",
+            "source": {"host": "h", "userName": "u", "path": "/src"},
+            "tags": {"tag:other": "x"}
+        }"#;
+        let manifest: SnapshotManifest = serde_json::from_str(json).expect("parses");
+        assert_eq!(manifest.tag("superbackup-job"), None);
+    }
     use super::*;
 
     // Trimmed from real `kopia snapshot create --json --json-verbose` output.
