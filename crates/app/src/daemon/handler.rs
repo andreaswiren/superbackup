@@ -2504,6 +2504,98 @@ impl Handler for DaemonHandler {
         Ok(self.remote_status_reply(Some(format!("{changes} change(s) available"))).await)
     }
 
+    /// Hand out the sealed configuration so it can be written to a file.
+    ///
+    /// The same document `remote.push` publishes — sealed under the master
+    /// passphrase — so moving a configuration between machines does not
+    /// require setting up a Git remote first. It carries every repository key,
+    /// which is precisely why it is handed out sealed rather than as readable
+    /// configuration: this is a copy of the vault, not an export of its
+    /// contents, and it is worth exactly as much to an attacker as the vault
+    /// file already on disk, which is to say nothing without the passphrase.
+    async fn export_config(&self, _ctx: &RequestContext) -> Result<ConfigDocumentReply> {
+        self.require_unlocked().await?;
+        let payload = {
+            let mut store = self.runtime.store.lock().await;
+            store.publication_payload()?
+        };
+        let size_bytes = payload.len() as u64;
+        let label = superbackup_core::model::slugify(&self.config().await.machine.label);
+        let stamp = Utc::now().format("%Y%m%d");
+        self.runtime.record_event(Event::info(
+            "config.exported",
+            "The sealed configuration was exported to a document.",
+        ));
+        Ok(ConfigDocumentReply {
+            document: superbackup_core::crypto::base64_for_upload(&payload),
+            suggested_filename: format!("superbackup-{label}-{stamp}.sbvault"),
+            size_bytes,
+        })
+    }
+
+    /// Verify an exported document and report what applying it would change.
+    ///
+    /// Deliberately routed through the very same verification a pull uses:
+    /// signature checking, decryption under the master passphrase, validation
+    /// of the incoming configuration, the rollback guard, and the "this is a
+    /// different vault entirely" guard. A manual file is not more trustworthy
+    /// than a Git remote for having been carried on a stick — if anything it
+    /// is less, because nothing recorded where it came from.
+    ///
+    /// Nothing is written. The plan is staged exactly as a pull's is, so
+    /// `remote.apply` accepts it through the code path that already exists.
+    async fn import_config(
+        &self,
+        _ctx: &RequestContext,
+        document: String,
+        allow_rollback: bool,
+    ) -> Result<RemoteDiffReply> {
+        self.require_unlocked().await?;
+        let bytes = superbackup_core::crypto::base64_from_download(document.trim()).map_err(|_| {
+            Error::Validation(
+                "that is not a superbackup configuration document. Export one with                  `config.export`, or choose the .sbvault file you were given."
+                    .into(),
+            )
+        })?;
+        if bytes.is_empty() {
+            return Err(Error::Validation("the configuration document is empty".into()));
+        }
+
+        let fetched = superbackup_core::remote::FetchedVault {
+            bytes,
+            // Recorded in the audit log, so it says what actually happened.
+            source_url: "a file chosen on this machine".to_string(),
+            // No blob SHA: a file has no place to be pushed back to, and
+            // pretending otherwise would let a later push overwrite a remote
+            // using a marker that never came from it.
+            sha: None,
+        };
+        let passphrase = self.runtime.master()?;
+        let options =
+            superbackup_core::remote::PullOptions { allow_rollback, allow_different_vault: false };
+
+        let plan = {
+            let store = self.runtime.store.lock().await;
+            let config = store.config().clone();
+            let source = config.remote.clone().unwrap_or_else(imported_source);
+            superbackup_core::remote::verify_pull_with(
+                &fetched,
+                &config,
+                store.vault(),
+                &source,
+                &passphrase,
+                &options,
+            )?
+        };
+        let changes = describe_diff(&plan.diff);
+        self.runtime.set_pull(Some(plan));
+        self.runtime.record_event(Event::info(
+            "config.imported",
+            format!("A configuration document was read: {} change(s) to review.", changes.len()),
+        ));
+        Ok(RemoteDiffReply { changes, remote_commit: None })
+    }
+
     async fn remote_diff(&self, _ctx: &RequestContext) -> Result<RemoteDiffReply> {
         self.require_unlocked().await?;
         let plan = self.runtime.pull().ok_or_else(|| {
@@ -2691,7 +2783,7 @@ impl DaemonHandler {
                     Severity::Warning,
                     "vault.keychain_not_cleared",
                     format!(
-                        "The saved passphrase could not be removed from the keychain ({e}).                          Remove the superbackup entry by hand."
+                        "The saved passphrase could not be removed from the keychain ({e}). Remove the superbackup entry by hand."
                     ),
                 )),
             }
@@ -2775,6 +2867,28 @@ impl DaemonHandler {
 /// unrecognised failure reached the user as "kopia exited with status 1: kopia
 /// reported an error." The one piece of information that would have explained
 /// it was captured, carried all the way here, and then discarded.
+/// A stand-in `RemoteConfigSource` for a document that came from a file.
+///
+/// `verify_pull_with` takes one because a pull always has a remote behind it.
+/// An import does not, so this describes the only thing that is actually true:
+/// nothing was fetched, and there is nowhere to push back to. Pinning is left
+/// empty deliberately — a file cannot be pinned to a key the way a repository
+/// can, and pretending it could would be a security claim we cannot honour.
+fn imported_source() -> superbackup_core::model::RemoteConfigSource {
+    superbackup_core::model::RemoteConfigSource {
+        url: "file://imported".into(),
+        branch: String::new(),
+        path: String::new(),
+        auth: superbackup_core::model::RemoteAuth::None,
+        auto_pull: false,
+        pull_interval_minutes: 0,
+        allow_push: false,
+        last_pull_at: None,
+        last_known_commit: None,
+        trusted_signers: Vec::new(),
+    }
+}
+
 fn kopia_to_error(e: superbackup_core::kopia::KopiaError) -> Error {
     // Log the whole thing before narrowing it. The detail is already redacted
     // by the capture, and a failure nobody can explain afterwards is how a

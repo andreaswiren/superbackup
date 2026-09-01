@@ -218,7 +218,7 @@ pub async fn try_keychain_unlock(runtime: &Arc<Runtime>) -> bool {
         runtime.record_event(Event::new(
             Severity::Warning,
             "vault.keychain_stale",
-            "The saved passphrase no longer opens the vault — it was probably changed on              another machine — so it was discarded. superbackup will ask for the new one."
+            "The saved passphrase no longer opens the vault — it was probably changed on another machine — so it was discarded. superbackup will ask for the new one."
                 .to_string(),
         ));
         return false;

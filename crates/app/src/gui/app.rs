@@ -294,9 +294,32 @@ impl App {
                 self.toasts.success(copy::toast_removed(name));
                 self.ask(Intent::Destinations, Request::DestinationList {});
             }
-            (Intent::SaveProvider(name), Reply::Provider(_)) => {
+            (Intent::SaveProvider(name), Reply::Provider(reply)) => {
                 self.toasts.success(copy::toast_saved(name));
                 self.ask(Intent::Providers, Request::ProviderList {});
+                // Created from inside a destination editor: select it there and
+                // go back, so the round trip finishes where it started.
+                if self.screens.destination_editor.awaiting_new_provider {
+                    self.screens.destination_editor.awaiting_new_provider = false;
+                    let provider_id = reply.provider.id;
+                    self.data.providers.push((*reply.provider).clone());
+                    if let Some(draft) = &mut self.screens.destination_editor.draft {
+                        if let superbackup_core::model::DestinationKind::S3 {
+                            provider_id: slot,
+                            ..
+                        } = &mut draft.kind
+                        {
+                            *slot = provider_id;
+                        }
+                        let id = draft.id;
+                        let is_new = self.data.destination(&id).is_none();
+                        self.go(if is_new {
+                            Route::NewDestination
+                        } else {
+                            Route::DestinationEditor(id)
+                        });
+                    }
+                }
             }
             (Intent::DeleteProvider(name), Reply::Ack(_)) => {
                 self.toasts.success(copy::toast_removed(name));

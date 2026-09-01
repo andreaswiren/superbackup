@@ -7,8 +7,8 @@ use superbackup_core::model::{Destination, DestinationKind, RetentionPolicy, Set
 use superbackup_core::platform;
 
 use crate::cli::args::{
-    AutostartCommand, ConfigCommand, InitArgs, RemoteCommand, RemotePullArgs, RemotePushArgs,
-    RemoteSetArgs, ServiceCommand, ServiceInstallArgs,
+    AutostartCommand, ConfigCommand, InitArgs, RemoteCommand, RemoteExportArgs, RemoteImportArgs,
+    RemotePullArgs, RemotePushArgs, RemoteSetArgs, ServiceCommand, ServiceInstallArgs,
 };
 use crate::cli::client::{reply, Daemon, Start};
 use crate::cli::context::Ctx;
@@ -789,7 +789,112 @@ pub fn remote(ctx: &mut Ctx, command: RemoteCommand) -> CliResult<Outcome> {
         RemoteCommand::Diff => remote_diff(ctx, &daemon),
         RemoteCommand::Pull(args) => remote_pull(ctx, &daemon, args),
         RemoteCommand::Push(args) => remote_push(ctx, &daemon, args),
+        RemoteCommand::Export(args) => remote_export(ctx, &daemon, args),
+        RemoteCommand::Import(args) => remote_import(ctx, &daemon, args),
+        RemoteCommand::Apply => remote_apply(ctx, &daemon),
     }
+}
+
+/// Write the sealed configuration to a file.
+///
+/// The bytes are the vault: encrypted under the master passphrase, carrying
+/// every repository key. Writing it is not a leak — it is the same protection
+/// the vault on disk already has — but overwriting an existing file without
+/// asking would be, so that needs `--force`.
+fn remote_export(ctx: &mut Ctx, daemon: &Daemon, args: RemoteExportArgs) -> CliResult<Outcome> {
+    let reply = reply!(daemon, Request::ConfigExport {}, ConfigDocument)?;
+    let bytes = reply.document.as_bytes();
+
+    if args.file == std::path::Path::new("-") {
+        ctx.ui.line(&reply.document);
+        return Outcome::data(serde_json::json!({
+            "size_bytes": reply.size_bytes,
+            "suggested_filename": reply.suggested_filename,
+        }));
+    }
+    if args.file.exists() && !args.force {
+        return Err(CliError::usage(format!(
+            "{} already exists. Pass --force to replace it.",
+            args.file.display()
+        )));
+    }
+    std::fs::write(&args.file, bytes)
+        .map_err(|e| CliError::usage(format!("could not write {}: {e}", args.file.display())))?;
+    ctx.ui.line(format!(
+        "Wrote the sealed configuration to {} ({}).",
+        args.file.display(),
+        crate::cli::format::bytes(reply.size_bytes)
+    ));
+    ctx.ui.note(
+        "It is encrypted with your master passphrase and contains every repository key. Anyone who has both the file and that passphrase has your backups.",
+    );
+    Outcome::data(serde_json::json!({
+        "path": args.file.display().to_string(),
+        "size_bytes": reply.size_bytes,
+    }))
+}
+
+/// Read an exported document and report what applying it would change.
+fn remote_import(ctx: &mut Ctx, daemon: &Daemon, args: RemoteImportArgs) -> CliResult<Outcome> {
+    let document = if args.file == std::path::Path::new("-") {
+        use std::io::Read as _;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| CliError::usage(format!("could not read the document from stdin: {e}")))?;
+        buf
+    } else {
+        std::fs::read_to_string(&args.file)
+            .map_err(|e| CliError::usage(format!("could not read {}: {e}", args.file.display())))?
+    };
+
+    let diff = reply!(
+        daemon,
+        Request::ConfigImport { document, allow_rollback: args.allow_rollback },
+        RemoteDiff
+    )?;
+    if diff.changes.is_empty() {
+        ctx.ui.line("Nothing to apply: this configuration matches the one already here.");
+        return Outcome::data(serde_json::json!({ "changes": diff.changes }));
+    }
+    ctx.ui.line(format!(
+        "{} change(s) to apply. Review them, then run `superbackup remote apply`.",
+        diff.changes.len()
+    ));
+    ctx.ui.blank();
+    render_changes(ctx, &diff);
+    Outcome::data(serde_json::json!({ "changes": diff.changes }))
+}
+
+fn remote_apply(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<Outcome> {
+    let status = reply!(daemon, Request::RemoteApply {}, RemoteStatus)?;
+    ctx.ui.line("The configuration was applied.");
+    Outcome::data(status)
+}
+
+/// The change table, shared by `remote diff` and `remote import`.
+fn render_changes(ctx: &mut Ctx, diff: &superbackup_core::ipc::protocol::RemoteDiffReply) {
+    let mut table = Table::new(vec![
+        Column::new("change"),
+        Column::new("what"),
+        Column::new("name").flex(),
+        Column::new("detail").flex(),
+    ])
+    .empty_note("The local configuration matches the incoming one.");
+    for change in &diff.changes {
+        let (label, colour) = match change.kind {
+            superbackup_core::ipc::protocol::ChangeKind::Added => ("added", Colour::Green),
+            superbackup_core::ipc::protocol::ChangeKind::Removed => ("removed", Colour::Red),
+            superbackup_core::ipc::protocol::ChangeKind::Modified => ("changed", Colour::Yellow),
+        };
+        table.push(vec![
+            Cell::coloured(label, colour),
+            Cell::new(change.entity.clone()),
+            Cell::new(change.name.clone()),
+            Cell::new(change.summary.clone()),
+        ]);
+    }
+    ctx.ui.table(&table);
 }
 
 fn remote_set(args: RemoteSetArgs) -> CliResult<Outcome> {

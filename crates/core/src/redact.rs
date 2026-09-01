@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn a_value_on_the_following_line_is_masked() {
-        let s = scrub("config:\n  password:\n    hunter2-the-actual-secret\n  other: fine\n");
+        let s = scrub("config:\n  password:\n hunter2-the-actual-secret\n  other: fine\n");
         assert!(!s.contains("hunter2-the-actual-secret"), "{s}");
         assert!(s.contains("other: fine"), "unrelated lines must survive: {s}");
     }

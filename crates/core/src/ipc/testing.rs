@@ -940,6 +940,25 @@ impl Handler for MockHandler {
         Ok(SettingsReply { settings: Box::new(settings) })
     }
 
+    async fn export_config(&self, _ctx: &RequestContext) -> Result<ConfigDocumentReply> {
+        let _guard = self.enter("config.export").await?;
+        Ok(ConfigDocumentReply {
+            document: "bW9jay1zZWFsZWQtdmF1bHQ=".into(),
+            suggested_filename: "superbackup-config-mock.sbvault".into(),
+            size_bytes: 17,
+        })
+    }
+
+    async fn import_config(
+        &self,
+        _ctx: &RequestContext,
+        _document: String,
+        _allow_rollback: bool,
+    ) -> Result<RemoteDiffReply> {
+        let _guard = self.enter("config.import").await?;
+        Ok(RemoteDiffReply { changes: vec![], remote_commit: None })
+    }
+
     async fn rename_machine(&self, _ctx: &RequestContext, label: String) -> Result<AckReply> {
         let _guard = self.enter("machine.rename").await?;
         if let Ok(mut s) = self.state.lock() {

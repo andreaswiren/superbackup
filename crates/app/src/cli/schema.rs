@@ -133,7 +133,7 @@ const NOTES: &[&str] = &[
      finishes and to get a non-zero exit code when it fails.",
     "No command accepts a passphrase as an argument. Use --passphrase-file, or \
      `-` to read from stdin.",
-    "Mutually exclusive arguments are listed in each argument's conflicts_with.      Arguments that require another argument say so in their own description.",
+    "Mutually exclusive arguments are listed in each argument's conflicts_with. Arguments that require another argument say so in their own description.",
     "This CLI is a thin client over the running instance. If nothing is listening, \
      commands exit 3 rather than starting a second copy, because two processes \
      driving one repository risks corrupting it.",

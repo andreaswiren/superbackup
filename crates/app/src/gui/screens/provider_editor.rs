@@ -175,6 +175,41 @@ impl App {
         }
         self.screens.provider_editor.load(existing.as_ref());
 
+        // Arrived here from a half-finished destination. Say so, and offer the
+        // way back — otherwise the only clue that the destination is still
+        // waiting is that it reappears after saving.
+        if self.screens.destination_editor.awaiting_new_provider && id.is_none() {
+            let mut cancel = false;
+            widgets::banner(
+                ui,
+                widgets::BannerKind::Info,
+                copy::prov::FOR_DESTINATION,
+                Some(copy::prov::FOR_DESTINATION_BODY),
+                |ui| {
+                    if Button::secondary(copy::prov::FOR_DESTINATION_BACK)
+                        .compact()
+                        .show(ui)
+                        .clicked()
+                    {
+                        cancel = true;
+                    }
+                },
+            );
+            ui.add_space(space::L);
+            if cancel {
+                self.screens.destination_editor.awaiting_new_provider = false;
+                let draft_id = self.screens.destination_editor.draft.as_ref().map(|d| d.id);
+                match draft_id {
+                    Some(did) if self.data.destination(&did).is_some() => {
+                        self.go(Route::DestinationEditor(did))
+                    }
+                    Some(_) => self.go(Route::NewDestination),
+                    None => self.go(Route::Destinations),
+                }
+                return;
+            }
+        }
+
         let mut report = self.provider_report();
         if !self.screens.provider_editor.show_errors {
             report.problems.clear();

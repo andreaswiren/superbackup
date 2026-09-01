@@ -97,6 +97,10 @@ pub struct State {
     /// The machines that have left a record at this destination, read from the
     /// destination's own folder. `None` until it has been looked for.
     pub machines: Option<(Uuid, Result<Vec<MachineRecord>, String>)>,
+    /// Set when the user chose "New storage provider…" from this editor, so
+    /// the provider they create is selected here when they come back rather
+    /// than leaving them to find their way to it.
+    pub awaiting_new_provider: bool,
 }
 
 /// What a `dest.check_key` said, reduced to the three answers that differ.
@@ -724,6 +728,16 @@ impl App {
                     |_| {},
                 );
             }
+        }
+
+        if new_provider {
+            // Choosing "New storage provider…" used to set a flag that nothing
+            // read, so the option simply did nothing. The draft survives the
+            // trip — `State::load` only resets when the destination being
+            // edited changes — so the editor is exactly as it was on return.
+            self.screens.destination_editor.awaiting_new_provider = true;
+            self.go(Route::NewProvider);
+            return;
         }
 
         if let Some(url) = open_admin {

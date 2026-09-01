@@ -111,7 +111,7 @@ pub fn trigger(t: superbackup_core::state::Trigger) -> &'static str {
 
 pub mod onboarding {
     pub const VAULT_NO_PATHS: &str =
-        "This window does not know where to store the vault, so setup cannot be completed here.          Run `superbackup init` in a terminal instead.";
+        "This window does not know where to store the vault, so setup cannot be completed here. Run `superbackup init` in a terminal instead.";
     pub const VAULT_ALREADY: &str =
         "A vault already exists. Another window or a terminal created one while this was open —          close this and open superbackup again to unlock it.";
 
@@ -681,17 +681,17 @@ pub mod job {
     pub const SCHEDULE_MANUAL_TIP: &str =
         "Nothing runs on its own. Use \"Back up now\", or `superbackup run <job>`.";
     pub const SCHEDULE_INTERVAL_TIP: &str =
-        "Repeats on a fixed clock from when superbackup started, regardless of the time of day.          Set the interval beside it — hourly is the default.";
+        "Repeats on a fixed clock from when superbackup started, regardless of the time of day. Set the interval beside it — hourly is the default.";
     pub const SCHEDULE_DAILY_TIP: &str =
-        "Runs at the times you list, every day, in this machine's local time. Handles daylight          saving in both directions.";
+        "Runs at the times you list, every day, in this machine's local time. Handles daylight saving in both directions.";
     pub const SCHEDULE_WEEKLY_TIP: &str =
         "Runs at the times you list, but only on the weekdays you tick.";
     pub const SCHEDULE_WORKHOURS_TIP: &str =
-        "Hourly between 08:00 and 17:00, Monday to Friday. Nothing runs overnight or at the          weekend, so a large job cannot tie up the machine while you are away.";
+        "Hourly between 08:00 and 17:00, Monday to Friday. Nothing runs overnight or at the weekend, so a large job cannot tie up the machine while you are away.";
     pub const SCHEDULE_CRON_TIP: &str =
-        "A five-field cron expression, evaluated in local time. Use this when the other options          cannot express what you need.";
+        "A five-field cron expression, evaluated in local time. Use this when the other options cannot express what you need.";
     pub const SCHEDULE_ONCHANGE_TIP: &str =
-        "Watches the folders and runs once they have been quiet for the waiting period. Files          matched by your exclusions never wake it.";
+        "Watches the folders and runs once they have been quiet for the waiting period. Files matched by your exclusions never wake it.";
     pub const SCHEDULE_WORKHOURS: &str = "During work hours";
     pub const SCHEDULE_INTERVAL_UNIT: &str = "minutes";
     pub const SCHEDULE_INTERVAL_WARN: &str =
@@ -727,7 +727,7 @@ pub mod job {
     pub const EXCL_RISKY: &str = "Excluding this can lose work that exists nowhere else.";
     pub const EXCL_TOTAL_TITLE: &str = "Everything this job will skip";
     pub const EXCL_TOTAL_BODY: &str =
-        "The complete list, from the presets above plus any patterns you added. Anything not          matched here is backed up.";
+        "The complete list, from the presets above plus any patterns you added. Anything not matched here is backed up.";
     pub const EXCL_TOTAL_EMPTY: &str =
         "Nothing is excluded. Every file under your chosen folders will be backed up.";
     /// Shown under the total, so the count is not mistaken for a file count.
@@ -855,11 +855,11 @@ pub mod dest {
 
     pub const REPO_CREATE_BUTTON: &str = "Set up repository";
     pub const REPO_CREATE_BULLET_KEY: &str =
-        "A repository encryption key is generated and stored in your vault. You can write it          down afterwards from this destination's Encryption panel.";
+        "A repository encryption key is generated and stored in your vault. You can write it down afterwards from this destination's Encryption panel.";
     pub const REPO_CREATE_BULLET_SETTINGS: &str =
-        "Encryption settings are fixed when the repository is created and cannot be changed          later. The recommended defaults are used unless you have changed them.";
+        "Encryption settings are fixed when the repository is created and cannot be changed later. The recommended defaults are used unless you have changed them.";
     pub const REPO_CREATE_BULLET_LATER: &str =
-        "You can skip this and set it up later from the destination, but no job can write here          until you do.";
+        "You can skip this and set it up later from the destination, but no job can write here until you do.";
     pub const TITLE: &str = "Destinations";
     pub const NEW: &str = "New destination";
     pub const SEARCH: &str = "Search destinations";
@@ -1012,27 +1012,27 @@ pub mod chain {
 
     pub const FROM_DESTINATION: &str = "Copied from another destination";
     pub const FROM_DESTINATION_HELP: &str =
-        "Copy an existing repository here block for block. The folders are read once, by the          first destination, instead of once per destination — which is what makes a slow          offsite upload cheap.";
+        "Copy an existing repository here block for block. The folders are read once, by the first destination, instead of once per destination — which is what makes a slow offsite upload cheap.";
 
     pub const PICK_LABEL: &str = "Copy from";
     pub const PICK_PLACEHOLDER: &str = "Choose a destination…";
     pub const PICK_EMPTY: &str =
-        "There is no other repository destination to copy from yet. Add one first — a local          folder or OneDrive is the usual choice — and it can then feed this one.";
+        "There is no other repository destination to copy from yet. Add one first — a local folder or OneDrive is the usual choice — and it can then feed this one.";
 
     /// The one thing a user must not misunderstand.
     pub const SHARED_KEY_TITLE: &str = "This copy shares the source's encryption key";
     pub const SHARED_KEY_BODY: &str =
-        "A copy is the same repository in a second place, not a second repository. It is opened          with the source's passphrase, and it has no separate key of its own. Keep that one          passphrase safe and both copies stay readable; lose it and neither can be restored.";
+        "A copy is the same repository in a second place, not a second repository. It is opened with the source's passphrase, and it has no separate key of its own. Keep that one passphrase safe and both copies stay readable; lose it and neither can be restored.";
 
     /// Shown in place of the encryption panel.
     pub const ENCRYPTION_INHERITED: &str = "Encryption is inherited from the source";
     pub const ENCRYPTION_INHERITED_BODY: &str =
-        "Algorithm, hash, block splitting and passphrase all come from the source destination.          There is nothing to choose here, and nothing separate to write down.";
+        "Algorithm, hash, block splitting and passphrase all come from the source destination. There is nothing to choose here, and nothing separate to write down.";
 
     /// Shown in place of "Create repository".
     pub const NO_CREATE: &str = "Nothing to create here";
     pub const NO_CREATE_BODY: &str =
-        "The first copy creates this repository as part of the job. Creating one here first          would make a different, empty repository that the copy would then refuse to write over.";
+        "The first copy creates this repository as part of the job. Creating one here first would make a different, empty repository that the copy would then refuse to write over.";
 
     pub const NEEDS_SOURCE_IN_JOB: &str = "Also back up the source";
     pub const CHAIN_BADGE: &str = "Copy";
@@ -1129,6 +1129,11 @@ pub fn writedown_body(location: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub mod prov {
+    pub const FOR_DESTINATION: &str =
+        "Creating a storage provider for the destination you were adding";
+    pub const FOR_DESTINATION_BODY: &str =
+        "Save it and you will be taken back, with this provider already selected. The provider is kept separately, so other destinations can use it too.";
+    pub const FOR_DESTINATION_BACK: &str = "Back to the destination";
     pub const TITLE: &str = "Storage providers";
     pub const NEW: &str = "Add a storage provider";
     pub const SEARCH: &str = "Search providers";
@@ -2093,7 +2098,7 @@ pub mod valid {
     // -- chained destinations -----------------------------------------------
     pub const REPLICA_SELF: &str = "A destination cannot be copied from itself.";
     pub const REPLICA_NOT_REPOSITORY: &str =
-        "A folder mirror holds plain files rather than repository blocks, so it cannot be a copy          of a repository. Choose a repository destination, or turn this back to reading the          job's folders.";
+        "A folder mirror holds plain files rather than repository blocks, so it cannot be a copy of a repository. Choose a repository destination, or turn this back to reading the job's folders.";
     pub const REPLICA_TOO_DEEP: &str =
         "This chain is too long. Copy from a destination nearer the start of it.";
     pub const BUCKET: &str =
@@ -2130,17 +2135,17 @@ pub fn valid_dest_name_dup(name: &str) -> String {
 }
 pub fn valid_replica_source_mirror(name: &str) -> String {
     format!(
-        "{name} is a folder mirror, which holds plain files rather than a repository. Only a          repository destination can be copied from."
+        "{name} is a folder mirror, which holds plain files rather than a repository. Only a repository destination can be copied from."
     )
 }
 pub fn valid_replica_cycle(name: &str) -> String {
     format!(
-        "That would form a loop: {name} is already fed, directly or indirectly, by this          destination. One of them has to go first."
+        "That would form a loop: {name} is already fed, directly or indirectly, by this destination. One of them has to go first."
     )
 }
 pub fn valid_replica_source_absent(replica: &str, source: &str) -> String {
     format!(
-        "{replica} is copied from {source}, which this job does not back up. Add {source} to          this job as well — otherwise the copy would be made from whatever this run did not          update, and still report success."
+        "{replica} is copied from {source}, which this job does not back up. Add {source} to this job as well — otherwise the copy would be made from whatever this run did not update, and still report success."
     )
 }
 pub fn valid_provider_name_dup(name: &str) -> String {
@@ -2230,7 +2235,7 @@ pub fn dest_repo_create_title(name: &str) -> String {
 }
 pub fn dest_repo_create_body(kind: &str) -> String {
     format!(
-        "The {kind} is reachable. A repository is the encrypted store superbackup writes          snapshots into — until one exists here, this destination cannot be backed up to."
+        "The {kind} is reachable. A repository is the encrypted store superbackup writes snapshots into — until one exists here, this destination cannot be backed up to."
     )
 }
 pub fn toast_creating_repository(name: &str) -> String {

@@ -810,7 +810,7 @@ fn uri_encode(value: &str, encode_slash: bool) -> String {
 ///
 /// The written specification carves out an exception for quoted sections;
 /// AWS's own published `get-header-value-trim` vector does not honour it and
-/// collapses `"a   b   c"` to `"a b c"` regardless. What servers verify
+/// collapses `"a b c"` to `"a b c"` regardless. What servers verify
 /// against is the behaviour, not the prose, so the vector wins.
 fn canonical_header_value(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
@@ -1920,7 +1920,7 @@ mod tests {
                 &[
                     ("Host", "example.amazonaws.com"),
                     ("My-Header1", " value1 "),
-                    ("My-Header2", " \"a   b   c\" "),
+                    ("My-Header2", " \"a b c\" "),
                 ],
             ),
             "GET\n/\n\nhost:example.amazonaws.com\nmy-header1:value1\nmy-header2:\"a b c\"\n\

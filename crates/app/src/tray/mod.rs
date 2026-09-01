@@ -12,7 +12,7 @@
 //! The arrangement is therefore:
 //!
 //! ```text
-//!   tokio runtime                      dedicated OS thread ("superbackup-tray")
+//!   tokio runtime dedicated OS thread ("superbackup-tray")
 //!   ─────────────                      ────────────────────────────────────────
 //!   engine events ─▶ watcher task           TrayIcon + Menu created here
 //!          │              │                          │

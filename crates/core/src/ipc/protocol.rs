@@ -804,6 +804,21 @@ pub struct JobReply {
     pub job: Box<Job>,
 }
 
+/// A sealed configuration document, ready to be written to a file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigDocumentReply {
+    /// The sealed vault, base64-encoded so it survives JSON and a text editor.
+    ///
+    /// Encrypted under the master passphrase. It carries every repository key,
+    /// so it is exactly as sensitive as the vault itself — and exactly as
+    /// useless to someone without the passphrase.
+    pub document: String,
+    /// What to call the file, if the caller has nowhere better to get a name.
+    pub suggested_filename: String,
+    /// Bytes before encoding, so a caller can sanity-check what it received.
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunsReply {
     pub runs: Vec<JobRun>,
@@ -1294,6 +1309,8 @@ replies! {
         "One job."
     "runs" Runs(RunsReply)
         "A list of job runs, newest first."
+    "config_document" ConfigDocument(ConfigDocumentReply)
+        "The sealed configuration, encoded for writing to a file."
     "started" Started(StartedReply)
         "Work was accepted; follow it with subscribe or status."
     "stopped" Stopped(StoppedReply)
@@ -2141,6 +2158,20 @@ protocol! {
             doc "Change this machine's display label. The destination folder name is NOT changed: it is fixed for the life of the install, because moving it would leave repositories where kopia can no longer find them."
             params {
                 label: String = "The new display label. Trimmed; an empty or unchanged label is a no-op.",
+            }
+
+        // ------------------------------------------------- manual export/import
+        "config.export" ConfigExport => export_config -> ConfigDocument(ConfigDocumentReply)
+            flags [needs_unlock, elevated]
+            doc "Return the sealed configuration as a portable document, base64-encoded. It is the same sealed vault `remote.push` publishes: encrypted under the master passphrase, and useless to anyone who does not have it. Write it to a file to move a configuration between machines without a Git remote."
+            params {}
+
+        "config.import" ConfigImport => import_config -> RemoteDiff(RemoteDiffReply)
+            flags [needs_unlock, elevated]
+            doc "Verify a document produced by `config.export` and report what applying it would change. Nothing is written: call `remote.apply` to accept it, exactly as with a pull."
+            params {
+                document: String = "The base64 document, as returned by `config.export`.",
+                allow_rollback: bool = "Accept a document sealed *before* the copy on this machine. Off by default, because applying one undoes everything changed since.",
             }
 
         // ------------------------------------------------------- remote config

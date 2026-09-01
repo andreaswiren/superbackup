@@ -913,7 +913,7 @@ pub fn apply_pull_with(store: &mut Store, plan: &PullPlan, options: &PullOptions
 pub fn apply_config_only(paths: &crate::paths::Paths, plan: &PullPlan) -> Result<()> {
     let Some(config) = &plan.incoming_config else {
         return Err(Error::Remote(
-            "the vault at this remote does not publish a configuration; there is nothing              to apply without also replacing the local secrets"
+            "the vault at this remote does not publish a configuration; there is nothing to apply without also replacing the local secrets"
                 .into(),
         ));
     };

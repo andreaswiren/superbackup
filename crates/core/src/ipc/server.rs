@@ -717,7 +717,7 @@ async fn connection_loop<H: Handler>(
                                             ),
                                         )
                                         .with_hint(
-                                            "Cancel a subscription you no longer read, or                                              subscribe to more topics on one id.",
+                                            "Cancel a subscription you no longer read, or subscribe to more topics on one id.",
                                         ),
                                     };
                                     if out.send(refusal).await.is_err() {

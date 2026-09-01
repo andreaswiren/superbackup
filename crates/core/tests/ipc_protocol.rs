@@ -239,6 +239,8 @@ fn sample_requests() -> Vec<Request> {
         Request::SettingsGet {},
         Request::SettingsUpdate { settings: Box::new(Settings::default()) },
         Request::MachineRename { label: "The Studio PC".into() },
+        Request::ConfigExport {},
+        Request::ConfigImport { document: "AAAA".into(), allow_rollback: false },
         // remote
         Request::RemotePull {},
         Request::RemoteDiff {},

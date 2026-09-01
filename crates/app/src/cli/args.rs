@@ -1021,6 +1021,41 @@ pub enum RemoteCommand {
     Push(RemotePushArgs),
     /// Show which repository is configured and when it was last pulled.
     Status,
+    /// Write the sealed configuration to a file, to carry to another machine.
+    ///
+    /// The file is encrypted under your master passphrase and contains every
+    /// repository key, so it is exactly as sensitive as the vault itself — and
+    /// exactly as useless to anyone without the passphrase.
+    Export(RemoteExportArgs),
+    /// Read a file written by `remote export` and show what it would change.
+    ///
+    /// Nothing is applied. Review the changes, then run `remote apply`.
+    Import(RemoteImportArgs),
+    /// Apply the configuration that was last pulled or imported.
+    Apply,
+}
+
+#[derive(Debug, Args)]
+pub struct RemoteExportArgs {
+    /// Where to write it. Use `-` for stdout.
+    #[arg(value_name = "FILE")]
+    pub file: PathBuf,
+    /// Overwrite the file if it already exists.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RemoteImportArgs {
+    /// The file to read. Use `-` for stdin.
+    #[arg(value_name = "FILE")]
+    pub file: PathBuf,
+    /// Accept a configuration sealed *before* the one on this machine.
+    ///
+    /// Off by default: applying an older one undoes everything changed since,
+    /// which may include a rotated credential or a deleted destination.
+    #[arg(long)]
+    pub allow_rollback: bool,
 }
 
 #[derive(Debug, Args)]

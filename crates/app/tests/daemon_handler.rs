@@ -321,6 +321,16 @@ async fn every_command_answers_or_refuses_cleanly() {
     // -- machine ----------------------------------------------------------
     run!("machine.rename", Request::MachineRename { label: "The Studio PC".into() });
 
+    // -- manual export / import -------------------------------------------
+    run!("config.export", Request::ConfigExport {});
+    // Deliberately not a real document: this asserts the command *refuses*
+    // cleanly rather than panicking on input it cannot parse, which is the
+    // whole point of this test.
+    run!(
+        "config.import",
+        Request::ConfigImport { document: "not-a-document".into(), allow_rollback: false }
+    );
+
     // -- remote -----------------------------------------------------------
     // No remote is configured, so all four must refuse with `Remote` rather
     // than hanging on a network call or panicking on a `None`.

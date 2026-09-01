@@ -1457,25 +1457,25 @@ impl ExclusionPreset {
         match self {
             NodeModules => "Installed npm packages, and the pnpm and Yarn download caches.",
             NextCache => {
-                "Build caches written by Next.js, Turbo, Vite, Nuxt, SvelteKit, Astro, Angular,                  Parcel and webpack. Not your source, and not your build output."
+                "Build caches written by Next.js, Turbo, Vite, Nuxt, SvelteKit, Astro, Angular, Parcel and webpack. Not your source, and not your build output."
             }
             RustTarget => "Compiled Rust artefacts under target/debug, target/release and target/tmp.",
             PythonCaches => {
-                "Compiled .pyc files, __pycache__, pytest/mypy/ruff caches, and virtualenv                  directories named .venv or venv."
+                "Compiled .pyc files, __pycache__, pytest/mypy/ruff caches, and virtualenv directories named .venv or venv."
             }
             DotnetBuild => "Compiled output under bin/Debug, bin/Release and obj.",
             JavaBuild => "The Gradle cache, Gradle build temporaries, and your local Maven repository.",
             GoBuild => "The Go build cache and the downloaded module cache.",
             IdeMetadata => {
-                "JetBrains shelved changes, Visual Studio's .vs folder, and .iml project files.                  Your editor settings and .vscode are NOT excluded."
+                "JetBrains shelved changes, Visual Studio's .vs folder, and .iml project files. Your editor settings and .vscode are NOT excluded."
             }
             OsJunk => {
-                "macOS .DS_Store, Windows Thumbs.db and desktop.ini, the Recycle Bin, and                  System Volume Information."
+                "macOS .DS_Store, Windows Thumbs.db and desktop.ini, the Recycle Bin, and System Volume Information."
             }
             VirtualMachineImages => "Disk images: .vmdk, .vdi, .vhdx, .qcow2 and .iso files, wherever they are.",
             LogsAndTemp => "Files ending .log or .tmp, and folders named tmp or temp.",
             GitObjects => {
-                "Packed git objects under .git/objects/pack and Git LFS storage. Your working                  files and git history metadata are still backed up."
+                "Packed git objects under .git/objects/pack and Git LFS storage. Your working files and git history metadata are still backed up."
             }
         }
     }

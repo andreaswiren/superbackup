@@ -227,41 +227,41 @@ pub fn limitations() -> Vec<Limitation> {
         out.push(limitation(
             "win.service_no_user_profile",
             "service",
-            "A service running as Local System cannot see your OneDrive folder or any mapped              network drive, and cannot read passwords you saved in Windows Credential Manager.",
+            "A service running as Local System cannot see your OneDrive folder or any mapped network drive, and cannot read passwords you saved in Windows Credential Manager.",
             Some(
-                "Install the service under your own account, or leave those destinations to the                  tray app.",
+                "Install the service under your own account, or leave those destinations to the tray app.",
             ),
         ));
         out.push(limitation(
             "win.service_no_ui",
             "notifications",
-            "Windows isolates services from the desktop, so the service itself cannot show              notifications or ask for your passphrase.",
+            "Windows isolates services from the desktop, so the service itself cannot show notifications or ask for your passphrase.",
             Some("Keep the tray app running; it shows notifications on the service's behalf."),
         ));
         out.push(limitation(
             "win.toast_requires_shortcut",
             "notifications",
-            "Windows only shows notifications from a desktop application that has a Start-menu              shortcut carrying an AppUserModelID.",
+            "Windows only shows notifications from a desktop application that has a Start-menu shortcut carrying an AppUserModelID.",
             Some("Install superbackup with its installer rather than copying the .exe."),
         ));
         out.push(limitation(
             "win.files_on_demand",
             "onedrive",
-            "OneDrive's Files On-Demand can replace a backup repository with online-only              placeholders, which stalls or breaks backups and restores.",
+            "OneDrive's Files On-Demand can replace a backup repository with online-only placeholders, which stalls or breaks backups and restores.",
             Some(
-                "superbackup pins the folder it creates; do not switch that off, and do not run                  Storage Sense over it.",
+                "superbackup pins the folder it creates; do not switch that off, and do not run Storage Sense over it.",
             ),
         ));
         out.push(limitation(
             "win.long_paths",
             "onedrive",
-            "Windows still limits many tools to 260-character paths, and a repository adds              around 60 characters below the folder you choose.",
+            "Windows still limits many tools to 260-character paths, and a repository adds around 60 characters below the folder you choose.",
             Some("Choose a short path close to the root of the drive."),
         ));
         out.push(limitation(
             "win.install_needs_admin",
             "service",
-            "Installing, removing or reconfiguring a Windows service requires Administrator              rights.",
+            "Installing, removing or reconfiguring a Windows service requires Administrator rights.",
             Some("Start superbackup with \"Run as administrator\" for those actions only."),
         ));
     }
@@ -270,15 +270,15 @@ pub fn limitations() -> Vec<Limitation> {
         out.push(limitation(
             "linux.no_native_onedrive",
             "onedrive",
-            "Microsoft ships no OneDrive client for Linux. superbackup can use a third-party              client's folder, but cannot pin files or read sync state.",
+            "Microsoft ships no OneDrive client for Linux. superbackup can use a third-party client's folder, but cannot pin files or read sync state.",
             Some(
-                "Configure your client to keep files downloaded, or back up to S3 or a local                  disk instead.",
+                "Configure your client to keep files downloaded, or back up to S3 or a local disk instead.",
             ),
         ));
         out.push(limitation(
             "linux.fuse_invisible_to_system_service",
             "service",
-            "FUSE mounts (rclone, onedriver) belong to your login session, so a system-wide              service cannot see them.",
+            "FUSE mounts (rclone, onedriver) belong to your login session, so a system-wide service cannot see them.",
             Some("Install a user service instead - it needs no administrator rights."),
         ));
         out.push(limitation(
@@ -290,13 +290,13 @@ pub fn limitations() -> Vec<Limitation> {
         out.push(limitation(
             "linux.metered_needs_networkmanager",
             "power",
-            "Only NetworkManager reports whether a connection is metered. Without it,              superbackup assumes the connection is unmetered and backs up normally.",
+            "Only NetworkManager reports whether a connection is metered. Without it, superbackup assumes the connection is unmetered and backs up normally.",
             None,
         ));
         out.push(limitation(
             "linux.notifications_need_a_session",
             "notifications",
-            "Desktop notifications need a D-Bus session, which a headless server or a system              service does not have.",
+            "Desktop notifications need a D-Bus session, which a headless server or a system service does not have.",
             Some("Notifications are written to the log instead."),
         ));
     }
@@ -305,21 +305,21 @@ pub fn limitations() -> Vec<Limitation> {
         out.push(limitation(
             "macos.no_metered_api",
             "power",
-            "macOS offers no supported way to ask whether a connection is metered, so \"skip on              metered connections\" has no effect.",
+            "macOS offers no supported way to ask whether a connection is metered, so \"skip on metered connections\" has no effect.",
             Some("Use a schedule, or pause backups manually while tethered."),
         ));
         out.push(limitation(
             "macos.no_programmatic_pinning",
             "onedrive",
-            "macOS has no API for \"Always Keep on This Device\", so superbackup cannot pin the              backup folder for you.",
+            "macOS has no API for \"Always Keep on This Device\", so superbackup cannot pin the backup folder for you.",
             Some(
-                "Right-click the backup folder in Finder and choose \"Always Keep on This                  Device\".",
+                "Right-click the backup folder in Finder and choose \"Always Keep on This Device\".",
             ),
         ));
         out.push(limitation(
             "macos.full_disk_access",
             "service",
-            "macOS blocks access to Desktop, Documents, Downloads and other protected folders              until the app is granted Full Disk Access.",
+            "macOS blocks access to Desktop, Documents, Downloads and other protected folders until the app is granted Full Disk Access.",
             Some("Grant superbackup Full Disk Access in System Settings > Privacy & Security."),
         ));
     }
@@ -327,7 +327,7 @@ pub fn limitations() -> Vec<Limitation> {
     out.push(limitation(
         "all.sleep_detection_is_inferred",
         "power",
-        "Backups missed while the machine was asleep or switched off are detected by comparing          clocks, so a large manual clock change can look like a sleep.",
+        "Backups missed while the machine was asleep or switched off are detected by comparing clocks, so a large manual clock change can look like a sleep.",
         None,
     ));
 

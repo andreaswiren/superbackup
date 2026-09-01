@@ -14,6 +14,20 @@ rather than mangling it.
 
 ### Added
 
+- **Export and import the configuration as a file**, for moving a setup between
+  machines without a Git remote. `superbackup remote export FILE` writes the
+  same sealed document `remote push` publishes — encrypted under the master
+  passphrase — and `remote import FILE` verifies it and reports what applying
+  it would change, through the *same* checks a pull goes through: signature,
+  decryption, validation, the rollback guard and the different-vault guard. A
+  file carried on a stick is not more trustworthy than a Git remote for having
+  been carried by hand. Nothing is written until `remote apply`.
+- **"New storage provider…" in the destination editor now works.** It set a
+  flag nothing read, so choosing it did nothing at all. It now opens the
+  provider editor, says why you are there, and on save returns to the
+  destination with the new provider selected. The provider is still kept
+  separately, so other destinations can use it.
+
 - **Bandwidth limits have a slider**, marked off in 10 Mbit/s notches from 0 to
   1000, with upload and download on one shared label column so their boxes,
   units and Mbit readouts line up. The number box stays authoritative: dragging
@@ -137,6 +151,12 @@ rather than mangling it.
   the edge and read as clipped.
 
 ### Fixed
+
+- **Sentences broke apart mid-line across the interface.** Multi-line string
+  literals had their `\` continuations collapsed into runs of literal spaces,
+  which rendered as gaps in the middle of a sentence — "every repository key.
+  &nbsp;&nbsp;&nbsp;&nbsp;Anyone who has both". 54 of them, in schedule
+  descriptions, exclusion explanations, platform messages and CLI output.
 
 - **Every kopia command was malformed.** Kopia's CLI is kingpin, which declares
   booleans as `--[no-]flag` — they take no value, so `--flag=false` parses as
