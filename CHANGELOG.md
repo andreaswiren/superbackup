@@ -14,6 +14,19 @@ rather than mangling it.
 
 ### Added
 
+- **Google Drive**, as a detected folder rather than an API integration.
+  Google Drive for Desktop mounts your Drive as a filesystem, as you, against
+  the storage you pay for; the destination editor now finds those mounts and
+  offers them. kopia's own `gdrive` backend was deliberately not used: it is
+  marked `[Not maintained]` upstream, and it authenticates as a *service
+  account*, whose files are owned by that account and count against a quota a
+  consumer Google plan does not grant it — so backing up "to Google Drive" that
+  way would not use the storage the user bought. Streaming mode is detected and
+  warned about, because a repository made of placeholders is read on every
+  operation and will stall. Detection was written against Google's documented
+  layouts and could not be exercised against a live client; every route
+  degrades to "not found", leaving the path typeable by hand.
+
 - **Export and import the configuration as a file**, for moving a setup between
   machines without a Git remote. `superbackup remote export FILE` writes the
   same sealed document `remote push` publishes — encrypted under the master

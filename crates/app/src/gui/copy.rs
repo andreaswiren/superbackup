@@ -849,6 +849,11 @@ pub fn job_unsaved_body(tabs: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub mod dest {
+    pub const GDRIVE_TITLE: &str = "Google Drive";
+    pub const GDRIVE_BODY: &str =
+        "Google Drive for Desktop keeps a folder on this machine in sync with your Drive, so a          repository written there uses your own Google storage. Choose one to fill in the path          below.";
+    pub const GDRIVE_USE: &str = "Use this";
+
     pub const KIND_BUCKET: &str = "bucket";
     pub const KIND_ONEDRIVE: &str = "OneDrive folder";
     pub const KIND_FOLDER: &str = "folder";

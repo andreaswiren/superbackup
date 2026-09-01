@@ -39,6 +39,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 pub mod autostart;
+pub mod gdrive;
 pub mod identity;
 pub mod notify;
 pub mod onedrive;
@@ -49,6 +50,7 @@ pub mod single_instance;
 #[cfg(windows)]
 mod win32;
 
+pub use gdrive::{DriveMode, GoogleDriveAccount};
 pub use identity::{list_machines, list_machines_for, write_manifest, MachineRecord};
 pub use notify::{Notification, NotificationKind, Notifier, NotifyOutcome};
 pub use onedrive::{OneDriveAccount, OneDriveKind, SyncState, Validation, ValidationIssue};
@@ -97,6 +99,32 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
             .max_by_key(|d| d.mount_point().as_os_str().len())
             .map(|d| (d.available_space(), d.total_space()))
     }
+}
+
+/// The volume label of the volume holding `root`, on Windows only.
+///
+/// Google Drive for Desktop labels its mount "Google Drive", which is how
+/// [`gdrive::detect`] finds it without reading another program's live SQLite
+/// database.
+#[cfg(windows)]
+pub(crate) fn volume_label(root: &Path) -> Option<String> {
+    win32::volume_info(root).map(|(label, _)| label)
+}
+
+/// The filesystem name of the volume holding `path`, on Windows only.
+///
+/// `DriveFS` means Google Drive is streaming placeholders rather than keeping
+/// real files, which is the one thing that makes a folder unsuitable for a
+/// repository.
+#[cfg(windows)]
+pub(crate) fn filesystem_name(path: &Path) -> Option<String> {
+    // The API wants a volume root; a path inside the volume is not accepted.
+    let root = path.components().next().map(|c| {
+        let mut root = std::path::PathBuf::from(c.as_os_str());
+        root.push("");
+        root
+    })?;
+    win32::volume_info(&root).map(|(_, fs)| fs)
 }
 
 /// The effective user id on Unix, or `None` on Windows and anywhere we cannot

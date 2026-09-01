@@ -97,6 +97,9 @@ pub struct State {
     /// The machines that have left a record at this destination, read from the
     /// destination's own folder. `None` until it has been looked for.
     pub machines: Option<(Uuid, Result<Vec<MachineRecord>, String>)>,
+    /// Google Drive for Desktop mounts found on this machine, detected once
+    /// per editor session. `None` until it has been looked for.
+    pub gdrive: Option<Vec<superbackup_core::platform::GoogleDriveAccount>>,
     /// Set when the user chose "New storage provider…" from this editor, so
     /// the provider they create is selected here when they come back rather
     /// than leaving them to find their way to it.
@@ -496,6 +499,17 @@ impl App {
             ui.add_space(space::L);
         }
 
+        // Google Drive is offered here rather than as a kind of its own,
+        // because that is what it is: a folder on this machine that Drive for
+        // Desktop keeps in sync. kopia's own `gdrive` backend is marked
+        // "[Not maintained]" upstream *and* authenticates as a service
+        // account, whose files are owned by that account and count against a
+        // quota the user does not have — so it would not use the storage they
+        // pay for. See `platform::gdrive`.
+        if !onedrive {
+            self.gdrive_picker(ui);
+        }
+
         let mut browse = false;
         // `horizontal_top`, not `horizontal`: a centred row pushes a field that
         // carries helper or error text down, away from its own label.
@@ -590,6 +604,68 @@ impl App {
             }
         }
         let _ = t;
+    }
+
+    /// Offer any Google Drive for Desktop folder found on this machine.
+    ///
+    /// Detection is cheap and cached for the life of the editor: it walks a
+    /// handful of documented paths and reads a volume label. When nothing is
+    /// found the section is absent entirely — an empty "Google Drive" heading
+    /// on a machine without it is noise.
+    fn gdrive_picker(&mut self, ui: &mut Ui) {
+        let t = theme::tokens(ui.ctx());
+        let accounts = self
+            .screens
+            .destination_editor
+            .gdrive
+            .get_or_insert_with(superbackup_core::platform::gdrive::detect);
+        if accounts.is_empty() {
+            return;
+        }
+        let accounts = accounts.clone();
+
+        let mut chosen: Option<String> = None;
+        widgets::text(ui, copy::dest::GDRIVE_TITLE, Type::BodyStrong, t.text_primary);
+        ui.add_space(space::XS);
+        widgets::paragraph_at(ui, copy::dest::GDRIVE_BODY, Type::Small, t.text_muted, 560.0);
+        ui.add_space(space::M);
+
+        for account in &accounts {
+            widgets::card(ui, |ui| {
+                ui.set_width(ui.available_width().min(560.0));
+                ui.horizontal(|ui| {
+                    widgets::text(ui, &account.display_name, Type::BodyStrong, t.text_primary);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if Button::secondary(copy::dest::GDRIVE_USE).compact().show(ui).clicked() {
+                            chosen = Some(
+                                account.suggested_repository_root().to_string_lossy().into_owned(),
+                            );
+                        }
+                    });
+                });
+                ui.add_space(space::XS);
+                widgets::text(
+                    ui,
+                    account.suggested_repository_root().to_string_lossy(),
+                    Type::MonoSmall,
+                    t.text_muted,
+                );
+                // Streaming is the one thing that makes a Drive folder a bad
+                // place for a repository, and it is the default. Saying so
+                // here, next to the button, is the whole point of detecting
+                // the mode at all.
+                for warning in &account.warnings {
+                    ui.add_space(space::S);
+                    widgets::banner(ui, widgets::BannerKind::Warning, warning, None, |_| {});
+                }
+            });
+            ui.add_space(space::M);
+        }
+
+        if let Some(path) = chosen {
+            self.screens.destination_editor.path_input = path;
+        }
+        ui.add_space(space::L);
     }
 
     fn path_checks(&self, ui: &mut Ui, path: &std::path::Path) {

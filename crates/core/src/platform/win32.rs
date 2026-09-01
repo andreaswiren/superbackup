@@ -23,8 +23,8 @@ use windows::Win32::Foundation::{
     CloseHandle, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HANDLE,
 };
 use windows::Win32::Storage::FileSystem::{
-    GetDiskFreeSpaceExW, GetFileAttributesW, SetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES,
-    INVALID_FILE_ATTRIBUTES,
+    GetDiskFreeSpaceExW, GetFileAttributesW, GetVolumeInformationW, SetFileAttributesW,
+    FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES,
 };
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW,
@@ -311,6 +311,36 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
         GetDiskFreeSpaceExW(PCWSTR(wpath.as_ptr()), Some(&mut available), Some(&mut total), None)
     };
     ok.ok().map(|()| (available, total))
+}
+
+/// The volume label and filesystem name for the volume holding `root`.
+///
+/// Used to recognise Google Drive for Desktop, which mounts a virtual volume
+/// labelled "Google Drive" whose filesystem reports as `DriveFS` when it is
+/// streaming rather than mirroring. The filesystem name is the honest signal:
+/// a label can be renamed by anyone, whereas a repository on a `DriveFS`
+/// volume is a repository on placeholders.
+///
+/// `root` must be a volume root such as `G:\`. Returns `None` on any failure,
+/// because "we could not tell" and "it is not Drive" lead to the same place.
+pub fn volume_info(root: &Path) -> Option<(String, String)> {
+    let wroot = wide(root);
+    let mut label = [0u16; 261];
+    let mut fs_name = [0u16; 261];
+    // SAFETY: both buffers are valid for the lengths passed, and `wroot`
+    // outlives the call. Every out-parameter we do not want is `None`.
+    let ok = unsafe {
+        GetVolumeInformationW(
+            PCWSTR(wroot.as_ptr()),
+            Some(&mut label),
+            None,
+            None,
+            None,
+            Some(&mut fs_name),
+        )
+    };
+    ok.ok()?;
+    Some((from_wide(&label), from_wide(&fs_name)))
 }
 
 // ---------------------------------------------------------------------------
