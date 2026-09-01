@@ -65,6 +65,16 @@ pub enum Intent {
     CreateRepository(uuid::Uuid),
     /// A machine rename, carrying the new label so the toast can name it.
     RenameMachine(String),
+    /// A newly added repository destination, which is offered a repository
+    /// once the daemon has answered with the id it assigned.
+    CreateDestination(String),
+    /// A job creation whose "run it now" was ticked in the wizard.
+    ///
+    /// Separate from [`Intent::SaveJob`] because the run can only be issued
+    /// once the create has been *answered*: the daemon assigns the job's id
+    /// itself — deliberately, so a client cannot overwrite a job by guessing
+    /// one — so the wizard's draft id names nothing that exists.
+    SaveJobAndRun(String),
     Snapshots(uuid::Uuid),
     Browse(uuid::Uuid, String),
     Restore,

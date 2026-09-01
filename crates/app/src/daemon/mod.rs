@@ -448,7 +448,7 @@ fn load_state(paths: &Paths) -> PersistedState {
 }
 
 /// Persist run history atomically.
-async fn save_state(runtime: &Arc<Runtime>) {
+pub(super) async fn save_state(runtime: &Arc<Runtime>) {
     let state = { runtime.persisted.lock().await.clone() };
     match serde_json::to_vec_pretty(&state) {
         Ok(bytes) => {

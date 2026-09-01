@@ -1051,6 +1051,43 @@ pub fn invocation_view(run: &superbackup_core::ipc::protocol::KopiaInvocation) -
     }
 }
 
+/// The per-destination line on a running job: what has moved, out of how much,
+/// how fast, and how much of it was actually new.
+///
+/// The row used to carry only `"{bytes} up"`, which answers none of the
+/// questions someone watching a backup is actually asking. Everything here is
+/// already tracked by the engine; it simply was not rendered.
+pub fn destination_progress_line(progress: &superbackup_core::state::Progress) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Files, with the total once the estimate phase has produced one.
+    match progress.files_total {
+        Some(total) if total > 0 => parts.push(format!(
+            "{}/{} files",
+            format::count(progress.files_processed),
+            format::count(total)
+        )),
+        _ => parts.push(format!("{} files", format::count(progress.files_processed))),
+    }
+
+    // Uploaded is the number that matters on a metered or slow link: it is
+    // what crossed the wire after dedup and compression, which on a second run
+    // of the same folder is usually a tiny fraction of what was read.
+    parts.push(format!("{} up", format::bytes(progress.bytes_uploaded)));
+
+    if progress.files_cached > 0 {
+        parts.push(format!("{} unchanged", format::count(progress.files_cached)));
+    }
+    if progress.bytes_per_second > 1.0 {
+        parts.push(format::rate(progress.bytes_per_second));
+    }
+    if progress.errors_ignored > 0 {
+        parts.push(format!("{} skipped", format::count(progress.errors_ignored)));
+    }
+
+    parts.join(" · ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

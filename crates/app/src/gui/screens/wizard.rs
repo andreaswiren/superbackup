@@ -261,21 +261,27 @@ pub fn show(app: &mut App, ctx: &egui::Context, mut state: WizardState) -> Optio
     if create {
         let job = state.draft.clone();
         let name = job.name.clone();
-        let run_after = state.run_after;
-        app.ask(Intent::SaveJob(name.clone()), Request::JobCreate { job: Box::new(job.clone()) });
-        app.toasts.success(copy::toast_created(&name));
-        app.go(Route::Dashboard);
-        if run_after {
-            if app.data.unlocked() {
-                app.ask(
-                    Intent::RunJob(name),
-                    Request::JobRun { job: job.id.to_string(), dry_run: false },
-                );
-            } else {
-                // The job is created either way; the run is what waits.
-                app.toasts.warning(copy::locked::ACTION_BLOCKED);
-            }
+        // Run it now only if it was asked for *and* the vault can actually run
+        // it. The job is created either way; the run is the part that waits.
+        let run_after = state.run_after && app.data.unlocked();
+        if state.run_after && !app.data.unlocked() {
+            app.toasts.warning(copy::locked::ACTION_BLOCKED);
         }
+        // The run is issued from the reply, not here.
+        //
+        // `job.id` is the wizard's draft id, and `job.create` on the daemon
+        // assigns a fresh one on purpose — so firing `JobRun` with the draft id
+        // asked to run a job that had never existed, and the answer came back
+        // as "That job no longer exists" over a job that had just been created
+        // perfectly well. Even with the right id it would have been a race:
+        // this ran before the create had been answered.
+        let intent = if run_after {
+            Intent::SaveJobAndRun(name.clone())
+        } else {
+            Intent::SaveJob(name.clone())
+        };
+        app.ask(intent, Request::JobCreate { job: Box::new(job) });
+        app.go(Route::Dashboard);
         return None;
     }
     if cancel || close {

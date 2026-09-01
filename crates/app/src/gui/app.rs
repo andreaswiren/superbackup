@@ -138,7 +138,15 @@ impl App {
     // -- routing ------------------------------------------------------------
 
     pub fn go(&mut self, route: Route) {
+        // Opening Activity refetches the history behind it. Without this the
+        // screen shows whatever was true when the window opened, which for a
+        // long-lived tray session is stale by hours.
+        let refresh_history =
+            matches!(route, Route::Activity) && !matches!(self.nav.current(), Route::Activity);
         self.nav.go(route);
+        if refresh_history {
+            self.ask(Intent::History, Request::JobHistory { job: None, limit: 200 });
+        }
     }
 
     pub fn route(&self) -> Route {
@@ -194,13 +202,31 @@ impl App {
     /// Drain everything the worker has posted since the last frame.
     pub fn pump(&mut self) {
         let messages = self.bridge.drain();
+        // Run history is fetched once, when the window opens. A run that
+        // finishes afterwards therefore never appeared: Activity kept saying
+        // "Nothing has run yet" over a backup that had just written 14 GB. A
+        // finished run is the event that makes the fetched history stale, so
+        // it is the event that refetches it — along with the destinations,
+        // whose "last verified" the run has just moved.
+        let mut run_finished = false;
         for message in messages {
+            if let Incoming::Stream(item) = &message {
+                if let superbackup_core::ipc::protocol::StreamItem::Event { event } = &**item {
+                    if event.kind == "job.finished" {
+                        run_finished = true;
+                    }
+                }
+            }
             match &message {
                 Incoming::Failed(intent, payload) => self.report(intent.clone(), payload.clone()),
                 Incoming::Reply(intent, reply) => self.on_reply(intent.clone(), reply),
                 _ => {}
             }
             self.data.apply(message);
+        }
+        if run_finished {
+            self.ask(Intent::History, Request::JobHistory { job: None, limit: 200 });
+            self.ask(Intent::Destinations, Request::DestinationList {});
         }
         // A lagged stream means items were dropped, so the picture on screen is
         // stale: resynchronise from a fresh snapshot rather than guessing.
@@ -234,6 +260,15 @@ impl App {
                 self.toasts.success(copy::toast_saved(name));
                 self.ask(Intent::Jobs, Request::JobList { include_disabled: true });
             }
+            (Intent::SaveJobAndRun(name), Reply::Job(reply)) => {
+                // The id comes from the daemon's answer. The client never knows
+                // it before this point, because the daemon mints it.
+                let id = reply.job.id.to_string();
+                let name = name.clone();
+                self.toasts.success(copy::toast_created(&name));
+                self.ask(Intent::RunJob(name), Request::JobRun { job: id, dry_run: false });
+                self.ask(Intent::Jobs, Request::JobList { include_disabled: true });
+            }
             (Intent::DeleteJob(name), Reply::Ack(_)) => {
                 self.toasts.success(copy::toast_deleted(name));
                 self.ask(Intent::Jobs, Request::JobList { include_disabled: true });
@@ -241,6 +276,19 @@ impl App {
             (Intent::SaveDestination(name), Reply::Destination(_)) => {
                 self.toasts.success(copy::toast_saved(name));
                 self.ask(Intent::Destinations, Request::DestinationList {});
+            }
+            (Intent::CreateDestination(name), Reply::Destination(reply)) => {
+                // A destination with no repository verifies as reachable and
+                // then refuses every real operation, and the only way to fix
+                // that was to already know "Create repository" existed. Adding
+                // one is the moment the intent is unambiguous, so it is the
+                // moment to ask — and the id to ask about only exists in this
+                // reply, because the daemon assigns it.
+                let id = reply.destination.id;
+                self.toasts.success(copy::toast_created(name));
+                self.data.destinations.push((*reply.destination).clone());
+                self.ask(Intent::Destinations, Request::DestinationList {});
+                self.open_modal(Modal::Confirm(modals::create_repository_confirm(&self.data, id)));
             }
             (Intent::DeleteDestination(name), Reply::Ack(_)) => {
                 self.toasts.success(copy::toast_removed(name));

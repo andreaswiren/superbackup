@@ -338,6 +338,53 @@ async fn finish(runtime: &Arc<Runtime>, run: &JobRun) {
     if let Some(notification) = notification {
         notify(runtime, notification).await;
     }
+
+    // The run itself is already in `PersistedState` — the engine records it as
+    // it finishes (`engine::runner`), against the same shared state this
+    // daemon holds. What was missing is getting it to disk: `save_state` ran
+    // only at shutdown, so a crash, a power cut or a kill lost every run since
+    // the daemon started, and `state.json` sat with an empty history while the
+    // daemon had a full one in memory.
+    super::save_state(runtime).await;
+
+    mark_destinations_verified(runtime, run).await;
+}
+
+/// A destination that a backup just wrote to is reachable, and saying so is the
+/// point of `last_verified_at`.
+///
+/// It was only ever set by an explicit `dest.test`, so a destination could take
+/// a successful 14 GB backup and still report "This destination has not been
+/// verified" — advising the user to go and check something the run had just
+/// proved. A completed write is strictly stronger evidence than a probe.
+async fn mark_destinations_verified(runtime: &Arc<Runtime>, run: &JobRun) {
+    let verified: Vec<uuid::Uuid> = run
+        .destinations
+        .iter()
+        .filter(|d| matches!(d.status, RunStatus::Succeeded | RunStatus::SucceededWithWarnings))
+        .map(|d| d.destination_id)
+        .collect();
+    if verified.is_empty() {
+        return;
+    }
+    let now = chrono::Utc::now();
+    let mut store = runtime.store.lock().await;
+    let mut config = store.config().clone();
+    let mut touched = false;
+    for destination in &mut config.destinations {
+        if verified.contains(&destination.id) {
+            destination.last_verified_at = Some(now);
+            touched = true;
+        }
+    }
+    if !touched {
+        return;
+    }
+    if let Err(e) = store.set_config(config) {
+        // Not worth failing the run over: the backup succeeded either way and
+        // the only cost is a stale "never verified" badge.
+        tracing::warn!(error = %e, "could not record that these destinations were written to");
+    }
 }
 
 /// Show a notification, honouring the start-up grace period.

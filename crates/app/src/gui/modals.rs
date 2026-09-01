@@ -31,7 +31,12 @@ use super::widgets::{self, Button, ModalSize};
 pub enum ConfirmAction {
     DeleteJob(Uuid),
     DisableAllJobs,
-    RemoveDestination { id: Uuid, delete_files: bool },
+    RemoveDestination {
+        id: Uuid,
+        delete_files: bool,
+    },
+    /// Set up the kopia repository at a destination that has just been added.
+    CreateRepository(Uuid),
     DeleteProvider(Uuid),
     StopRun(Uuid),
     StopAll,
@@ -484,6 +489,34 @@ pub fn delete_job_confirm(job: Option<&Job>) -> Confirm {
         .action(ConfirmAction::DeleteJob(job.map(|j| j.id).unwrap_or_else(Uuid::nil)))
 }
 
+/// Offer to set up the repository at a destination that was just added.
+///
+/// A destination without a repository is inert: it verifies as reachable and
+/// then refuses every actual operation, and the only way to fix that was to
+/// know that "Create repository" existed and go and find it. Adding a
+/// destination is the moment the intent is unambiguous, so it is the moment to
+/// ask — as a question rather than an automatic action, because creating a
+/// repository writes to the destination and picks its encryption settings.
+pub fn create_repository_confirm(data: &Data, destination: Uuid) -> Confirm {
+    let name = data.destination_name(&destination);
+    let kind_word = match data.destination(&destination).map(|d| &d.kind) {
+        Some(superbackup_core::model::DestinationKind::S3 { .. }) => copy::dest::KIND_BUCKET,
+        Some(superbackup_core::model::DestinationKind::OneDrive { .. }) => {
+            copy::dest::KIND_ONEDRIVE
+        }
+        _ => copy::dest::KIND_FOLDER,
+    };
+    Confirm::new(
+        copy::dest_repo_create_title(&name),
+        copy::dest_repo_create_body(kind_word),
+        copy::dest::REPO_CREATE_BUTTON,
+    )
+    .bullet(copy::dest::REPO_CREATE_BULLET_KEY)
+    .bullet(copy::dest::REPO_CREATE_BULLET_SETTINGS)
+    .bullet(copy::dest::REPO_CREATE_BULLET_LATER)
+    .action(ConfirmAction::CreateRepository(destination))
+}
+
 pub fn remove_destination_confirm(data: &Data, destination: Uuid) -> Confirm {
     let name = data.destination_name(&destination);
     let using = data.jobs_using(&destination);
@@ -803,6 +836,15 @@ fn perform(app: &mut App, confirm: &Confirm) {
                 );
             }
             app.toasts.info(copy::toast::JOBS_DISABLED_ALL);
+        }
+        ConfirmAction::CreateRepository(id) => {
+            let name = app.data.destination_name(id);
+            app.screens.destination_editor.repository_started();
+            app.ask(
+                Intent::CreateRepository(*id),
+                Request::DestinationRepoCreate { destination: id.to_string(), encryption: None },
+            );
+            app.toasts.info(copy::toast_creating_repository(&name));
         }
         ConfirmAction::RemoveDestination { id, .. } => {
             let name = app.data.destination_name(id);

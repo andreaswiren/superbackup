@@ -1188,6 +1188,7 @@ impl Handler for DaemonHandler {
     ) -> Result<DestinationReply> {
         let replacement = *destination;
         let id = replacement.id;
+        let name = replacement.name.clone();
         let stored = replacement.clone();
         self.commit(move |config| {
             let slot =
@@ -1205,6 +1206,14 @@ impl Handler for DaemonHandler {
             Ok(())
         })
         .await?;
+        // Configuration changes belong in Activity too. Only backup runs were
+        // recorded, so the log could not answer "when did this destination
+        // change?" — which is the question asked right after a backup starts
+        // going somewhere unexpected.
+        self.runtime.record_event(
+            Event::info("dest.updated", format!("Destination \"{name}\" was changed."))
+                .with_destination(id),
+        );
         let config = self.config().await;
         Ok(DestinationReply {
             destination: Box::new(config.destination(&id).cloned().ok_or_else(|| {
@@ -1610,6 +1619,7 @@ impl Handler for DaemonHandler {
         let mut created = *provider;
         created.id = Uuid::new_v4();
         created.created_at = Utc::now();
+        let name = created.name.clone();
         // Credential handles name the provider that owns them, so they can
         // only be minted once the id is known. `ProviderKind` has one variant
         // today; the match keeps this correct when a second one arrives.
@@ -1631,6 +1641,10 @@ impl Handler for DaemonHandler {
             Ok(())
         })
         .await?;
+        self.runtime.record_event(Event::info(
+            "provider.created",
+            format!("Storage provider \"{name}\" was added."),
+        ));
         let config = self.config().await;
         Ok(ProviderReply {
             provider: Box::new(config.provider(&id).cloned().ok_or_else(|| {
@@ -1646,6 +1660,7 @@ impl Handler for DaemonHandler {
     ) -> Result<ProviderReply> {
         let replacement = *provider;
         let id = replacement.id;
+        let name = replacement.name.clone();
         let stored = replacement.clone();
         self.commit(move |config| {
             let slot =
@@ -1664,6 +1679,10 @@ impl Handler for DaemonHandler {
             Ok(())
         })
         .await?;
+        self.runtime.record_event(Event::info(
+            "provider.updated",
+            format!("Storage provider \"{name}\" was changed."),
+        ));
         let config = self.config().await;
         Ok(ProviderReply {
             provider: Box::new(config.provider(&id).cloned().ok_or_else(|| {

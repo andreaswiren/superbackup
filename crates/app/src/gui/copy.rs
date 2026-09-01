@@ -849,6 +849,17 @@ pub fn job_unsaved_body(tabs: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub mod dest {
+    pub const KIND_BUCKET: &str = "bucket";
+    pub const KIND_ONEDRIVE: &str = "OneDrive folder";
+    pub const KIND_FOLDER: &str = "folder";
+
+    pub const REPO_CREATE_BUTTON: &str = "Set up repository";
+    pub const REPO_CREATE_BULLET_KEY: &str =
+        "A repository encryption key is generated and stored in your vault. You can write it          down afterwards from this destination's Encryption panel.";
+    pub const REPO_CREATE_BULLET_SETTINGS: &str =
+        "Encryption settings are fixed when the repository is created and cannot be changed          later. The recommended defaults are used unless you have changed them.";
+    pub const REPO_CREATE_BULLET_LATER: &str =
+        "You can skip this and set it up later from the destination, but no job can write here          until you do.";
     pub const TITLE: &str = "Destinations";
     pub const NEW: &str = "New destination";
     pub const SEARCH: &str = "Search destinations";
@@ -2213,6 +2224,17 @@ pub fn toast_chain_source_added(name: &str) -> String {
 }
 pub fn onboarding_vault_failed(detail: &str) -> String {
     format!("The vault could not be created: {detail}")
+}
+pub fn dest_repo_create_title(name: &str) -> String {
+    format!("Set up a repository in {name}?")
+}
+pub fn dest_repo_create_body(kind: &str) -> String {
+    format!(
+        "The {kind} is reachable. A repository is the encrypted store superbackup writes          snapshots into — until one exists here, this destination cannot be backed up to."
+    )
+}
+pub fn toast_creating_repository(name: &str) -> String {
+    format!("Setting up the repository in {name}…")
 }
 pub fn toast_created(name: &str) -> String {
     format!("{name} created")

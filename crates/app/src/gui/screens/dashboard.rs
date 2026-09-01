@@ -622,7 +622,12 @@ impl App {
             );
 
             let badge_w = 120.0;
-            let bytes_w = if narrow { 0.0 } else { 120.0 };
+            // The stats line carries files, uploaded, unchanged and rate now,
+            // so it needs the room — taken from the progress bar, which is the
+            // one element here that reads fine at any width. Widening it
+            // without moving it out of the bar's budget pushed the row past
+            // the window edge at 1100px.
+            let bytes_w = if narrow { 0.0 } else { 260.0 };
             let bar_w =
                 (ui.available_width() - badge_w - bytes_w - 40.0 - space::L * 3.0).max(60.0);
             let fraction = viewmodel::displayed_fraction(destination);
@@ -656,13 +661,17 @@ impl App {
             );
 
             if !narrow {
+                // "6.1 GB up" on its own says almost nothing: it cannot tell
+                // you how far in you are, how fast it is going, or how much of
+                // that 6 GB was new. The engine tracks files, totals, cached
+                // and throughput already — none of it was being shown.
                 ui.allocate_ui_with_layout(
-                    Vec2::new(120.0, 20.0),
+                    Vec2::new(260.0, 20.0),
                     Layout::right_to_left(Align::Center),
                     |ui| {
                         widgets::text(
                             ui,
-                            format!("{} up", format::bytes(destination.progress.bytes_uploaded)),
+                            viewmodel::destination_progress_line(&destination.progress),
                             Type::MonoSmall,
                             t.text_muted,
                         );

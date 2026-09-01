@@ -1748,12 +1748,24 @@ impl App {
             }
             if let Some(draft) = self.screens.destination_editor.draft.clone() {
                 let name = draft.name.clone();
+                // A replica's repository is made by the first backup that
+                // copies into it; creating one here would make a different
+                // repository that could never be synchronised. So the offer is
+                // only for a destination that owns its repository.
+                let offer_repository = existing.is_none()
+                    && draft.kind.is_repository()
+                    && draft.replicate_from.is_none();
                 let request = if existing.is_some() {
                     Request::DestinationUpdate { destination: Box::new(draft) }
                 } else {
                     Request::DestinationCreate { destination: Box::new(draft) }
                 };
-                self.ask(Intent::SaveDestination(name), request);
+                let intent = if offer_repository {
+                    Intent::CreateDestination(name)
+                } else {
+                    Intent::SaveDestination(name)
+                };
+                self.ask(intent, request);
                 self.go(Route::Destinations);
             }
         }

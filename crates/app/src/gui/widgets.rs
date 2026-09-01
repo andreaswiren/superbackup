@@ -1775,10 +1775,25 @@ fn mbit_slider_inner(ui: &mut Ui, kbps: &mut u32) -> bool {
         t.accent,
     );
     let handle = Pos2::new(handle_x, track_y);
-    painter.circle_filled(handle, 8.0, t.bg_raised);
-    painter.circle_stroke(handle, 8.0, Stroke::new(2.0_f32, t.accent));
+    painter.circle_filled(handle, 9.0, t.accent);
+    painter.circle_stroke(handle, 9.0, Stroke::new(2.0_f32, t.bg_surface));
     if response.has_focus() {
-        focus_ring(ui, Rect::from_center_size(handle, Vec2::splat(24.0)), CornerRadius::same(12));
+        focus_ring(ui, Rect::from_center_size(handle, Vec2::splat(26.0)), CornerRadius::same(13));
+    }
+
+    // The value, on the handle, while it is being moved or hovered. A slider
+    // whose position is its only readout makes the user look somewhere else to
+    // find out what they just chose.
+    if response.dragged() || response.hovered() || response.has_focus() {
+        let mbit_now = (*kbps as f32) * 8.0 / 1000.0;
+        let label =
+            if mbit_now < 10.0 { format!("{mbit_now:.1}") } else { format!("{mbit_now:.0}") };
+        let g = galley(ui, label, Type::MonoSmall, t.text_oncolor);
+        let pad = Vec2::new(8.0, 4.0);
+        let bubble =
+            Rect::from_center_size(Pos2::new(handle_x, track_y - 20.0), g.size() + pad * 2.0);
+        painter.rect_filled(bubble, CornerRadius::same(5), t.accent_fill);
+        painter.galley(bubble.min + pad, g, t.text_oncolor);
     }
 
     // End labels only. A number under every hundredth notch is noise when the
