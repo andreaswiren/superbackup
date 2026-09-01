@@ -12,7 +12,23 @@ rather than mangling it.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] - 2026-09-01
+
+The release in which the backups actually run. 0.1.0 could not create a
+repository on any platform: every kopia invocation carried a malformed boolean
+flag, and the one error message that would have explained it was being discarded
+before it reached anyone. Both are fixed, and a backup of 134,833 files to
+OneDrive and a repository on StorJ were made with this code.
+
 ### Added
+
+- **A live throughput graph** on each running job. A single "89 MB/s" reading
+  cannot tell a slow backup from a stopped one — a number that stopped updating
+  looks exactly like a healthy one — so the recent rate is now drawn as a
+  shape, scaled to its own peak and labelled with it. The series is kept in the
+  window, bounded, and dropped when the run ends.
 
 - **Google Drive**, as a detected folder rather than an API integration.
   Google Drive for Desktop mounts your Drive as a filesystem, as you, against

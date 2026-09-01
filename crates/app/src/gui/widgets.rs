@@ -1673,6 +1673,67 @@ pub fn passphrase_field(
 
 /// A numeric field. egui has no spinner and no input mask (L11), so this is a
 /// `DragValue` with the unit drawn beside it and the range clamped.
+/// A filled line graph of recent transfer rates.
+///
+/// Answers the question a single "89 MB/s" cannot: *is it still moving?* A
+/// number that has stopped changing looks identical to a healthy one, and on a
+/// backup of a large tree the difference between "slow" and "stalled" is the
+/// difference between waiting and intervening.
+///
+/// Scaled to its own peak rather than to a fixed ceiling, because a backup to a
+/// local disk and one to a metered uplink differ by two orders of magnitude and
+/// a shared scale would flatten one of them into a straight line. The peak is
+/// labelled so the shape cannot be mistaken for an absolute reading.
+///
+/// Returns the peak it scaled to, so a caller can label it consistently.
+pub fn throughput_graph(
+    ui: &mut Ui,
+    samples: &std::collections::VecDeque<f64>,
+    width: f32,
+    height: f32,
+) -> f64 {
+    let t = theme::tokens(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let painter = ui.painter();
+
+    painter.rect_filled(rect, CornerRadius::same(4), t.bg_rail);
+    let peak = samples.iter().copied().fold(0.0_f64, f64::max);
+    // Below a byte a second there is nothing to draw and no sensible scale.
+    if samples.len() < 2 || peak <= 1.0 {
+        let g = galley(ui, super::copy::dash::GRAPH_WAITING, Type::MonoSmall, t.text_muted);
+        painter.galley(rect.center() - g.size() / 2.0, g, t.text_muted);
+        return peak;
+    }
+
+    let n = samples.len();
+    let x_at = |i: usize| rect.left() + rect.width() * (i as f32 / (n - 1) as f32);
+    let y_at = |v: f64| {
+        // One pixel of headroom, so the peak sample is visibly inside the box
+        // rather than merged into its top edge.
+        let frac = (v / peak).clamp(0.0, 1.0) as f32;
+        rect.bottom() - 1.0 - (rect.height() - 2.0) * frac
+    };
+
+    // Fill first, line over it: the fill carries the sense of volume and the
+    // line keeps the most recent value readable when the fill is short.
+    let mut fill: Vec<Pos2> = Vec::with_capacity(n + 2);
+    fill.push(Pos2::new(rect.left(), rect.bottom()));
+    for (i, v) in samples.iter().enumerate() {
+        fill.push(Pos2::new(x_at(i), y_at(*v)));
+    }
+    fill.push(Pos2::new(rect.right(), rect.bottom()));
+    painter.add(egui::Shape::convex_polygon(fill, t.accent.gamma_multiply(0.20), Stroke::NONE));
+
+    let line: Vec<Pos2> =
+        samples.iter().enumerate().map(|(i, v)| Pos2::new(x_at(i), y_at(*v))).collect();
+    painter.add(egui::Shape::line(line, Stroke::new(1.5_f32, t.accent)));
+
+    // The peak, so the shape is not mistaken for an absolute scale.
+    let g = galley(ui, super::format::rate(peak), Type::MonoSmall, t.text_muted);
+    painter.galley(Pos2::new(rect.right() - g.size().x - 4.0, rect.top() + 2.0), g, t.text_muted);
+    peak
+}
+
 /// A bandwidth slider marked off in 10 Mbit/s notches, 0 to 1000.
 ///
 /// The stored unit is kB/s, because that is what kopia's

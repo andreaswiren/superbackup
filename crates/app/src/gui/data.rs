@@ -9,7 +9,7 @@
 // as a separate crate, so items that are used and tested there look unused from
 // the binary's side. The allow is scoped to this module rather than the crate.
 #![allow(dead_code)]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
@@ -42,7 +42,20 @@ pub struct Data {
     /// The stream told us it dropped items. The next status reply clears it.
     pub lagged: bool,
     pub last_error: Option<(Intent, ErrorPayload)>,
+    /// Recent transfer rates per run, newest last, for the throughput graph.
+    ///
+    /// Kept in the window rather than in the daemon on purpose: it is a
+    /// picture of what this window has seen, it is worthless once the run
+    /// ends, and pushing a time series over IPC to every subscriber would cost
+    /// more than the graph is worth. Bounded, so a long run cannot grow it
+    /// without limit.
+    pub throughput: BTreeMap<Uuid, VecDeque<f64>>,
 }
+
+/// How many rate samples a graph keeps. Progress is coalesced before it
+/// reaches the window, so this is a couple of minutes of a running backup —
+/// enough to show a stall or a ramp, and small enough to be free.
+pub const THROUGHPUT_SAMPLES: usize = 120;
 
 impl Data {
     pub fn new() -> Data {
@@ -394,12 +407,28 @@ impl Data {
                 self.snapshot = Some(*snapshot);
                 self.loading = false;
                 self.lagged = false;
+                // Drop series for runs that have finished. Without this the map
+                // keeps a slot for every run the window ever watched, which for
+                // a tray left open for weeks is a slow leak.
+                if let Some(s) = &self.snapshot {
+                    let active: Vec<Uuid> = s.active_runs.iter().map(|r| r.run_id).collect();
+                    self.throughput.retain(|id, _| active.contains(id));
+                }
             }
             S::Event { event } => {
                 self.events.insert(0, *event);
                 self.events.truncate(500);
             }
             S::Progress { run_id, destination_id, status, progress, .. } => {
+                // One series per run, sampled from whatever the stream sends.
+                // The series is what makes a stall visible: a single "89 MB/s"
+                // reading cannot distinguish steady progress from a number
+                // that stopped changing.
+                let series = self.throughput.entry(run_id).or_default();
+                series.push_back(progress.bytes_per_second);
+                while series.len() > THROUGHPUT_SAMPLES {
+                    series.pop_front();
+                }
                 if let Some(s) = &mut self.snapshot {
                     if let Some(run) = s.active_runs.iter_mut().find(|r| r.run_id == run_id) {
                         if let Some(dest) =
@@ -521,6 +550,51 @@ impl Data {
 
 #[cfg(test)]
 mod tests {
+
+    /// The rate series is what makes a stall visible, so it has to actually
+    /// accumulate — and it has to stay bounded, because a tray is left open
+    /// for weeks.
+    #[test]
+    fn throughput_samples_accumulate_and_stay_bounded() {
+        let mut d = Data::new();
+        let run = Uuid::new_v4();
+        for i in 0..(THROUGHPUT_SAMPLES + 50) {
+            d.apply(Incoming::Stream(Box::new(
+                superbackup_core::ipc::protocol::StreamItem::Progress {
+                    run_id: run,
+                    destination_id: Uuid::new_v4(),
+                    status: superbackup_core::state::RunStatus::Running,
+                    progress: Box::new(superbackup_core::state::Progress {
+                        bytes_per_second: i as f64,
+                        ..Default::default()
+                    }),
+                    job_id: Uuid::new_v4(),
+                },
+            )));
+        }
+        let series = d.throughput.get(&run).expect("a series for the running job");
+        assert_eq!(series.len(), THROUGHPUT_SAMPLES, "the series must be capped");
+        // Oldest dropped, newest kept: the graph shows recent history.
+        assert_eq!(*series.back().expect("a newest sample"), (THROUGHPUT_SAMPLES + 49) as f64);
+    }
+
+    /// A run that has finished has no graph, and must not keep a slot forever.
+    #[test]
+    fn finished_runs_stop_being_tracked() {
+        let mut d = Data::new();
+        let run = Uuid::new_v4();
+        d.throughput.insert(run, VecDeque::from(vec![1.0, 2.0]));
+
+        let snapshot = snapshot(true, false, Health::Idle);
+        assert!(snapshot.active_runs.is_empty(), "the fixture has no running job");
+        d.apply(Incoming::Stream(Box::new(superbackup_core::ipc::protocol::StreamItem::Status {
+            snapshot: Box::new(snapshot),
+        })));
+        assert!(
+            d.throughput.is_empty(),
+            "a series for a run that is no longer active is a slow leak"
+        );
+    }
     use super::*;
     use superbackup_core::state::{DestinationRun, Progress, Trigger};
 

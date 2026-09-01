@@ -446,6 +446,7 @@ pub fn empty_jobs_filtered_body(total: usize) -> String {
 // ---------------------------------------------------------------------------
 
 pub mod dash {
+    pub const GRAPH_WAITING: &str = "measuring…";
     pub const HEALTH_LABEL: &str = "Overall health";
     pub const HEALTH_IDLE_NEVER: &str = "No backups yet";
     pub const HEALTH_PAUSED_FOREVER: &str = "Paused until you resume";

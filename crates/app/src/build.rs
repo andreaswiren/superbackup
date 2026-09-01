@@ -120,6 +120,45 @@ mod tests {
         }
     }
 
+    /// The version in `Cargo.toml` and the changelog must agree.
+    ///
+    /// This exists because they did not: a release's worth of work — a fix for
+    /// a bug that made every backup impossible among it — accumulated under
+    /// `[Unreleased]` while the manifest still said 0.1.0, so every build
+    /// reported a version that had shipped before any of it existed. A version
+    /// number nobody moves is worse than none, because it actively misleads a
+    /// bug report.
+    #[test]
+    fn the_changelog_has_a_heading_for_this_version() {
+        let changelog = include_str!("../../../CHANGELOG.md");
+        let heading = format!("## [{VERSION}]");
+        assert!(
+            changelog.contains(&heading),
+            "Cargo.toml says {VERSION} but CHANGELOG.md has no `{heading}` section.              Either bump the version or cut the section — a build that reports a version              with no changelog entry cannot be told apart from the release that used it."
+        );
+    }
+
+    /// Work sitting under `[Unreleased]` means the version is behind.
+    #[test]
+    fn unreleased_is_empty_whenever_a_version_has_been_cut() {
+        let changelog = include_str!("../../../CHANGELOG.md");
+        let Some(start) = changelog.find("## [Unreleased]") else { return };
+        let rest = &changelog[start + "## [Unreleased]".len()..];
+        // Everything up to the next version heading.
+        let body = match rest.find(
+            "
+## [",
+        ) {
+            Some(end) => &rest[..end],
+            None => rest,
+        };
+        let has_entries = body.lines().any(|l| l.trim_start().starts_with('-'));
+        assert!(
+            !has_entries,
+            "CHANGELOG.md has entries under [Unreleased] while Cargo.toml says {VERSION}.              Bump the version and move them under it, so the build reports what it contains."
+        );
+    }
+
     #[test]
     fn the_identity_serialises() {
         let json = serde_json::to_string(&identity()).expect("identity must serialise");

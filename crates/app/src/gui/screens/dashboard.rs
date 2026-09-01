@@ -575,6 +575,19 @@ impl App {
                 );
             }
 
+            // Row 6: the rate over time.
+            //
+            // A single throughput reading cannot distinguish a backup that is
+            // slow from one that has stopped, because a number that stopped
+            // updating looks exactly like a healthy one. The shape can.
+            if let Some(samples) = self.data.throughput.get(&run.run_id) {
+                if samples.len() >= 2 {
+                    ui.add_space(space::M);
+                    let width = ui.available_width().min(560.0);
+                    widgets::throughput_graph(ui, samples, width, 44.0);
+                }
+            }
+
             ui.add_space(space::S);
             widgets::divider(ui);
             ui.add_space(space::L);
