@@ -168,7 +168,7 @@ impl Paths {
     fn instance_tag(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
-        h.update(self.config_dir.as_os_str().as_encoded_bytes());
+        h.update(normalised_key(&self.config_dir).as_bytes());
         hex::encode(&h.finalize()[..4])
     }
 
@@ -342,8 +342,72 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The directory, reduced to a form that is stable across the ways one path can
+/// be spelled.
+///
+/// The tag is a hash of the configuration directory, and it decides which pipe
+/// or socket a client addresses. Hashing the raw bytes meant that
+/// `SUPERBACKUP_HOME=C:/x` and `SUPERBACKUP_HOME=C:\x` — the same directory,
+/// and interchangeable everywhere else on Windows — produced two different
+/// endpoints, so the CLI could not find the daemon it had just started. Case
+/// differed the same way, and Windows paths are case-insensitive.
+///
+/// Only separators and case are normalised, and case only where the platform
+/// is actually case-insensitive. Nothing here canonicalises: the directory may
+/// not exist yet, and resolving symlinks would make the endpoint depend on the
+/// state of the filesystem rather than on what the user asked for.
+fn normalised_key(dir: &Path) -> String {
+    let text = dir.to_string_lossy().replace('\\', "/");
+    // Trailing separators are noise: `C:/x` and `C:/x/` are one directory.
+    let text = text.trim_end_matches('/').to_string();
+    if cfg!(windows) || cfg!(target_os = "macos") {
+        text.to_lowercase()
+    } else {
+        text
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// The endpoint decides which daemon a client talks to, so two spellings
+    /// of one directory must not produce two endpoints.
+    ///
+    /// This is not hypothetical: `SUPERBACKUP_HOME=C:/x` from a bash shell and
+    /// the same path with backslashes from PowerShell addressed different
+    /// pipes, so the CLI reported "nothing is listening" about a daemon it had
+    /// started itself moments earlier.
+    #[test]
+    fn one_directory_spelled_two_ways_is_one_endpoint() {
+        let a = Paths::rooted_at(r"C:\Users\andreas\sb", false);
+        let b = Paths::rooted_at("C:/Users/andreas/sb", false);
+        assert_eq!(a.ipc_endpoint(), b.ipc_endpoint(), "separators must not change the endpoint");
+
+        let trailing = Paths::rooted_at("C:/Users/andreas/sb/", false);
+        assert_eq!(a.ipc_endpoint(), trailing.ipc_endpoint(), "a trailing separator is noise");
+    }
+
+    #[test]
+    fn case_is_ignored_only_where_the_platform_ignores_it() {
+        let lower = Paths::rooted_at("C:/users/andreas/sb", false);
+        let upper = Paths::rooted_at("C:/Users/Andreas/SB", false);
+        if cfg!(windows) || cfg!(target_os = "macos") {
+            assert_eq!(lower.ipc_endpoint(), upper.ipc_endpoint());
+        } else {
+            // Linux paths are case-sensitive, and two directories that really
+            // are different must keep their own daemons.
+            assert_ne!(lower.ipc_endpoint(), upper.ipc_endpoint());
+        }
+    }
+
+    #[test]
+    fn genuinely_different_homes_still_get_their_own_endpoint() {
+        // The whole reason the tag exists: a portable install, a second user's
+        // tray and every integration test must not share one daemon.
+        let a = Paths::rooted_at("C:/one", false);
+        let b = Paths::rooted_at("C:/two", false);
+        assert_ne!(a.ipc_endpoint(), b.ipc_endpoint());
+    }
     use super::*;
 
     #[test]

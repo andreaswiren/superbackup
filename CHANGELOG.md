@@ -165,6 +165,15 @@ rather than mangling it.
 
 ### Fixed
 
+- **The CLI could not find a daemon it had just started.** The IPC endpoint is
+  named from a hash of the configuration directory, and the hash was taken over
+  the raw path bytes — so `SUPERBACKUP_HOME=C:/x` and the same directory written
+  with backslashes produced two different pipes, as did a difference in case on
+  a filesystem that ignores case. Separators, trailing separators and (where
+  the platform is case-insensitive) case are now normalised first. Genuinely
+  different homes still get their own endpoint, which is the whole reason the
+  tag exists.
+
 - **Sentences broke apart mid-line across the interface.** Multi-line string
   literals had their `\` continuations collapsed into runs of literal spaces,
   which rendered as gaps in the middle of a sentence — "every repository key.
