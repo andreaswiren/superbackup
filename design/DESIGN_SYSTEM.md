@@ -444,85 +444,159 @@ tray running icon becomes a static 3-frame cycle at 500 ms.
 
 ## 7. The five tray icons
 
-The tray mark is the most-seen part of this application. It is specified here at
-implementation precision.
+The tray mark is the most-seen part of this application, so it is **the
+application mark** — the interlock from `assets/icons/superbackup.svg`, in a
+single ink — with a status badge on it. People find a program in a crowded
+notification area by its icon; Dropbox, Docker Desktop and OneDrive all show
+the brand mark with status layered onto it, and for the same reason.
+
+> **What this replaced, and why.** §7 previously specified an abstract ring
+> with a status pip. It encoded five states well and carried no brand identity
+> at all — it looked nothing like the application icon, so the one place the
+> program is seen all day did not say which program it was. The reasoning
+> behind it was sound but stopped a step short: five states must stay
+> distinguishable at 16 px *and* under macOS's monochrome template rendering,
+> and a brand mark alone cannot encode status. The conclusion drawn was that
+> the mark had to be abandoned; the conclusion available was that it had to be
+> **combined** with a status indicator.
+
+It is specified here at implementation precision.
+`crates/app/src/tray/icons.rs` generates it at run time and
+`tools/icons/geometry.py` writes the reference SVGs in `assets/tray/`; the two
+are checked against each other pixel for pixel by
+`the_checked_in_reference_svgs_match_what_the_program_draws`.
 
 ### 7.1 Shared geometry
 
-Design canvas: **32 × 32** units (the 2× raster of a 16pt tray slot). All
-geometry centred on (16, 16). Stroke joins and caps are round.
+Design canvas **32 × 32** units (the 2× raster of a 16 pt tray slot). One
+canvas unit is half a pixel at 16 px, which is the number every constant below
+was chosen against.
 
-- **Ring**: circle centred (16, 16), radius **10.5**, stroke width **3.0**.
-- **Pip**: circle centred (**23.0, 23.0**), filled, separated from the arc by a
-  **1.5 unit** knockout. The knockout is a real cutout in the alpha, not a
-  stroke painted in the background colour — a stroke in "the taskbar colour" is
-  wrong the moment the user changes their accent, and always wrong on a Linux
-  panel whose colour we did not guess.
-- **Open ring**: the same circle drawn as an arc, leaving a gap centred on the
-  +45° direction (down-right), **derived from the pip** — see below.
-- Safe area: nothing within 1 unit of the 32 × 32 edge.
+**The mark.** The same drawing as `superbackup-mono.svg`: one rounded square
+cut along a stepped line into two congruent halves, the lower half slid
+down-right by the kerf so the cut opens. The second piece is the first rotated
+180°; the translation is the only thing that opens the cut, so the kerf is
+uniform along every segment of it without a hand-placed coordinate.
 
-#### Two size profiles
-
-The original single profile did not survive contact with a 16 px taskbar, and
-this section records what rasterising it actually showed.
-
-At 16 px the pip is 3 px across and its glyph stroke was 1.2 px — under this
-document's own 1.5 px floor. The exclamation's dot came out at 0.65 px. Both
-rendered as a smear, so `attention` and `failed` were separated only by the
-*lightness* of that smear, and in the macOS template, where both are the same
-hole, they were the same picture. §7.2 states the shape distinction as a hard
-requirement, and it was failing at exactly the sizes Windows uses most.
-
-| | `LARGE` (≥ 24 px) | `SMALL` (≤ 20 px) |
+| | Units | At 16 px |
 |---|---|---|
-| Pip radius | 6.0 | **7.6** |
-| Glyph stroke | 2.4 | **3.2** (1.60 px at 16 px) |
-| Knockout half-angle | 43.0° | 52.9° |
-| Gap | **106.5°** | **126.2°** |
-| Sweep | **253.5°** | **233.8°** |
-| Arc start | **98.2°** | **108.1°** |
+| Bounding square | **24.5**, top-left at (0.7, 0.7) | 12.25 px |
+| Kerf | **3.1** | 1.55 px |
+| Corner radius | 0.20 × side | |
+| Cut step | 0.30 × side | |
+| Inner corner radius | 0.045 × side | |
+| Thinnest limb (the bar above the cut) | 4.28 | 2.14 px |
 
-**The gap is computed from the pip, not fixed.** The previous "80° gap, 280°
-sweep" was not what the drawing showed: the 1.5-unit knockout intersects the
-ring over 45° ± 43°, i.e. 2°–88°, which is *wider* than the 5°–85° gap it was
-meant to clear — so both round terminals of the arc were being truncated into
-flat crescents. The span is now derived as knockout half-angle + round-cap
-angle + 2°, which keeps the caps intact by construction. Widening the gap was
-chosen over shrinking the pip because the pip is what carries the state.
+**The badge.** One bold glyph in a circular well knocked out of the mark's
+bottom-right corner — the corner the copied half slides towards, so the mark
+already points at it.
+
+| | Units | At 16 px |
+|---|---|---|
+| Centre | (**24.5**, **24.5**) | |
+| Glyph radius (every glyph is inscribed in this) | **6.8** | 6.8 px across |
+| Stroke | **3.4** | 1.70 px |
+| Stroke, diagonals | **4.08** (3.4 × 1.20) | 2.04 px |
+| Clear space, knocked out of the mark's alpha | **2.8** | 1.40 px |
+
+Diagonals are drawn 20 % heavier because a diagonal spreads its coverage over
+two pixel columns and reads lighter than an axis-aligned stroke of the same
+width. `failed` is a diagonal cross, and `failed` must never be the faintest
+thing on the taskbar.
+
+The clear space is a **real cutout in the alpha**, not a stroke painted in "the
+taskbar colour": such a stroke is wrong the moment the user changes their
+accent, and always wrong on a Linux panel whose colour we did not guess.
+
+Inscribing every glyph in a single radius is what makes the clear space true
+for all five states without measuring each shape.
+
+The composition spans 0.7 … 31.3 in both axes — the same margin on all four
+sides — so the icon fills its slot the way the shell's own icons do.
+
+#### Two invariants, both found by rasterising
+
+Neither of these is an aesthetic preference. Both were found by rendering and
+looking, and both are now tests.
+
+1. **The mark must stay two pieces.** The badge's well is bitten out of the
+   lower half's inner corner. Reach too far and that half is cut in two, the
+   mark reads as three unrelated blocks, and "one square, cut in two, the
+   second piece slid clear" is gone. A 25.5-unit mark is connected in the
+   vector and **three fragments once rasterised at 16 px and 20 px**. 24.5 is
+   the largest span that holds. → `the_mark_is_two_pieces_at_every_size`
+
+2. **The badge must not touch the mark.** In the macOS template the mark and
+   the badge are the same black, and only the gap tells them apart. A 2.4-unit
+   clear space is not enough: at 16 px `running`, `paused` and `failed` fuse
+   into the mark. 2.6 is the threshold; **2.8** is used.
+   → `the_badge_never_touches_the_mark`
+
+The clear space is therefore 1.4 px at 16 px, under the 1.5 px floor below —
+deliberately, because it is a *gap*, not a stroke. A stroke has to show its
+shape; a gap only has to break contact. Taking it to 3.0 works too, but only by
+shrinking the mark from 24.5 units to 21.7 to keep invariant 1 — a tenth of the
+mark's width paid for a gap that is already sufficient.
+
+#### The 1.5 px floor
+
+**Nothing is drawn thinner than 3.0 units — 1.5 px at 16 px.** The previous
+design put a glyph stroke at 2.4 units, which is 1.2 px, and `attention` and
+`failed` became the same smear. Every feature is measured against the floor by
+`no_feature_falls_below_the_stroke_floor`, which is not decorative: it rejected
+the first `paused`, whose two bars had a 2.86-unit gap between them, and two
+bars that merge are one bar.
+
+#### One drawing, not two
+
+The previous design needed a `LARGE` profile for 24 px and up and a `SMALL` one
+for 16 and 20, because its proportions did not survive 16 px. This one is
+*drawn* at the floor, so **the same geometry is used at every size** and there
+is no profile switch to get wrong.
 
 **The renderer must rasterise at the size the tray will display.** Handing
-Windows a 32 px bitmap and letting it downscale defeats the small profile
-entirely; the tray reads `GetSystemMetrics(SM_CXSMICON)` and re-rasterises on a
-DPI change.
+Windows a 32 px bitmap to shrink throws the floor away and fuses the two halves
+back together. The tray reads `GetSystemMetrics(SM_CXSMICON)` and re-rasterises
+on a DPI change.
 
 ### 7.2 The five states
 
-> **Colour note.** The base and moving arcs of `Running` are variant-aware.
-> A single `#3A4250` base was 9.12:1 on a light taskbar and **1.61:1** on a
-> dark one, so on dark the ring vanished and only the moving arc remained —
-> `running` lost the silhouette that makes the five marks read as one
-> application. Fixing only the base would have left the *moving* arc at 2.50:1
-> on light, so both are paired. No new colour was introduced; the light moving
-> arc is §2.2's `info`.
->
-> The `attention` and `failed` pip fills are **not** yet variant-aware
-> (`#E0A83A` is 1.92:1 on light, `#C2313A` is 2.94:1 on dark). Repainting the
-> two colours that identify those states is a deliberate design decision rather
-> than a defect fix, and is left open.
+The state is carried by the **badge's silhouette** — never by an interior
+detail, and never by colour. An interior detail is precisely what failed
+before: a 2.4-unit glyph inside a 6-unit pip is 1.2 px at 16 px.
 
+| `Health` | Asset stem | Badge | What makes it unmistakable | Ink, light taskbar | Ink, dark taskbar |
+|---|---|---|---|---|---|
+| `Idle` | `idle` | a filled disc, r = 5.98 | solid, with no interior structure at all | `#12793B` §2.2 success | `#4FBF6B` §2.1 success |
+| `Running` | `running` | the same circle opened into a ring, stroke 3.4, with a 110° gap that advances 30° a frame over 12 frames | the only badge with a hole in the middle | `#155FCC` §2.2 info | `#5B9BFF` §2.1 accent |
+| `Attention` | `attention` | an equilateral triangle inscribed in r = 6.8 — 1.73 r across by 1.5 r tall | the only badge with a flat base and a point | `#8A5B00` §2.2 warning | `#E0A83A` §2.1 warning |
+| `Paused` | `paused` | two bars, stroke 3.4, 3.30 either side of centre, 7.40 tall | the only badge that is not one connected shape | `#5E6774` §2.2 neutral | `#8B93A5` §2.1 neutral |
+| `Failed` | `failed` | a cross, stroke 4.08, reaching 4.76 diagonally | the only badge made of diagonals | `#B3242B` §2.2 danger.fill | `#FF6B72` §2.1 danger |
 
+`Idle` and `Running` are deliberately the same circle: whole, then opened and
+turning. The mark ink is `#22262E` on a light taskbar and `#E8ECF2` on a dark
+one, in every state.
 
-| `Health` | Asset stem | Silhouette | Colour (Windows/Linux) | Greyscale-distinct? |
-|---|---|---|---|---|
-| `Idle` | `idle` | **Closed ring** (full 360°), plus a solid disc r = 3.0 at centre. No pip. | Ring + disc `#8B93A5` dark taskbar / `#5E6774` light taskbar | Yes — the only closed ring with a centre dot |
-| `Running` | `running` | **Open ring** (280° arc) with **no pip**, plus a 90° arc at radius 10.5, stroke 3.0, rotating. 12 frames, 30° per frame. | Base arc `#3A4250` light / `#8B93A5` dark; moving arc `#155FCC` light / `#5B9BFF` dark | Yes — the only animated state, and the only one with no pip and no centre dot |
-| `Attention` | `attention` | **Open ring** + pip containing an exclamation: vertical rounded bar from (23.0, 19.8) to (23.0, 23.4), plus a dot r = 1.3 at (23.0, 26.0). | Ring `#8B93A5`, pip fill `#E0A83A`, `pip.ink` `#1A1206` | Yes — pip with vertical bar |
-| `Paused` | `paused` | **Closed ring** + two vertical rounded bars inside: each 3.4 wide × 11.0 tall, radius 1.7, centred at x = 13.3 and x = 18.7, y from 10.5 to 21.5. No pip. | Ring and bars `#8B93A5` dark / `#5E6774` light | Yes — the only state with two interior bars |
-| `Failed` | `failed` | **Open ring** + pip containing a cross: two strokes from (20.9, 20.9)→(25.1, 25.1) and (25.1, 20.9)→(20.9, 25.1). | Ring `#8B93A5`, pip fill `#C2313A`, `pip.ink` `#FFFFFF` | Yes — pip with an X |
+The running animation is carried by **alpha** — the ring's gap travels — so it
+survives the macOS template, where colour is discarded. It cannot seal a
+silhouette another state relies on, because the ring's hole is what
+distinguishes `running` from `idle` and the gap only moves along the ring.
 
-Shape carries state in all five cases. Colour is confirmation, never the
-message. This is a hard requirement because macOS strips colour (§7.4).
+**The well is knocked out in all five states, including `idle`.** `Idle` could
+have kept its corner and shown the mark whole, and that was drawn and rejected:
+it makes `idle` — the state the taskbar is in nearly all the time — visibly
+smaller than the other four, and it means the five marks are not the same
+picture outside the badge. Knocking it out everywhere is what lets
+`the_base_mark_is_common_to_all_five_states` compare them pixel for pixel.
+
+> **Colour is confirmation, never the message,** because macOS strips it (§7.4)
+> and roughly one man in twelve has a colour-vision deficiency. Every ink above
+> is variant-aware and clears SC 1.4.11's 3:1 on the taskbar it is drawn on;
+> the worst of the ten is 4.95:1. The previous design fixed `#E0A83A` and
+> `#C2313A` for both taskbars, which are **1.92:1** on a light one and
+> **2.94:1** on a dark one — and the second was the failure state. Measured
+> figures are in `assets/tray/README.md`, printed by
+> `python tools/icons/build.py --contrast`.
 
 ### 7.3 Precedence
 
@@ -534,13 +608,16 @@ The icon shown is `StatusSnapshot::derive_health(...)`:
 
 | Platform | Format | Sizes | Colour handling |
 |---|---|---|---|
-| Windows | `.ico` bundle per state | 16, 20, 24, 32 | Two variants per state: `-light` (for light taskbars, ring ink `#22262E`) and `-dark` (ring ink `#E8ECF2`). Status pip and running arc keep their chromatic colour in both. The app watches `SystemUsesLightTheme` and swaps. |
-| macOS | Template PNG | 18 (@1x), 36 (@2x) | **Pure black + alpha, no colour.** macOS inverts for dark menu bars. State is conveyed entirely by silhouette. The running animation is retained (macOS re-renders template images cheaply). |
-| Linux (SNI / AppIndicator) | PNG | 22, 24, 32, 48 | Full colour, dark-taskbar variant. Falls back to the 24px asset if the panel does not report a size. |
+| Windows | rendered at run time | 16, 20, 24, 32 — whichever `SM_CXSMICON` reports | Two variants: `-light` (mark ink `#22262E`) and `-dark` (`#E8ECF2`), each with its own badge inks. The app watches `SystemUsesLightTheme` and swaps. |
+| macOS | Template image | 18 (@1x), 36 (@2x) | **Pure black + alpha, no colour.** macOS inverts it for dark menu bars. Both the state and the running animation are conveyed entirely by silhouette and alpha. |
+| Linux (SNI / AppIndicator) | PNG | 22, 24, 32, 48 | Full colour, dark-taskbar variant. Falls back to the 24 px asset if the panel does not report a size. |
 
-Source of truth: `assets/tray/<stem>.svg` at 32 × 32; a build script rasterises
-every size and platform variant. Running frames are
-`assets/tray/running-{00..11}.svg`.
+The running frames are `running-{00..11}-<variant>`.
+
+Source of truth is `crates/app/src/tray/icons.rs`, which draws every mark at
+run time. `assets/tray/<stem>.svg` are reference copies for a human to look at,
+generated from the same numbers by `tools/icons/geometry.py` and asserted equal
+to what the program draws.
 
 ### 7.5 Tooltip
 

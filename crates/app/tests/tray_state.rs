@@ -10,9 +10,25 @@
 //!   Failed > Running > Paused > Attention (locked vault or stale job) > Idle
 //! ```
 //!
-//! It also checks the mark itself: five states, two Windows variants, twelve
-//! running frames, and greyscale distinctness — because "one man in twelve"
-//! cannot tell red from green, and colour is confirmation, never the message.
+//! It also checks the mark itself. Every tray icon is the **application mark**
+//! with a status badge in a well knocked out of its bottom-right corner, so
+//! there are two things to hold true at once and both of them break at 16 px
+//! before they break anywhere else:
+//!
+//! * the badge still reads as its state — `each_badge_is_a_distinct_silhouette`,
+//!   `the_marks_are_distinct_in_greyscale_at_every_tray_size`,
+//!   `attention_and_failed_are_told_apart_by_shape_at_16px`;
+//! * the mark still reads as the mark — `the_base_mark_is_common_to_all_five_states`,
+//!   `the_mark_is_two_pieces_at_every_size`, `the_badge_never_touches_the_mark`.
+//!
+//! All of it in greyscale and in the macOS template as well as in colour,
+//! because "one man in twelve" cannot tell red from green and macOS discards
+//! colour outright: colour is confirmation, never the message.
+//!
+//! The `contact_sheet`, `pixel_check` and `running_frames` generators at the
+//! bottom are `#[ignore]`d and write PNGs. They are not decoration — every
+//! number in `tray/icons.rs` was chosen by looking at their output, and an icon
+//! nobody has viewed at 16 px is not finished.
 
 #![allow(dead_code)]
 
@@ -38,6 +54,10 @@ mod cli {
     }
 }
 
+// `daemon::handler` reports which build it is, so the module that
+// answers that has to exist in this synthetic crate too.
+#[path = "../src/build.rs"]
+mod build;
 #[path = "../src/daemon/mod.rs"]
 mod daemon;
 #[path = "../src/tray/mod.rs"]
@@ -58,6 +78,7 @@ fn snapshot() -> StatusSnapshot {
         health: Health::Idle,
         version: "0.1.0".into(),
         machine_label: "pc".into(),
+        machine_hostname: "pc".into(),
         machine_slug: "pc".into(),
         unlocked: true,
         paused: false,
@@ -149,54 +170,418 @@ fn every_health_has_its_own_mark_in_every_variant() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Pixel helpers for the mark tests
+// ---------------------------------------------------------------------------
+
+const STATES: [Health; 5] =
+    [Health::Idle, Health::Running, Health::Attention, Health::Paused, Health::Failed];
+const VARIANTS: [Variant; 3] = [Variant::LightTaskbar, Variant::DarkTaskbar, Variant::Template];
+/// The sizes a notification area actually asks for: `SM_CXSMICON` at 100 %,
+/// 125 %, 150 % and 200 % DPI.
+const TRAY_SIZES: [u32; 4] = [16, 20, 24, 32];
+
+/// Rec. 601 luma plus alpha — exactly what a greyscale printout or a
+/// monochrome taskbar would show.
+fn greyscale(rgba: &[u8]) -> Vec<u8> {
+    rgba.chunks_exact(4)
+        .flat_map(|p| {
+            let y = (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32).round() as u8;
+            [y, p[3]]
+        })
+        .collect()
+}
+
+/// The pixels inside the badge's clear-space disc, as indices into an RGBA
+/// buffer of `size` × `size`.
+fn badge_region(size: u32) -> Vec<usize> {
+    let scale = size as f32 / tray::icons::CANVAS;
+    let reach = tray::icons::BADGE_RADIUS + tray::icons::BADGE_CLEARANCE;
+    let mut out = Vec::new();
+    for y in 0..size {
+        for x in 0..size {
+            let dx = (x as f32 + 0.5) / scale - tray::icons::BADGE_X;
+            let dy = (y as f32 + 0.5) / scale - tray::icons::BADGE_Y;
+            if dx.hypot(dy) <= reach {
+                out.push((y * size + x) as usize);
+            }
+        }
+    }
+    out
+}
+
+/// How many four-connected opaque regions the bitmap contains.
+///
+/// The single most useful measurement in this file: it is what proved that a
+/// 25.5-unit mark is severed into three fragments at 16 px, and that a
+/// 2.4-unit clear space lets the badge fuse into the mark.
+fn opaque_regions(rgba: &[u8], size: u32, threshold: u8) -> usize {
+    let size = size as usize;
+    let solid = |i: usize| rgba[i * 4 + 3] > threshold;
+    let mut seen = vec![false; size * size];
+    let mut regions = 0;
+    for start in 0..size * size {
+        if !solid(start) || seen[start] {
+            continue;
+        }
+        regions += 1;
+        let mut stack = vec![start];
+        seen[start] = true;
+        while let Some(i) = stack.pop() {
+            let (x, y) = (i % size, i / size);
+            let mut visit = |nx: usize, ny: usize| {
+                let j = ny * size + nx;
+                if solid(j) && !seen[j] {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            };
+            if x > 0 {
+                visit(x - 1, y);
+            }
+            if x + 1 < size {
+                visit(x + 1, y);
+            }
+            if y > 0 {
+                visit(x, y - 1);
+            }
+            if y + 1 < size {
+                visit(x, y + 1);
+            }
+        }
+    }
+    regions
+}
+
 /// The marks survive being desaturated — shape, not colour, carries the state.
+///
+/// Checked at every size the tray asks for and in all three variants, not only
+/// at 32 px on a dark taskbar. 16 px is where a colour-only distinction shows
+/// up, and the macOS template is where colour is gone entirely.
 #[test]
-fn the_marks_are_distinct_in_greyscale() {
-    let states = [Health::Idle, Health::Running, Health::Attention, Health::Paused, Health::Failed];
-    let grey: Vec<(Health, Vec<u8>)> = states
-        .iter()
-        .map(|health| {
-            let rgba = tray::icons::rasterise(IconKey::new(*health, Variant::DarkTaskbar, 0), 32)
-                .expect("render");
-            // Rec. 601 luma, plus alpha: exactly what a greyscale printout or
-            // a monochrome taskbar would show.
-            let grey: Vec<u8> = rgba
-                .chunks_exact(4)
-                .flat_map(|p| {
-                    let y = (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
-                        .round() as u8;
-                    [y, p[3]]
+fn the_marks_are_distinct_in_greyscale_at_every_tray_size() {
+    for variant in VARIANTS {
+        for size in TRAY_SIZES {
+            let rendered: Vec<(Health, Vec<u8>)> = STATES
+                .iter()
+                .map(|health| {
+                    let rgba = tray::icons::rasterise(IconKey::new(*health, variant, 6), size)
+                        .expect("render");
+                    (*health, greyscale(&rgba))
                 })
                 .collect();
-            (*health, grey)
-        })
-        .collect();
 
-    for (i, (a_health, a)) in grey.iter().enumerate() {
-        for (b_health, b) in grey.iter().skip(i + 1) {
-            let differing = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
-            assert!(
-                differing > 100,
-                "{a_health:?} and {b_health:?} differ in only {differing} greyscale samples; \
-                 the distinction is carried by colour alone"
+            for (i, (a_health, a)) in rendered.iter().enumerate() {
+                for (b_health, b) in rendered.iter().skip(i + 1) {
+                    // "Differs" means differs enough for an eye to see: a
+                    // one-level difference in an antialiased edge is not a
+                    // distinction anybody can act on.
+                    let differing =
+                        a.iter().zip(b.iter()).filter(|(x, y)| x.abs_diff(**y) > 24).count();
+                    assert!(
+                        differing >= 16,
+                        "{a_health:?} and {b_health:?} differ in only {differing} greyscale \
+                         samples at {size}px in {variant:?}; the distinction is being carried \
+                         by colour alone"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Every state's badge is a different *silhouette*, not a different colour.
+///
+/// Measured on alpha alone, inside the badge's own clear-space disc, so the
+/// mark — which is identical in all five — cannot flatter the result. The
+/// measured floor is 12.8 % of the badge region (`paused` against `failed`, at
+/// 24 px and 32 px); the bar is set at 8 % so a small tuning change does not
+/// fail the build, and a real regression does.
+#[test]
+fn each_badge_is_a_distinct_silhouette() {
+    for variant in VARIANTS {
+        for size in TRAY_SIZES {
+            let region = badge_region(size);
+            let rendered: Vec<(Health, Vec<u8>)> = STATES
+                .iter()
+                .map(|health| {
+                    (
+                        *health,
+                        tray::icons::rasterise(IconKey::new(*health, variant, 6), size)
+                            .expect("render"),
+                    )
+                })
+                .collect();
+
+            for (i, (a_health, a)) in rendered.iter().enumerate() {
+                for (b_health, b) in rendered.iter().skip(i + 1) {
+                    let differing = region
+                        .iter()
+                        .filter(|&&p| a[p * 4 + 3].abs_diff(b[p * 4 + 3]) > 96)
+                        .count();
+                    let share = differing as f32 / region.len() as f32;
+                    assert!(
+                        share >= 0.08,
+                        "at {size}px in {variant:?}, {a_health:?} and {b_health:?} differ over \
+                         only {:.1}% of the badge; their silhouettes have converged",
+                        share * 100.0
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// `attention` and `failed` specifically, at 16 px specifically.
+///
+/// This is the pair the previous design lost: a 2.4-unit glyph inside a
+/// 6-unit pip is 1.2 px at 16 px, so an exclamation and a cross both rendered
+/// as an indistinct smear told apart only by the smear's lightness — and in
+/// the template, where both were the same hole, not told apart at all. They
+/// are now a solid triangle and a cross, which differ in silhouette before
+/// they differ in anything else.
+#[test]
+fn attention_and_failed_are_told_apart_by_shape_at_16px() {
+    let region = badge_region(16);
+    for variant in VARIANTS {
+        let attention = tray::icons::rasterise(IconKey::new(Health::Attention, variant, 0), 16)
+            .expect("render");
+        let failed =
+            tray::icons::rasterise(IconKey::new(Health::Failed, variant, 0), 16).expect("render");
+
+        // Alpha only: this must hold with every scrap of colour discarded.
+        let differing = region
+            .iter()
+            .filter(|&&p| attention[p * 4 + 3].abs_diff(failed[p * 4 + 3]) > 96)
+            .count();
+        assert!(
+            differing >= 8,
+            "attention and failed differ in only {differing} of {} badge pixels at 16px in \
+             {variant:?}, on alpha alone",
+            region.len()
+        );
+    }
+}
+
+/// The application mark is identical in all five states.
+///
+/// This is what makes the set read as *one application* rather than five
+/// unrelated icons, and it is the whole point of rebuilding the tray on the
+/// brand mark. Outside the badge's clear-space disc every state must be the
+/// same picture, pixel for pixel — which is also why the well is knocked out
+/// of `idle` too, even though `idle` could have kept its corner.
+#[test]
+fn the_base_mark_is_common_to_all_five_states() {
+    for variant in VARIANTS {
+        for size in TRAY_SIZES {
+            let badge: std::collections::HashSet<usize> = badge_region(size).into_iter().collect();
+            let reference =
+                tray::icons::rasterise(IconKey::new(Health::Idle, variant, 0), size).expect("ref");
+            for health in STATES {
+                let rgba =
+                    tray::icons::rasterise(IconKey::new(health, variant, 6), size).expect("render");
+                for pixel in 0..(size * size) as usize {
+                    if badge.contains(&pixel) {
+                        continue;
+                    }
+                    assert_eq!(
+                        &rgba[pixel * 4..pixel * 4 + 4],
+                        &reference[pixel * 4..pixel * 4 + 4],
+                        "{health:?} differs from idle outside the badge at pixel {pixel} \
+                         ({size}px, {variant:?}): the five marks are no longer one application"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The mark is two congruent pieces, and stays two pieces once rasterised.
+///
+/// The badge's clear space is a disc bitten out of the lower half's inner
+/// corner. Push it too far and that half is cut into two fragments — the mark
+/// then reads as three unrelated blocks, and "one square, cut in two, the
+/// second piece slid clear" is gone. A 25.5-unit mark is connected in the
+/// vector and **three fragments at 16 px and 20 px**; 24.5 is the span that
+/// holds, and this is the test that found it.
+#[test]
+fn the_mark_is_two_pieces_at_every_size() {
+    for size in TRAY_SIZES {
+        // The template is the strict case: the mark is a single flat ink, so
+        // nothing but geometry can be holding the pieces apart.
+        let rgba = tray::icons::rasterise(IconKey::new(Health::Idle, Variant::Template, 0), size)
+            .expect("render");
+        // Blank out the badge so only the mark is counted.
+        let mut mark = rgba.clone();
+        for pixel in badge_region(size) {
+            mark[pixel * 4 + 3] = 0;
+        }
+        for threshold in [96u8, 128] {
+            let regions = opaque_regions(&mark, size, threshold);
+            assert_eq!(
+                regions, 2,
+                "the mark is {regions} piece(s) at {size}px (alpha > {threshold}), not the two \
+                 congruent halves it is built from"
             );
         }
     }
 }
 
+/// The badge never touches the mark.
+///
+/// The clear space is a real cutout in the alpha, so this has to hold in the
+/// macOS template — where the mark and the badge are the same black and only
+/// the gap tells them apart. A 2.4-unit clear space fails here at 16 px;
+/// 2.8 passes at every size, state, variant and threshold.
+#[test]
+fn the_badge_never_touches_the_mark() {
+    // Two halves of the mark, plus the badge — and `paused`'s badge is itself
+    // two bars.
+    let expected = |health: Health| if health == Health::Paused { 4 } else { 3 };
+    for size in TRAY_SIZES {
+        for health in STATES {
+            let rgba = tray::icons::rasterise(IconKey::new(health, Variant::Template, 6), size)
+                .expect("render");
+            for threshold in [96u8, 110, 128] {
+                let regions = opaque_regions(&rgba, size, threshold);
+                assert_eq!(
+                    regions,
+                    expected(health),
+                    "{health:?} at {size}px (alpha > {threshold}) has {regions} separate \
+                     shapes, not {}: the badge has fused into the mark",
+                    expected(health)
+                );
+            }
+        }
+    }
+}
+
+/// The reference SVGs in `assets/tray/` are the same drawing the program makes.
+///
+/// `assets/tray/README.md` has always *claimed* that the checked-in files and
+/// `tray/icons.rs` cannot quietly diverge, because `tools/icons/geometry.py`
+/// mirrors the module. Claiming it is not the same as knowing it: the two did
+/// diverge once already, over whether the macOS template's glyph was painted or
+/// punched, and the divergence was found by reading rather than by failing.
+/// This rasterises both and compares the pixels, at the size the difference
+/// would matter at.
+#[test]
+fn the_checked_in_reference_svgs_match_what_the_program_draws() {
+    let tray = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("assets")
+        .join("tray");
+    if !tray.is_dir() {
+        // A source checkout always has these; a vendored build may not.
+        return;
+    }
+
+    let render = |svg: &str, size: u32| -> Vec<u8> {
+        let tree =
+            resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()).expect("parse");
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).expect("pixmap");
+        let scale = size as f32 / tray::icons::CANVAS;
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::from_scale(scale, scale),
+            &mut pixmap.as_mut(),
+        );
+        pixmap.take()
+    };
+
+    let mut checked = 0;
+    for variant in VARIANTS {
+        for health in STATES {
+            let frames = if health == Health::Running { RUNNING_FRAMES } else { 1 };
+            for frame in 0..frames {
+                let key = IconKey::new(health, variant, frame);
+                let file = tray.join(format!("{}.svg", key.stem()));
+                let reference = std::fs::read_to_string(&file)
+                    .unwrap_or_else(|e| panic!("{} is missing: {e}", file.display()));
+
+                for size in [16u32, 32] {
+                    assert_eq!(
+                        render(&reference, size),
+                        render(&tray::icons::svg(key), size),
+                        "{} does not match what tray/icons.rs draws at {size}px — run \
+                         `python tools/icons/build.py`",
+                        key.stem()
+                    );
+                }
+                checked += 1;
+            }
+        }
+    }
+    // Five states × three variants, with `running` counted twelve times each.
+    assert_eq!(checked, 3 * (4 + RUNNING_FRAMES));
+}
+
+/// Every badge ink clears 3:1 against the taskbar it is drawn on.
+///
+/// SC 1.4.11 governs graphics that carry meaning, and the badge is the only
+/// thing carrying the state. The previous design fixed `#E0A83A` and `#C2313A`
+/// for both taskbars: 1.92:1 on light and 2.94:1 on dark respectively — the
+/// second being the *failure* state. Each ink is now chosen per variant.
+#[test]
+fn every_badge_ink_clears_three_to_one_on_its_own_taskbar() {
+    let cases = [
+        (Variant::LightTaskbar, [0xF3u8, 0xF3, 0xF3]),
+        (Variant::DarkTaskbar, [0x20u8, 0x20, 0x20]),
+    ];
+    for (variant, taskbar) in cases {
+        for health in STATES {
+            let ink = variant.badge_ink(health);
+            let rgb = [
+                u8::from_str_radix(&ink[1..3], 16).unwrap(),
+                u8::from_str_radix(&ink[3..5], 16).unwrap(),
+                u8::from_str_radix(&ink[5..7], 16).unwrap(),
+            ];
+            let ratio = contrast(&rgb, &taskbar);
+            assert!(
+                ratio >= 3.0,
+                "{health:?}'s badge ink {ink} is {ratio:.2}:1 on a {variant:?} taskbar, under \
+                 SC 1.4.11's 3:1 — the shape carrying the state is not visible"
+            );
+        }
+        // And the mark itself.
+        let ink = variant.mark_ink();
+        let rgb = [
+            u8::from_str_radix(&ink[1..3], 16).unwrap(),
+            u8::from_str_radix(&ink[3..5], 16).unwrap(),
+            u8::from_str_radix(&ink[5..7], 16).unwrap(),
+        ];
+        assert!(contrast(&rgb, &taskbar) >= 3.0, "the mark ink {ink} fails on {variant:?}");
+    }
+}
+
 /// The running animation is twelve distinct frames, and only running animates.
+///
+/// Checked at 16 px as well as 32, and in the template as well as on a
+/// taskbar: the gap that travels round the ring is 3.4 units of arc, and an
+/// animation whose frames collapse into each other once rasterised is a
+/// still picture that costs a redraw eight times a second. The template
+/// matters because the animation there is carried by alpha alone — macOS has
+/// discarded the colour.
 #[test]
 fn only_the_running_state_animates_and_it_has_twelve_frames() {
-    let mut frames = Vec::new();
-    for frame in 0..RUNNING_FRAMES {
-        frames.push(
-            tray::icons::rasterise(IconKey::new(Health::Running, Variant::DarkTaskbar, frame), 32)
-                .expect("render a frame"),
-        );
-    }
-    for (i, a) in frames.iter().enumerate() {
-        for (j, b) in frames.iter().enumerate().skip(i + 1) {
-            assert_ne!(a, b, "running frames {i} and {j} are identical");
+    for variant in VARIANTS {
+        for size in [16u32, 32] {
+            let mut frames = Vec::new();
+            for frame in 0..RUNNING_FRAMES {
+                frames.push(
+                    tray::icons::rasterise(IconKey::new(Health::Running, variant, frame), size)
+                        .expect("render a frame"),
+                );
+            }
+            for (i, a) in frames.iter().enumerate() {
+                for (j, b) in frames.iter().enumerate().skip(i + 1) {
+                    assert_ne!(
+                        a, b,
+                        "running frames {i} and {j} are identical at {size}px in {variant:?}"
+                    );
+                }
+            }
         }
     }
     // A frame index is meaningless for every other state, so the cache never
@@ -382,110 +767,15 @@ fn icon_stems_come_from_the_cores_own_names() {
     }
 }
 
-/// The knockout no longer eats the arc's round terminals.
-///
-/// §7.1 asked for a 280° sweep with round caps *and* a 1.5-unit knockout, and
-/// those contradict: the knockout disc cut the ring over 2°–88° while the gap
-/// was only 5°–85°, so both round ends were sliced into flat crescents. The
-/// gap is now derived from the pip rather than fixed, and this is the
-/// relationship that derivation has to keep.
-#[test]
-fn the_round_caps_survive_the_knockout() {
-    for profile in [tray::icons::LARGE, tray::icons::SMALL] {
-        let (start, sweep) = profile.arc_span();
-
-        // Where the knockout disc actually crosses the ring.
-        let pip_distance = ((23.0f32 - 16.0).powi(2) + (23.0f32 - 16.0).powi(2)).sqrt();
-        let knockout = profile.pip_radius + 1.5;
-        let ring = 10.5f32;
-        let cosine =
-            (pip_distance.powi(2) + ring.powi(2) - knockout.powi(2)) / (2.0 * pip_distance * ring);
-        let knockout_half = cosine.clamp(-1.0, 1.0).acos().to_degrees();
-
-        // The arc's own terminals, plus the half-stroke its round cap adds.
-        let cap_half = ((3.0f32 / 2.0) / ring).asin().to_degrees();
-        let gap_half = (360.0 - sweep) / 2.0;
-
-        assert!(
-            gap_half > knockout_half + cap_half,
-            "the knockout ({knockout_half:.1}°) plus a round cap ({cap_half:.1}°) is wider \
-             than half the gap ({gap_half:.1}°): the arc's ends are being truncated"
-        );
-        // And the gap is still centred down-right, as §7.1 requires.
-        let gap_centre = (start + sweep + gap_half) % 360.0;
-        assert!(
-            (gap_centre - 45.0).abs() < 0.5,
-            "the gap drifted off the down-right diagonal: centred at {gap_centre:.1}°"
-        );
-    }
-}
-
-/// The travelling arc never seals the ring.
-///
-/// A closed ring is `idle` and `paused`'s distinguishing feature. The moving
-/// arc used to be drawn on the full circle, so on the frames where it crossed
-/// the gap `running` briefly wore another state's silhouette.
-#[test]
-fn the_travelling_arc_never_closes_the_ring() {
-    for size in [16u32, 32] {
-        for frame in 0..RUNNING_FRAMES {
-            let key = IconKey::new(Health::Running, Variant::DarkTaskbar, frame);
-            let rgba = tray::icons::rasterise(key, size).expect("render");
-            // Sample the gap's centre — the down-right diagonal, on the ring's
-            // own radius. Nothing may ever be painted there.
-            let scale = size as f32 / 32.0;
-            let angle = 45.0f32.to_radians();
-            let x = ((16.0 + 10.5 * angle.cos()) * scale) as usize;
-            let y = ((16.0 + 10.5 * angle.sin()) * scale) as usize;
-            let alpha = rgba[(y * size as usize + x) * 4 + 3];
-            assert!(
-                alpha < 64,
-                "at {size}px, frame {frame} paints the gap (alpha {alpha}) — the silhouette \
-                 is a closed ring, which is what `idle` and `paused` mean"
-            );
-        }
-    }
-}
-
-/// The running mark keeps its ring on both taskbars.
-///
-/// §7.2 fixed the base arc at `#3A4250`, which is 1.61:1 on a dark taskbar —
-/// so the ring vanished and only the moving arc was left, and `running`
-/// stopped sharing the silhouette that makes the five marks one family.
-#[test]
-fn the_running_base_arc_is_visible_on_both_taskbars() {
-    for (variant, taskbar) in [
-        (Variant::LightTaskbar, [0xF3u8, 0xF3, 0xF3]),
-        (Variant::DarkTaskbar, [0x20u8, 0x20, 0x20]),
-    ] {
-        let rgba =
-            tray::icons::rasterise(IconKey::new(Health::Running, variant, 6), 32).expect("render");
-        let (start, sweep) = tray::icons::LARGE.arc_span();
-
-        let mut painted = 0;
-        let mut contrasting = 0;
-        for step in 0..48 {
-            let angle = (start + sweep * (step as f32 / 47.0)).to_radians();
-            let x = (16.0 + 10.5 * angle.cos()).round() as usize;
-            let y = (16.0 + 10.5 * angle.sin()).round() as usize;
-            let px = &rgba[(y * 32 + x) * 4..][..4];
-            if px[3] < 128 {
-                continue;
-            }
-            painted += 1;
-            if contrast(&px[..3], &taskbar) >= 3.0 {
-                contrasting += 1;
-            }
-        }
-        assert!(painted >= 40, "the ring is barely drawn at all: {painted}/48 samples");
-        assert_eq!(
-            contrasting, painted,
-            "on a {variant:?} taskbar only {contrasting}/{painted} painted samples of the \
-             running ring reach 3:1 — part of the base arc is invisible and the state has \
-             lost its silhouette"
-        );
-    }
-}
+// The three tests that used to live here — `the_round_caps_survive_the_knockout`,
+// `the_travelling_arc_never_closes_the_ring` and
+// `the_running_base_arc_is_visible_on_both_taskbars` — guarded an abstract ring
+// with a status pip that has been replaced by the application mark with a status
+// badge. There is no arc, no pip and no knockout of an arc any more, so they were
+// removed rather than rewritten to assert nothing. What they were really
+// protecting has successors above: that a state never wears another state's
+// silhouette is now `each_badge_is_a_distinct_silhouette`, and that the shared
+// part of the mark is genuinely shared is `the_base_mark_is_common_to_all_five_states`.
 
 /// WCAG 2.1 relative luminance.
 fn luminance(rgb: &[u8]) -> f32 {
@@ -580,33 +870,44 @@ fn contact_sheet() {
     eprintln!("contact sheet: {}", out.display());
 }
 
-/// Every mark at 16 px and 20 px, magnified 8× with no smoothing, so the
-/// actual pixels can be counted.
+/// Every mark at 16 px, magnified 9× with no smoothing, so the actual pixels
+/// can be counted — on both taskbars, in colour and in greyscale, plus the
+/// macOS template and its inversion, and a 20 px row for the 125 % DPI case.
 ///
-/// A contact sheet shows whether a set reads; this shows *why*. It is what the
-/// small profile was tuned against — the exclamation's bar and dot had to stay
-/// two shapes, and the cross had to stay four arms, at the size where one
-/// canvas unit is half a pixel.
+/// A contact sheet shows whether a set reads; this shows *why*. The greyscale
+/// and template rows are where a colour-only distinction shows up, and they
+/// are what every proportion in `tray/icons.rs` was tuned against: the badge
+/// silhouettes had to stay five different shapes at the size where one canvas
+/// unit is half a pixel.
+///
+/// Run with
+/// `cargo test -p superbackup --test tray_state -- --ignored pixel_check`.
 #[test]
 #[ignore = "writes a PNG for a human to look at"]
 fn pixel_check() {
-    const ZOOM: u32 = 8;
-    const PAD: u32 = 4;
-    let states = [Health::Idle, Health::Running, Health::Attention, Health::Paused, Health::Failed];
-    let rows: [(u32, Variant, [u8; 3]); 4] = [
-        (16, Variant::LightTaskbar, [0xF3, 0xF3, 0xF3]),
-        (16, Variant::DarkTaskbar, [0x20, 0x20, 0x20]),
-        (16, Variant::Template, [0xF3, 0xF3, 0xF3]),
-        (20, Variant::DarkTaskbar, [0x20, 0x20, 0x20]),
+    const ZOOM: u32 = 9;
+    const PAD: u32 = 3;
+    const LIGHT: [u8; 3] = [0xF3, 0xF3, 0xF3];
+    const DARK: [u8; 3] = [0x20, 0x20, 0x20];
+
+    // (size, variant, background, greyscale?, invert?)
+    let rows: [(u32, Variant, [u8; 3], bool, bool); 7] = [
+        (16, Variant::LightTaskbar, LIGHT, false, false),
+        (16, Variant::LightTaskbar, LIGHT, true, false),
+        (16, Variant::DarkTaskbar, DARK, false, false),
+        (16, Variant::DarkTaskbar, DARK, true, false),
+        (16, Variant::Template, LIGHT, false, false),
+        (16, Variant::Template, DARK, false, true),
+        (20, Variant::DarkTaskbar, DARK, false, false),
     ];
 
     let cell = 20 * ZOOM + PAD * 2;
-    let width = states.len() as u32 * cell;
+    let width = STATES.len() as u32 * cell;
     let height = rows.len() as u32 * cell;
     let mut canvas = vec![0u8; (width * height * 3) as usize];
 
-    for (row, (size, variant, background)) in rows.iter().enumerate() {
-        for (column, health) in states.iter().enumerate() {
+    for (row, (size, variant, background, grey, invert)) in rows.iter().enumerate() {
+        for (column, health) in STATES.iter().enumerate() {
             let rgba =
                 tray::icons::rasterise(IconKey::new(*health, *variant, 6), *size).expect("render");
             let origin_x = column as u32 * cell;
@@ -619,6 +920,71 @@ fn pixel_check() {
                         let (sx, sy) = (sx as u32 / ZOOM, sy as u32 / ZOOM);
                         if sx < *size && sy < *size {
                             let s = ((sy * size + sx) * 4) as usize;
+                            let fg = if *invert {
+                                [0xFFu8, 0xFF, 0xFF]
+                            } else {
+                                [rgba[s], rgba[s + 1], rgba[s + 2]]
+                            };
+                            let a = rgba[s + 3] as f32 / 255.0;
+                            for c in 0..3 {
+                                px[c] = (fg[c] as f32 * a + px[c] as f32 * (1.0 - a)).round() as u8;
+                            }
+                        }
+                    }
+                    if *grey {
+                        let y8 =
+                            (0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32)
+                                .round() as u8;
+                        px = [y8, y8, y8];
+                    }
+                    let o = (((origin_y + y) * width + origin_x + x) * 3) as usize;
+                    canvas[o..o + 3].copy_from_slice(&px);
+                }
+            }
+        }
+    }
+
+    let out = std::env::temp_dir().join("superbackup-tray-pixelcheck.png");
+    image::save_buffer(&out, &canvas, width, height, image::ExtendedColorType::Rgb8)
+        .expect("write the pixel check");
+    eprintln!("pixel check: {}", out.display());
+}
+
+/// The twelve running frames at 16 px, magnified, on a dark taskbar and as a
+/// template.
+///
+/// The animation is carried by *alpha* — the ring's gap travels round — so it
+/// has to be checked in the template too, where colour is gone. This is also
+/// the sheet that shows the frames are genuinely twelve different pictures at
+/// 16 px rather than at 32 px only.
+#[test]
+#[ignore = "writes a PNG for a human to look at"]
+fn running_frames() {
+    const ZOOM: u32 = 7;
+    const PAD: u32 = 3;
+    const SIZE: u32 = 16;
+    let rows: [(Variant, [u8; 3]); 2] =
+        [(Variant::DarkTaskbar, [0x20, 0x20, 0x20]), (Variant::Template, [0xF3, 0xF3, 0xF3])];
+
+    let cell = SIZE * ZOOM + PAD * 2;
+    let width = RUNNING_FRAMES as u32 * cell;
+    let height = rows.len() as u32 * cell;
+    let mut canvas = vec![0u8; (width * height * 3) as usize];
+
+    for (row, (variant, background)) in rows.iter().enumerate() {
+        for frame in 0..RUNNING_FRAMES {
+            let rgba = tray::icons::rasterise(IconKey::new(Health::Running, *variant, frame), SIZE)
+                .expect("render");
+            let origin_x = frame as u32 * cell;
+            let origin_y = row as u32 * cell;
+            for y in 0..cell {
+                for x in 0..cell {
+                    let mut px = *background;
+                    let (sx, sy) = (x as i64 - PAD as i64, y as i64 - PAD as i64);
+                    if sx >= 0 && sy >= 0 {
+                        let (sx, sy) = (sx as u32 / ZOOM, sy as u32 / ZOOM);
+                        if sx < SIZE && sy < SIZE {
+                            let s = ((sy * SIZE + sx) * 4) as usize;
                             let a = rgba[s + 3] as f32 / 255.0;
                             for c in 0..3 {
                                 px[c] = (rgba[s + c] as f32 * a + px[c] as f32 * (1.0 - a)).round()
@@ -633,8 +999,8 @@ fn pixel_check() {
         }
     }
 
-    let out = std::env::temp_dir().join("superbackup-tray-pixelcheck.png");
+    let out = std::env::temp_dir().join("superbackup-tray-running.png");
     image::save_buffer(&out, &canvas, width, height, image::ExtendedColorType::Rgb8)
-        .expect("write the pixel check");
-    eprintln!("pixel check: {}", out.display());
+        .expect("write the running strip");
+    eprintln!("running frames: {}", out.display());
 }

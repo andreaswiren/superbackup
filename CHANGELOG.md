@@ -14,6 +14,46 @@ rather than mangling it.
 
 ### Added
 
+- **Chained destinations have an interface.** A destination can now be filled
+  by copying an existing repository from another destination instead of reading
+  the job's folders a second time — back up to OneDrive, then copy that
+  repository to StorJ, with the folders read once. The destination editor asks
+  where the data comes from, offers only the destinations that would not form a
+  loop, and states the one thing that must not be misunderstood: a copy **is
+  the same repository in a second place**, opened with the source's passphrase.
+  It has no separate key, because `kopia repository sync-to` copies the format
+  blob. So the encryption panel is removed for a copy rather than shown
+  disabled — a greyed-out algorithm picker would still imply a second key
+  behind it. Ticking a copy in a job adds the destination it copies from as
+  well, and says so, because a copy made from a source the same run did not
+  update would replicate stale data and still report success. Runs show which
+  destinations were copies, from where, and why a skipped one was skipped.
+- **superbackup talks to S3 directly.** A small signed client
+  (`crates/core/src/s3.rs`) implements Signature Version 4 — canonical request,
+  string to sign, the four-step key derivation, `x-amz-content-sha256`,
+  `x-amz-date` and the `Authorization` header — against AWS's own published
+  test vectors, and reads `ListBuckets` and `ListObjectsV2` with a bounded
+  parser written for those two shapes rather than a general XML library. No AWS
+  SDK and no second TLS stack: it reuses the `reqwest`/rustls already in the
+  tree. New IPC commands: `provider.list_buckets` and `provider.list_objects`.
+- **Testing a storage provider works before any destination exists.**
+  `provider.test` used to borrow the first destination that used the provider
+  and go through kopia, so before the first bucket existed it could only answer
+  "there is nothing to test against" — exactly when someone has just pasted a
+  key pair. It now signs a real `ListBuckets`, which proves the endpoint
+  resolves, TLS succeeds, the clock is close enough and both halves of the key
+  are right, and it returns the bucket names.
+- **A bucket picker in the destination editor**, populated from the provider,
+  beside a manual field that is never disabled. Offline, a locked vault, a key
+  scoped to one bucket, or a provider that has not been saved yet all leave the
+  list unavailable with the reason shown — and none of them can stop a
+  destination being created.
+- **An optional administration-panel URL on a storage provider.** Where you log
+  in to manage the account and rotate its keys, prefilled for StorJ and Amazon
+  S3 and clearable, reachable from the provider editor and from any destination
+  that uses it. Documentation only: nothing connects to it, and it is kept out
+  of the plain-text key-export document.
+
 - **A real Kopia page in Settings.** It shows the full resolved path of the
   binary in use, its version, and which of the four resolution routes produced
   it — with every route listed, chosen or not, so "why this kopia?" has an
@@ -47,6 +87,39 @@ rather than mangling it.
 
 ### Changed
 
+- **The tray icon is the superbackup mark again.** It was an abstract ring with
+  a status pip — good at encoding five states, and it looked nothing like the
+  application, so the one place the program is seen all day did not say which
+  program it was. Every tray mark is now the interlock from
+  `assets/icons/superbackup.svg`, in one ink, with a status badge in a well
+  knocked out of its bottom-right corner: a filled disc for `idle`, that same
+  circle opened into a spinning ring for `running`, a triangle for `attention`,
+  two bars for `paused`, a cross for `failed`. The state is carried by the
+  badge's *silhouette*, so it survives greyscale and the macOS template where
+  colour is discarded entirely, and the mark is identical in all five states so
+  the set reads as one application. Drawn at the 16 px floor, which retires the
+  separate large/small size profiles: it is now one drawing at every size.
+  Every badge ink is variant-aware and clears WCAG 1.4.11 on the taskbar it is
+  drawn on — the worst is 4.95:1, where the old `attention` pip was 1.92:1 on a
+  light taskbar and the old `failed` pip 2.94:1 on a dark one.
+
+- **"Can I reach this place?" and "is there a repository here?" are separate
+  answers.** `dest.test` used to build a kopia driver, which needs the
+  repository encryption key — which does not exist until the repository does —
+  so a destination that had been added but not yet created reported as
+  *unreachable* even though it was plainly reachable. Reachability is now
+  established with no key at all (a signed `ListObjectsV2` plus a bounded write
+  probe for S3; the directory probe for a folder), and repository presence is
+  reported separately in a new `repository_present` field by *looking for*
+  kopia's `kopia.repository` blob, never by opening it. Opening it with a key
+  remains `dest.check_key`. A reachable destination with no repository yet is a
+  success with a note, not a failure.
+- Errors from an object store are distinguished rather than collapsed: a
+  wrong access key, a wrong secret key, a clock more than fifteen minutes out,
+  a key that is valid but not permitted to list buckets, a bucket that does not
+  exist, a wrong region, DNS, TLS and connection failures, and an endpoint that
+  answers but is not S3 each get their own sentence and their own next step.
+
 - `vault.export_keys` is the first and only IPC command that returns secret
   material. It requires an unlocked vault *and* the master passphrase
   re-presented, is rate limited, is logged, and writes no file itself. The
@@ -56,6 +129,28 @@ rather than mangling it.
 - The vault badge in the sidebar is sized to its content. It was a fixed 32px
   with two lines of text inside it, so "Locked / Schedules are blocked" ran to
   the edge and read as clipped.
+
+### Fixed
+
+- **A fresh install did nothing at all.** The daemon refuses to start without a
+  vault, and a vault needs a passphrase only a person can supply — so
+  double-clicking the executable on a new machine printed "run `superbackup
+  init`" to a console that had already been detached, and exited. No window, no
+  tray icon, no message. The setup flow existed, was designed and was
+  screenshot-tested, but nothing in the shipped application ever started it:
+  its only caller was the screenshot harness. A first run now opens setup,
+  which writes the vault itself — as `superbackup init` does, and for the same
+  reason: the process that would answer an IPC request is the process that will
+  not start — and the tray starts once there is a vault. Setup refuses to write
+  over a vault that already exists.
+
+- A multi-line code block rendered every line side by side rather than one per
+  line: the block's scroll area inherited a horizontal layout from its parent.
+- The activity table drew its card past the window's right edge at the minimum
+  window size — its trailing column was not in the width budget the fit
+  calculation adds up. The providers table had the same latent gap.
+- `--json` errors lost the daemon's own hint, so a locked vault printed with no
+  "run `superbackup unlock`" next to it.
 
 ## [0.1.0] - 2026-08-31
 

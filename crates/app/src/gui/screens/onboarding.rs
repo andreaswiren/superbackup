@@ -30,6 +30,11 @@ pub struct Onboarding {
     pub install_service: bool,
     pub use_keychain: bool,
     pub scan_done: bool,
+    /// Why the vault could not be created, when that is what happened.
+    pub vault_error: Option<String>,
+    /// Set once the vault exists, so leaving and re-entering the step cannot
+    /// try to create a second one over the top of the first.
+    pub vault_created: bool,
 }
 
 impl Onboarding {
@@ -159,6 +164,32 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     });
 
     if advance {
+        // Leaving the acknowledgement step is the moment the passphrase has
+        // been typed, confirmed, and understood to be unrecoverable — so it is
+        // the moment the vault gets written.
+        //
+        // The window does this itself rather than asking the daemon, because
+        // on a first run there is no daemon: it refuses to start until the
+        // vault exists. That is the same reason `superbackup init` writes the
+        // file directly, and it does not weaken the thin-client rule, which
+        // exists to stop two processes driving one kopia repository. No
+        // repository is touched here.
+        if state.step == OnboardingStep::NoRecovery && !state.vault_created {
+            match create_vault(app, &state.passphrase) {
+                Ok(()) => {
+                    state.vault_created = true;
+                    state.vault_error = None;
+                }
+                Err(message) => {
+                    // Stay on the step. Advancing past a failed vault would
+                    // walk the user through the rest of setup and then strand
+                    // them with nothing stored.
+                    state.vault_error = Some(message);
+                    app.onboarding = Some(state);
+                    return;
+                }
+            }
+        }
         match state.step.next() {
             Some(next) => state.step = next,
             None => {
@@ -178,6 +209,40 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         return;
     }
     app.onboarding = Some(state);
+}
+
+/// Write the vault, and unlock this session against it.
+///
+/// Returns the message to show on the step when it could not be done. Every
+/// failure here is worth stopping for: a full disk, a read-only profile, or a
+/// vault that appeared underneath us all mean the passphrase the user just
+/// chose was not stored.
+fn create_vault(app: &mut App, passphrase: &str) -> Result<(), String> {
+    let Some(paths) = app.paths.clone() else {
+        // A window with no paths is a test or the screenshot harness. It has
+        // no business writing a vault, and saying so is better than pretending
+        // the step succeeded.
+        return Err(copy::onboarding::VAULT_NO_PATHS.to_string());
+    };
+    paths.ensure().map_err(|e| copy::onboarding_vault_failed(&e.to_string()))?;
+
+    if superbackup_core::config::is_initialised(&paths) {
+        // Somebody ran `superbackup init` in another window while this one was
+        // open. Refusing is the only safe answer: initialising over the top
+        // would replace a vault that may already hold repository keys.
+        return Err(copy::onboarding::VAULT_ALREADY.to_string());
+    }
+
+    let secret = superbackup_core::secret::Secret::from_string(passphrase.to_string());
+    superbackup_core::config::Store::initialise(paths, &secret)
+        .map_err(|e| copy::onboarding_vault_failed(&e.to_string()))?;
+
+    // Unlock the session with the passphrase just chosen, so the user is not
+    // asked for it again on the very next screen. If no daemon is listening
+    // yet the request simply fails and the normal unlock prompt does the job
+    // later, which is why nothing here depends on its answer.
+    app.unlock(passphrase.to_string());
+    Ok(())
 }
 
 fn welcome(ui: &mut Ui) {
@@ -347,6 +412,13 @@ fn passphrase(ui: &mut Ui, state: &mut Onboarding) {
 
 fn no_recovery(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
     let t = theme::tokens(ui.ctx());
+    // The vault is written when this step is left, so this is where its
+    // failure has to appear — at the top, before the acknowledgement the user
+    // is about to give again.
+    if let Some(error) = state.vault_error.clone() {
+        widgets::banner(ui, widgets::BannerKind::Danger, &error, None, |_| {});
+        ui.add_space(space::L);
+    }
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
         Icon::AlertTriangle.paint(ui.painter(), rect, t.warning.mark);
@@ -842,6 +914,102 @@ mod tests {
             ..Default::default()
         };
         assert!(state.can_continue());
+    }
+
+    /// A private home under the system temp directory, matching what the
+    /// daemon tests do. No `tempfile` dependency exists in this crate, and
+    /// adding one to a security-sensitive binary for four tests is not worth
+    /// it; these directories are small and named for their owning process.
+    fn fresh_home() -> superbackup_core::paths::Paths {
+        let root = std::env::temp_dir().join(format!(
+            "sb-onboarding-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        superbackup_core::paths::Paths::rooted_at(&root, false)
+    }
+
+    /// The regression this whole flow shipped with: `begin_onboarding` was
+    /// called only by the screenshot harness, so a fresh install opened a
+    /// window with no way to set anything up — and the tray, which refuses to
+    /// start without a vault, exited before drawing anything at all.
+    #[test]
+    fn a_window_with_no_vault_starts_setup() {
+        let paths = fresh_home();
+        assert!(
+            !superbackup_core::config::is_initialised(&paths),
+            "a fresh home has no vault, which is the whole premise"
+        );
+
+        let ctx = egui::Context::default();
+        let app = crate::gui::app::App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(std::sync::Arc::new(
+                superbackup_core::ipc::testing::MockHandler::default(),
+            ))),
+        )
+        .with_paths(paths);
+        assert!(app.onboarding.is_some(), "a missing vault must open the setup flow");
+    }
+
+    #[test]
+    fn a_window_with_a_vault_does_not_start_setup() {
+        let paths = fresh_home();
+        superbackup_core::config::Store::initialise(
+            paths.clone(),
+            &superbackup_core::secret::Secret::from_string("correct-horse-battery-staple".into()),
+        )
+        .expect("the vault must be creatable");
+
+        let ctx = egui::Context::default();
+        let app = crate::gui::app::App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(std::sync::Arc::new(
+                superbackup_core::ipc::testing::MockHandler::default(),
+            ))),
+        )
+        .with_paths(paths);
+        assert!(
+            app.onboarding.is_none(),
+            "an installation that is already set up must not be walked through setup again"
+        );
+    }
+
+    /// Creating a vault over one that already exists would replace keys that
+    /// may be the only copy. It has to refuse, not overwrite.
+    #[test]
+    fn setup_refuses_to_write_over_an_existing_vault() {
+        let paths = fresh_home();
+        superbackup_core::config::Store::initialise(
+            paths.clone(),
+            &superbackup_core::secret::Secret::from_string("the-first-passphrase-here".into()),
+        )
+        .expect("the vault must be creatable");
+
+        let ctx = egui::Context::default();
+        let mut app = crate::gui::app::App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(std::sync::Arc::new(
+                superbackup_core::ipc::testing::MockHandler::default(),
+            ))),
+        );
+        app.paths = Some(paths);
+        let result = create_vault(&mut app, "a-completely-different-one");
+        assert!(result.is_err(), "an existing vault must never be replaced");
+    }
+
+    /// A window with no paths is a test or the screenshot harness. It must say
+    /// so rather than reporting a success it did not achieve.
+    #[test]
+    fn setup_without_paths_reports_rather_than_pretending() {
+        let ctx = egui::Context::default();
+        let mut app = crate::gui::app::App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(std::sync::Arc::new(
+                superbackup_core::ipc::testing::MockHandler::default(),
+            ))),
+        );
+        assert!(create_vault(&mut app, "correct-horse-battery-staple").is_err());
     }
 
     #[test]

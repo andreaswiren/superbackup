@@ -346,7 +346,17 @@ impl JobSummary {
 pub struct StatusSnapshot {
     pub health: Health,
     pub version: String,
+    /// The editable friendly name. Defaults to the hostname but need not stay
+    /// equal to it.
     pub machine_label: String,
+    /// The machine's actual hostname.
+    ///
+    /// Carried separately from the label because the sidebar must be able to
+    /// show what the computer *is* even after someone renames the label, and
+    /// "which machine am I looking at" is the question that matters when
+    /// several of them write to one destination.
+    #[serde(default)]
+    pub machine_hostname: String,
     pub machine_slug: String,
     /// `false` when the vault is locked, which blocks every scheduled run.
     pub unlocked: bool,

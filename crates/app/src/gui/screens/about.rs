@@ -19,6 +19,21 @@ impl App {
     pub(crate) fn show_about(&mut self, ui: &mut Ui) {
         let t = theme::tokens(ui.ctx());
         let info = superbackup_core::build_info();
+        // The *build*, not just the release it claims to be. This used to read
+        // `info.version` beside a hardcoded "built from source", so a tagged
+        // 0.1.0 and a build made from a working tree three commits later were
+        // indistinguishable — which is exactly the pair a bug report has to
+        // tell apart.
+        let build = crate::build::short();
+        // The window and the daemon are usually one process, but not when the
+        // daemon is the machine-wide service. Where they differ, say so rather
+        // than showing one number and letting it stand for both.
+        let daemon_build = self
+            .data
+            .version
+            .as_ref()
+            .map(|v| if v.build.is_empty() { v.version.clone() } else { v.build.clone() })
+            .filter(|reported| *reported != build);
         let mut open: Option<String> = None;
 
         widgets::scroll_area(ui, "about", |ui| {
@@ -39,14 +54,23 @@ impl App {
                     ui.add_space(space::XL);
                     widgets::text(ui, copy::APP_NAME, Type::Display, t.text_primary);
                     ui.add_space(space::XS);
-                    widgets::text(ui, copy::about_version(info.version), Type::Body, t.text_muted);
+                    widgets::text(ui, copy::about_version(&build), Type::Body, t.text_muted);
                     ui.add_space(space::XXS);
                     widgets::text(
                         ui,
-                        copy::about_build(info.target_os, info.target_arch, "from source"),
+                        copy::about_build(info.target_os, info.target_arch),
                         Type::MonoSmall,
                         t.text_muted,
                     );
+                    if let Some(daemon) = &daemon_build {
+                        ui.add_space(space::XXS);
+                        widgets::text(
+                            ui,
+                            copy::about_daemon_build(daemon),
+                            Type::MonoSmall,
+                            t.warning.tint_text,
+                        );
+                    }
                     ui.add_space(space::XL);
                     ui.allocate_ui_with_layout(
                         Vec2::new(560.0, 0.0),
@@ -164,9 +188,13 @@ impl App {
                                 let target = if label == copy::about::LINK_ISSUE {
                                     // Pre-fill the version and OS, so a report
                                     // arrives with the two facts it needs.
+                                    // The commit goes in the prefill too. A
+                                    // report against "0.1.0" cannot be told
+                                    // apart from one against any other build
+                                    // that also calls itself 0.1.0.
                                     format!(
                                         "{url}?body=superbackup%20{}%20on%20{}-{}",
-                                        info.version, info.target_os, info.target_arch
+                                        build, info.target_os, info.target_arch
                                     )
                                 } else {
                                     url.to_string()

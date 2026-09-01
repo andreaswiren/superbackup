@@ -32,6 +32,38 @@ pub enum CreationPhase {
     Failed,
 }
 
+/// What the bucket picker can offer right now.
+///
+/// The picker is an *accelerator over* the text field, never a replacement for
+/// it, so every state here has to leave typing available. `Unavailable` is the
+/// ordinary case, not the exceptional one: an offline laptop, a locked vault,
+/// a key scoped to one bucket, or a provider the user has not saved yet all
+/// land there, and none of them may stop a destination being created.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BucketPicker {
+    /// Nothing asked for yet.
+    Idle,
+    Loading,
+    /// Names to choose from. May legitimately be empty — an account with no
+    /// buckets is a real answer, not a failure.
+    Ready(Vec<String>),
+    /// Could not be produced, and why. Shown next to the field, never in place
+    /// of it.
+    Unavailable(String),
+}
+
+/// What is already stored under the chosen bucket and prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrefixCheck {
+    Loading,
+    /// The prefix already holds a kopia repository.
+    Repository,
+    /// Objects are there, but no repository.
+    Occupied,
+    Empty,
+    Unavailable(String),
+}
+
 #[derive(Default)]
 pub struct State {
     pub draft: Option<Destination>,
@@ -42,6 +74,11 @@ pub struct State {
     pub path_input: String,
     pub bucket_input: String,
     pub prefix_input: String,
+    /// The picker's state, keyed by provider so switching provider does not
+    /// show one account's buckets under another's name.
+    pub buckets: Option<(Uuid, BucketPicker)>,
+    /// The prefix check, keyed by provider for the same reason.
+    pub prefix_check: Option<(Uuid, PrefixCheck)>,
     pub access_key: String,
     pub secret_key: String,
     pub revealed: bool,
@@ -174,6 +211,77 @@ impl State {
         self.encryption_open = false;
         self.pin_offline = true;
         self.mirror_prune = false;
+        self.buckets = None;
+        self.prefix_check = None;
+    }
+
+    // -- the bucket picker ---------------------------------------------------
+    //
+    // Kept as plain view-model methods, separate from any rendering, so the
+    // states can be driven and asserted in a test without laying out a frame.
+
+    pub fn buckets_requested(&mut self, provider: Uuid) {
+        self.buckets = Some((provider, BucketPicker::Loading));
+    }
+
+    pub fn buckets_arrived(
+        &mut self,
+        provider: Uuid,
+        reply: &superbackup_core::ipc::protocol::BucketsReply,
+    ) {
+        let state = if reply.listed {
+            BucketPicker::Ready(reply.buckets.iter().map(|b| b.name.clone()).collect())
+        } else {
+            // Includes the qualified case — credentials proven, listing
+            // refused — which is exactly when the manual field matters most.
+            BucketPicker::Unavailable(
+                reply.detail.clone().unwrap_or_else(|| copy::prov::ERR_NO_LIST.to_string()),
+            )
+        };
+        self.buckets = Some((provider, state));
+    }
+
+    pub fn buckets_unavailable(&mut self, provider: Uuid, detail: String) {
+        self.buckets = Some((provider, BucketPicker::Unavailable(detail)));
+    }
+
+    /// The picker's state for `provider`, or `Idle` when it belongs to another.
+    pub fn picker(&self, provider: Uuid) -> BucketPicker {
+        match &self.buckets {
+            Some((id, state)) if *id == provider => state.clone(),
+            _ => BucketPicker::Idle,
+        }
+    }
+
+    pub fn objects_requested(&mut self, provider: Uuid) {
+        self.prefix_check = Some((provider, PrefixCheck::Loading));
+    }
+
+    pub fn objects_arrived(
+        &mut self,
+        provider: Uuid,
+        reply: &superbackup_core::ipc::protocol::ObjectsReply,
+    ) {
+        let state = match (reply.listed, reply.holds_repository, reply.keys.is_empty()) {
+            (false, _, _) => PrefixCheck::Unavailable(
+                reply.detail.clone().unwrap_or_else(|| copy::dest::S3_PREFIX_UNKNOWN.to_string()),
+            ),
+            (true, true, _) => PrefixCheck::Repository,
+            (true, false, true) => PrefixCheck::Empty,
+            (true, false, false) => PrefixCheck::Occupied,
+        };
+        self.prefix_check = Some((provider, state));
+    }
+
+    pub fn objects_unavailable(&mut self, provider: Uuid, detail: String) {
+        self.prefix_check = Some((provider, PrefixCheck::Unavailable(detail)));
+    }
+
+    pub fn prefix_state(&self, provider: Uuid) -> Option<PrefixCheck> {
+        match &self.prefix_check {
+            Some((id, state)) if *id == provider => Some(state.clone()),
+            _ => None,
+        }
     }
 }
 
@@ -222,11 +330,35 @@ impl App {
             // applies to a plain copy.
             let is_repository = kind_index != 3;
             if is_repository {
+                self.replication_panel(ui, &report);
+            }
+
+            let is_replica = self
+                .screens
+                .destination_editor
+                .draft
+                .as_ref()
+                .is_some_and(|d| d.replicate_from.is_some());
+
+            if is_repository && !is_replica {
                 self.encryption_panel(ui, existing.as_ref());
                 widgets::form_group(ui, copy::job::RETENTION_TITLE, None);
                 if let Some(draft) = &mut self.screens.destination_editor.draft {
                     crate::gui::screens::retention_editor(ui, &mut draft.retention);
                 }
+            } else if is_replica {
+                // Not a disabled encryption panel: a greyed-out algorithm
+                // picker still implies there is a separate key behind it.
+                // Retention is the source's too — the replica holds the
+                // source's manifests, so expiring a snapshot here would be
+                // undone by the next copy.
+                widgets::form_group(ui, copy::chain::ENCRYPTION_INHERITED, None);
+                widgets::paragraph(
+                    ui,
+                    copy::chain::ENCRYPTION_INHERITED_BODY,
+                    Type::Small,
+                    theme::tokens(ui.ctx()).text_muted,
+                );
             }
 
             widgets::form_group(ui, copy::job::BANDWIDTH_TITLE, None);
@@ -531,11 +663,26 @@ impl App {
 
         // The strip that stops the user re-entering credentials per bucket.
         ui.add_space(space::M);
+        let mut open_admin: Option<String> = None;
         match current.and_then(|id| self.data.provider(&id)) {
             Some(provider) => {
-                let superbackup_core::model::ProviderKind::S3 { endpoint, region, flavour, .. } =
-                    &provider.kind;
+                let superbackup_core::model::ProviderKind::S3 {
+                    endpoint,
+                    region,
+                    flavour,
+                    admin_url,
+                    ..
+                } = &provider.kind;
                 let line = format!("{endpoint} · {region} · {}", flavour.title());
+                // The console link belongs to the account, so it is stored on
+                // the provider — but the question "where do I log in to fix
+                // this?" is asked from here, looking at a destination. A
+                // destination knows its provider, so it can answer.
+                let admin = admin_url
+                    .as_deref()
+                    .filter(|u| !u.trim().is_empty())
+                    .filter(|u| superbackup_core::model::validate_admin_url(u).is_ok())
+                    .map(str::to_string);
                 egui::Frame::new()
                     .fill(t.bg_raised)
                     .corner_radius(radius::CONTROL)
@@ -548,13 +695,22 @@ impl App {
                                 &line,
                                 Type::MonoSmall,
                                 t.text_secondary,
-                                380.0,
+                                300.0,
                                 false,
                             );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if widgets::link(ui, copy::dest::S3_PROVIDER_EDIT).clicked() {
                                     new_provider = false;
                                 }
+                                if let Some(url) = &admin {
+                                    ui.add_space(space::L);
+                                    if widgets::link(ui, copy::dest::S3_ADMIN_OPEN).clicked() {
+                                        open_admin = Some(url.clone());
+                                    }
+                                }
+                                // Keeps the links off the endpoint text when
+                                // the strip is only just wide enough for both.
+                                ui.add_space(space::L);
                             });
                         });
                     });
@@ -570,12 +726,27 @@ impl App {
             }
         }
 
+        if let Some(url) = open_admin {
+            // Documentation, opened in the user's own browser. Nothing in this
+            // application ever connects to it itself.
+            if let Err(e) = open::that_detached(&url) {
+                self.toasts.warning(format!("That address could not be opened ({e})."));
+            }
+        }
+
         ui.add_space(space::XL);
+        // The manual field comes first and is never disabled. The picker below
+        // is an accelerator over it, not a gate in front of it — the user
+        // asked for a list *and* said typing must remain an option, and the
+        // only way to honour that is for the list to be the optional half.
         widgets::Field::new()
             .label(copy::dest::S3_BUCKET)
+            .helper(copy::dest::S3_BUCKET_HELPER)
             .width(280.0)
             .error(report.for_field(Field::Bucket))
             .show(ui, &mut self.screens.destination_editor.bucket_input);
+        ui.add_space(space::M);
+        self.s3_bucket_picker(ui, current);
 
         ui.add_space(space::XL);
         let prefix_response = widgets::Field::new()
@@ -603,6 +774,8 @@ impl App {
             Type::MonoSmall,
             t.text_muted,
         );
+
+        self.s3_prefix_check(ui, current);
 
         let bucket = self.screens.destination_editor.bucket_input.clone();
         let prefix = self.screens.destination_editor.prefix_input.clone();
@@ -670,6 +843,156 @@ impl App {
         }
     }
 
+    /// The bucket picker.
+    ///
+    /// Everything here is additive to the text field above it. There is no
+    /// state in which the picker takes the field's place, none in which a
+    /// failed listing disables anything, and none in which the user has to
+    /// wait for a network round trip before typing a name they already know.
+    /// That is the design constraint: the user asked to choose from a list and
+    /// said "entering them should also be an option though", so the *list* is
+    /// the optional half.
+    fn s3_bucket_picker(&mut self, ui: &mut Ui, provider: Option<Uuid>) {
+        let t = theme::tokens(ui.ctx());
+        let Some(provider_id) = provider else {
+            return;
+        };
+        // A provider that is not in the configuration yet cannot be asked
+        // anything, and saying so is more use than a button that fails.
+        if self.data.provider(&provider_id).is_none() {
+            widgets::text(ui, copy::dest::S3_BUCKET_UNSAVED, Type::Small, t.text_muted);
+            return;
+        }
+
+        let mut chosen: Option<String> = None;
+        let mut fetch = false;
+        match self.screens.destination_editor.picker(provider_id) {
+            BucketPicker::Idle => {
+                if Button::ghost(copy::dest::S3_BUCKET_CHOOSE)
+                    .icon(Icon::List)
+                    .compact()
+                    .show(ui)
+                    .clicked()
+                {
+                    fetch = true;
+                }
+            }
+            BucketPicker::Loading => {
+                ui.horizontal(|ui| {
+                    widgets::spinner(ui, 14.0, t.text_muted);
+                    ui.add_space(space::S);
+                    widgets::text(ui, copy::dest::S3_BUCKET_LISTING, Type::Small, t.text_muted);
+                });
+            }
+            BucketPicker::Ready(names) if names.is_empty() => {
+                ui.horizontal(|ui| {
+                    widgets::text(ui, copy::prov::TEST_OK_NONE, Type::Small, t.text_muted);
+                    ui.add_space(space::M);
+                    if widgets::link(ui, copy::dest::S3_BUCKET_RETRY).clicked() {
+                        fetch = true;
+                    }
+                });
+            }
+            BucketPicker::Ready(names) => {
+                // "Type a name instead" is the first entry rather than a mode
+                // switch, so leaving the list is one click and never a dead
+                // end.
+                let mut options: Vec<String> = vec![copy::dest::S3_BUCKET_TYPE.to_string()];
+                options.extend(names.iter().cloned());
+                let typed = self.screens.destination_editor.bucket_input.clone();
+                let mut index = names.iter().position(|n| *n == typed).map_or(0, |i| i + 1);
+                ui.horizontal(|ui| {
+                    if widgets::combo(ui, "dest-bucket-pick", &mut index, &options, 280.0, true)
+                        && index > 0
+                    {
+                        chosen = names.get(index - 1).cloned();
+                    }
+                    ui.add_space(space::M);
+                    if widgets::link(ui, copy::dest::S3_BUCKET_RETRY).clicked() {
+                        fetch = true;
+                    }
+                });
+            }
+            // The important state. Offline, a locked vault, or a key that may
+            // not enumerate buckets all arrive here, and none of them is an
+            // error the user has to clear: the field above still works.
+            BucketPicker::Unavailable(detail) => {
+                widgets::paragraph_at(ui, &detail, Type::Small, t.text_muted, 520.0);
+                ui.add_space(space::S);
+                if widgets::link(ui, copy::dest::S3_BUCKET_RETRY).clicked() {
+                    fetch = true;
+                }
+            }
+        }
+        if let Some(name) = chosen {
+            self.screens.destination_editor.bucket_input = name;
+        }
+        if fetch {
+            self.request_bucket_list(provider_id);
+        }
+    }
+
+    /// What is already stored where this destination would write.
+    ///
+    /// Answers a question the user would otherwise discover only by pressing
+    /// "Create repository" and being told the prefix is taken.
+    fn s3_prefix_check(&mut self, ui: &mut Ui, provider: Option<Uuid>) {
+        let t = theme::tokens(ui.ctx());
+        let Some(provider_id) = provider else {
+            return;
+        };
+        if self.data.provider(&provider_id).is_none() {
+            return;
+        }
+        let bucket = self.screens.destination_editor.bucket_input.trim().to_string();
+        if bucket.is_empty() {
+            return;
+        }
+        let prefix = self.screens.destination_editor.prefix_input.clone();
+
+        ui.add_space(space::M);
+        let mut check = false;
+        match self.screens.destination_editor.prefix_state(provider_id) {
+            None => {
+                if widgets::link(ui, copy::dest::S3_PREFIX_CHECK).clicked() {
+                    check = true;
+                }
+            }
+            Some(PrefixCheck::Loading) => {
+                ui.horizontal(|ui| {
+                    widgets::spinner(ui, 14.0, t.text_muted);
+                    ui.add_space(space::S);
+                    widgets::text(ui, copy::dest::S3_BUCKET_LISTING, Type::Small, t.text_muted);
+                });
+            }
+            Some(state) => {
+                let (kind, message) = match state {
+                    PrefixCheck::Repository => {
+                        (widgets::BannerKind::Info, copy::dest::S3_PREFIX_HAS_REPO.to_string())
+                    }
+                    PrefixCheck::Occupied => {
+                        (widgets::BannerKind::Warning, copy::dest::S3_PREFIX_OCCUPIED.to_string())
+                    }
+                    PrefixCheck::Empty => {
+                        (widgets::BannerKind::Success, copy::dest::S3_PREFIX_EMPTY.to_string())
+                    }
+                    PrefixCheck::Unavailable(detail) => (widgets::BannerKind::Warning, detail),
+                    // Handled above; a `match` arm rather than an unreachable
+                    // so a new state cannot silently fall through.
+                    PrefixCheck::Loading => (widgets::BannerKind::Info, String::new()),
+                };
+                widgets::banner(ui, kind, &message, None, |ui| {
+                    if Button::ghost(copy::dest::S3_PREFIX_CHECK).compact().show(ui).clicked() {
+                        check = true;
+                    }
+                });
+            }
+        }
+        if check {
+            self.request_prefix_check(provider_id, bucket, prefix);
+        }
+    }
+
     fn destination_mirror(&mut self, ui: &mut Ui, report: &validation::Report) {
         let t = theme::tokens(ui.ctx());
         widgets::form_group(ui, copy::dest::FOLDER, None);
@@ -727,6 +1050,154 @@ impl App {
     /// no request that returns one, by design — so the useful question it
     /// *can* answer is whether the key it holds still opens the repository.
     /// That is not a format check: the daemon opens the repository with it.
+    /// Where this destination's contents come from: the job's folders, or an
+    /// existing repository at another destination.
+    ///
+    /// This is the interface to `Destination::replicate_from`, and the reason
+    /// it is a panel of its own rather than a checkbox is the consequence it
+    /// carries. `kopia repository sync-to` copies the source's *format blob*,
+    /// which is where the repository's identity and key parameters live. The
+    /// result is not a second repository that happens to hold the same
+    /// snapshots; it is the same repository, in a second place, opened with the
+    /// same passphrase. There is no configuration in which the offsite copy is
+    /// independently keyed, and a user who believes there is will keep one
+    /// passphrase, lose the other, and find out at restore time.
+    ///
+    /// So the panel states that where it cannot be missed, and the encryption
+    /// panel is removed rather than disabled — a greyed-out algorithm picker
+    /// would still suggest there is a separate key behind it.
+    fn replication_panel(&mut self, ui: &mut Ui, report: &validation::Report) {
+        let t = theme::tokens(ui.ctx());
+        let Some(draft) = &self.screens.destination_editor.draft else { return };
+        let self_id = draft.id;
+        let current = draft.replicate_from;
+
+        // Anything that is a repository, is not this destination, and does not
+        // already sit downstream of it. The last exclusion is what keeps the
+        // picker from offering a choice the validator would immediately
+        // reject — an unselectable option is a better explanation than an
+        // error message about a loop.
+        let candidates: Vec<(Uuid, String)> = self
+            .data
+            .destinations
+            .iter()
+            .filter(|d| {
+                d.id != self_id && d.kind.is_repository() && !self.feeds_from(d.id, self_id)
+            })
+            .map(|d| (d.id, d.name.clone()))
+            .collect();
+
+        widgets::form_group(ui, copy::chain::TITLE, None);
+
+        let mut choose: Option<Option<Uuid>> = None;
+        if widgets::radio(
+            ui,
+            current.is_none(),
+            copy::chain::FROM_SOURCES,
+            Some(copy::chain::FROM_SOURCES_HELP),
+            true,
+        )
+        .clicked()
+        {
+            choose = Some(None);
+        }
+        ui.add_space(space::S);
+        // Offered even with no candidates, so the feature is discoverable —
+        // selecting it then explains what is missing instead of the option
+        // simply not being there.
+        let picked = widgets::radio(
+            ui,
+            current.is_some(),
+            copy::chain::FROM_DESTINATION,
+            Some(copy::chain::FROM_DESTINATION_HELP),
+            !candidates.is_empty(),
+        );
+        if picked.clicked() && current.is_none() {
+            choose = Some(candidates.first().map(|(id, _)| *id));
+        }
+
+        if candidates.is_empty() {
+            ui.add_space(space::S);
+            widgets::paragraph_at(ui, copy::chain::PICK_EMPTY, Type::Small, t.text_muted, 28.0);
+        } else if current.is_some() {
+            ui.add_space(space::M);
+            ui.horizontal(|ui| {
+                ui.add_space(28.0);
+                ui.vertical(|ui| {
+                    let names: Vec<String> =
+                        candidates.iter().map(|(_, name)| name.clone()).collect();
+                    let mut index = current
+                        .and_then(|id| candidates.iter().position(|(c, _)| *c == id))
+                        .unwrap_or(0);
+                    if widgets::combo_labelled(
+                        ui,
+                        "dest-replicate-from",
+                        Some(copy::chain::PICK_LABEL),
+                        &mut index,
+                        &names,
+                        400.0,
+                        true,
+                    ) {
+                        if let Some((id, _)) = candidates.get(index) {
+                            choose = Some(Some(*id));
+                        }
+                    }
+                    if let Some(message) = report.for_field(Field::ReplicateFrom) {
+                        ui.add_space(space::XS);
+                        widgets::text(ui, message, Type::Small, t.danger.tint_text);
+                    }
+                });
+            });
+
+            ui.add_space(space::L);
+            widgets::banner(
+                ui,
+                widgets::BannerKind::Warning,
+                copy::chain::SHARED_KEY_TITLE,
+                Some(copy::chain::SHARED_KEY_BODY),
+                |_| {},
+            );
+        }
+
+        if let Some(value) = choose {
+            if let Some(draft) = &mut self.screens.destination_editor.draft {
+                draft.replicate_from = value;
+                if value.is_some() {
+                    // The settings are the source's, and keeping a stale local
+                    // copy of them would show the user numbers that are not
+                    // what the repository actually uses. The passphrase handle
+                    // goes for the same reason: there is no separate key here
+                    // to point at.
+                    draft.encryption = None;
+                    draft.passphrase_ref = None;
+                } else if draft.encryption.is_none() {
+                    draft.encryption = Some(EncryptionSettings::default());
+                }
+            }
+        }
+    }
+
+    /// Does `candidate` already draw, directly or through a chain, from
+    /// `root`? Used to keep the picker from offering a loop.
+    ///
+    /// Bounded by the same depth limit the core validator uses, so a config
+    /// that already contains a cycle — one edited by hand, or pulled from a
+    /// Git repository — makes this return rather than spin.
+    fn feeds_from(&self, candidate: Uuid, root: Uuid) -> bool {
+        let mut current = candidate;
+        for _ in 0..=superbackup_core::model::MAX_REPLICATION_DEPTH {
+            let Some(destination) = self.data.destination(&current) else { return false };
+            match destination.replicate_from {
+                Some(parent) if parent == root => return true,
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        }
+        // Deeper than the limit: treat it as unavailable rather than walking
+        // further, which is the safe answer for a picker.
+        true
+    }
+
     fn key_check_controls(&mut self, ui: &mut Ui, destination: &Destination) {
         let t = theme::tokens(ui.ctx());
         let id = destination.id;
@@ -894,7 +1365,24 @@ impl App {
         let t = theme::tokens(ui.ctx());
         // A repository that exists already has fixed settings; the panel is
         // replaced by a read-only summary that says why.
-        let connected = existing.map(|d| d.passphrase_ref.is_some()).unwrap_or(false);
+        // Whether the repository actually exists — NOT whether a passphrase
+        // handle has been assigned.
+        //
+        // `passphrase_ref` is set when the destination is *added*; the key
+        // behind it and the repository itself are created later. Treating the
+        // handle as proof of a repository meant a destination that had never
+        // been set up rendered the "already configured" view and hid the
+        // "Create repository" button entirely — leaving no way anywhere in the
+        // application to create one.
+        //
+        // `last_verified_at` is the closest signal the client has until the
+        // probe reports repository presence directly. Being wrong in this
+        // direction is safe: offering the button when a repository already
+        // exists costs one clear "a repository already exists here" from kopia,
+        // whereas hiding it strands the user.
+        let connected = existing
+            .map(|d| d.passphrase_ref.is_some() && d.last_verified_at.is_some())
+            .unwrap_or(false);
         widgets::form_group(ui, copy::enc::TITLE, Some(copy::enc::LEAD));
 
         if connected {

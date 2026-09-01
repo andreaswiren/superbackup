@@ -566,35 +566,21 @@ impl ErrorPayload {
     /// everything that is not a distinguished variant becomes the closest
     /// string-carrying one. `code` is preserved exactly, which is what callers
     /// are told to branch on.
+    /// Rebuild a local error from one that arrived over the wire.
+    ///
+    /// Always `Error::Transported`, never the original variant. That looks
+    /// lossy and is deliberate: `message` is the *formatted* text the daemon
+    /// produced, so it already carries whatever prefix that variant's `Display`
+    /// adds. Reconstructing `Error::Config(message)` then applied the prefix a
+    /// second time, and users saw
+    /// "configuration error: configuration error: the vault has no entry for …".
+    /// Every variant with a prefix had the same defect.
+    ///
+    /// `Transported` displays the message verbatim and reports the original
+    /// `ErrorCode` from [`Error::code`], so callers that branch on the code —
+    /// which is what the CLI and the schema tell them to do — are unaffected.
     pub fn into_error(self) -> Error {
-        match self.code {
-            ErrorCode::Locked => Error::Locked,
-            ErrorCode::BadPassphrase => Error::BadPassphrase,
-            ErrorCode::KopiaMissing => Error::KopiaMissing,
-            ErrorCode::DaemonUnreachable => Error::DaemonUnreachable,
-            ErrorCode::Config => Error::Config(self.message),
-            ErrorCode::VaultCorrupt => Error::VaultCorrupt(self.message),
-            ErrorCode::Crypto => Error::Crypto(self.message),
-            ErrorCode::RepoNotConnected => Error::RepoNotConnected(self.message),
-            ErrorCode::RepoExists => Error::RepoExists(self.message),
-            ErrorCode::Schedule => Error::Schedule(self.message),
-            ErrorCode::JobNotFound => Error::JobNotFound(self.message),
-            ErrorCode::JobRunning => Error::JobRunning(self.message),
-            ErrorCode::JobCancelled => Error::JobCancelled(self.message),
-            ErrorCode::Service => Error::Service(self.message),
-            ErrorCode::Platform => Error::Platform(self.message),
-            ErrorCode::Remote => Error::Remote(self.message),
-            ErrorCode::Validation => Error::Validation(self.message),
-            ErrorCode::Ipc => Error::Ipc(self.message),
-            // `Io`, `VaultVersion`, `Kopia` and `Internal` carry structured
-            // fields that cannot be rebuilt from the wire. They used to
-            // collapse into `Error::Internal`, which silently rewrote the code
-            // — so a daemon reporting `kopia` reached the client as `internal`,
-            // corrupting the one field the schema tells callers to branch on.
-            // `Transported` keeps the code and the hint; only the structured
-            // payload is lost, which is unavoidable.
-            code => Error::Transported { code, message: self.message, hint: self.hint },
-        }
+        Error::Transported { code: self.code, message: self.message, hint: self.hint }
     }
 }
 
@@ -762,6 +748,21 @@ pub struct VersionReply {
     /// True when this daemon is the machine-wide service instance rather than
     /// a per-user tray.
     pub service_scope: bool,
+    /// Which *build* this daemon is, beyond which release it claims to be:
+    /// the short commit and whether the tree was modified, as
+    /// `0.1.0+abc123def-modified`.
+    ///
+    /// `version` alone cannot answer the question a bug report needs answered.
+    /// A tagged 0.1.0 and a build made from a working tree three commits later
+    /// both report `0.1.0`, and the client cannot substitute its own stamp
+    /// because the client may be a different build from the daemon it is
+    /// talking to — which is exactly the situation where this matters.
+    ///
+    /// `#[serde(default)]` rather than a protocol bump: an older daemon that
+    /// omits it leaves the field empty and the About screen falls back to
+    /// `version`, which is what it showed before. Nothing behaves wrongly.
+    #[serde(default)]
+    pub build: String,
 }
 
 /// The one value that drives the tray icon, plus why.
@@ -849,6 +850,67 @@ pub struct ProviderReply {
     pub provider: Box<StorageProvider>,
 }
 
+/// The buckets a provider's credentials can see.
+///
+/// A listing that could not be produced is still a **successful** reply, for
+/// the same reason a failed probe is: the daemon answered the question it was
+/// asked. An `Err` means the question could not be put at all — no such
+/// provider, vault locked.
+///
+/// The distinction between `listed` and `credentials_ok` is the one that
+/// matters and the one an earlier design would have got wrong. A key scoped to
+/// a single bucket authenticates perfectly and still cannot
+/// `s3:ListAllMyBuckets`; that is a *qualified success*, and reporting it as a
+/// bad key would tell the user something false about credentials that work.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketsReply {
+    pub provider_id: Uuid,
+    #[serde(default)]
+    pub buckets: Vec<BucketInfo>,
+    /// True when the endpoint answered and `buckets` is the whole list.
+    pub listed: bool,
+    /// True when the endpoint positively authenticated the credentials —
+    /// including when it then refused to list.
+    pub credentials_ok: bool,
+    /// Scrubbed explanation. Present whenever `listed` is false, and carries
+    /// the "the key works but cannot list" sentence in the qualified case.
+    pub detail: Option<String>,
+    pub latency_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketInfo {
+    pub name: String,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// One page of object keys under a prefix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectsReply {
+    pub bucket: String,
+    pub prefix: String,
+    #[serde(default)]
+    pub keys: Vec<ObjectInfo>,
+    /// True when there are more keys under the prefix than were returned.
+    pub truncated: bool,
+    /// True when a `kopia.repository` blob is present, i.e. this prefix
+    /// already holds a repository and creating one here would collide.
+    pub holds_repository: bool,
+    /// True when the listing succeeded. False leaves `keys` empty and puts the
+    /// reason in `detail`.
+    pub listed: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectInfo {
+    pub key: String,
+    pub size: u64,
+    #[serde(default)]
+    pub last_modified: Option<DateTime<Utc>>,
+}
+
 /// Outcome of a connectivity test.
 ///
 /// A failed probe is a *successful* request with `reachable: false` — the
@@ -862,6 +924,22 @@ pub struct ProbeReply {
     /// that out at 2am is the failure mode this field exists to prevent.
     pub writable: bool,
     pub latency_ms: Option<u64>,
+    /// Whether a kopia repository is already present at this destination.
+    ///
+    /// A **separate question** from reachability, and reported separately for
+    /// that reason. "Can I reach this place with these credentials?" and "is
+    /// there a repository here?" used to be one answer, which meant a
+    /// perfectly reachable bucket with no repository in it yet reported as
+    /// unreachable — and a user staring at correct credentials being told
+    /// their storage was unreachable has been sent to debug the wrong thing.
+    ///
+    /// Presence only. Nothing here opens the repository or needs its
+    /// encryption key; that is what `dest.check_key` is for.
+    ///
+    /// `None` means the question does not apply (a folder mirror holds no
+    /// repository by definition) or could not be answered.
+    #[serde(default)]
+    pub repository_present: Option<bool>,
     /// Scrubbed transport detail, present mostly when `reachable` is false.
     pub detail: Option<String>,
 }
@@ -1228,6 +1306,10 @@ replies! {
         "A list of storage providers."
     "provider" Provider(ProviderReply)
         "One storage provider."
+    "buckets" Buckets(BucketsReply)
+        "The buckets a provider's credentials can see, and whether they could be listed at all."
+    "objects" Objects(ObjectsReply)
+        "One page of object keys under a prefix."
     "probe" Probe(ProbeReply)
         "The outcome of a connectivity test."
     "repository" Repository(RepositoryReply)
@@ -1299,6 +1381,8 @@ impl Reply {
             }
             Reply::Started(r) => scrub_opt(&mut r.note),
             Reply::Probe(r) => scrub_opt(&mut r.detail),
+            Reply::Buckets(r) => scrub_opt(&mut r.detail),
+            Reply::Objects(r) => scrub_opt(&mut r.detail),
             Reply::RemoteStatus(r) => {
                 scrub_opt(&mut r.detail);
                 scrub_opt(&mut r.url);
@@ -1841,9 +1925,26 @@ protocol! {
 
         "provider.test" ProviderTest => test_provider -> Probe(ProbeReply)
             flags [needs_unlock, elevated]
-            doc "Check that the provider's endpoint answers and its credentials are accepted."
+            doc "Check that the provider's endpoint answers and its credentials are accepted, by signing a real ListBuckets. Needs no destination: this is the call to make before the first bucket exists."
             params {
                 provider: String = "Provider id, or a unique prefix of its name.",
+            }
+
+        "provider.list_buckets" ProviderListBuckets => list_buckets -> Buckets(BucketsReply)
+            flags [needs_unlock, elevated]
+            doc "List the buckets this provider's credentials can see. Authenticated, so a success is also a credential check; a key that cannot `s3:ListAllMyBuckets` comes back as a qualified success rather than a failure."
+            params {
+                provider: String = "Provider id, or a unique prefix of its name.",
+            }
+
+        "provider.list_objects" ProviderListObjects => list_objects -> Objects(ObjectsReply)
+            flags [needs_unlock, elevated]
+            doc "List one page of object keys under a prefix, so a caller can see whether a repository already lives there."
+            params {
+                provider: String = "Provider id, or a unique prefix of its name.",
+                bucket: String = "Bucket to list.",
+                prefix: String = "Key prefix, empty for the bucket root.",
+                max_keys: u32 = "Maximum keys to return; 0 means the server's own page size, and anything above 1000 is clamped.",
             }
 
         "provider.used_by" ProviderUsedBy => provider_used_by -> UsedBy(UsedByReply)

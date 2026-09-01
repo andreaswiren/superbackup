@@ -63,6 +63,7 @@ pub fn providers() -> Vec<StorageProvider> {
                 tls: true,
                 path_style: false,
                 flavour: S3Flavour::Storj,
+                admin_url: Some("https://storj.io/login".into()),
             },
             notes: "Offsite copies. Billed monthly.".into(),
             created_at: Utc::now() - Duration::days(120),
@@ -78,6 +79,7 @@ pub fn providers() -> Vec<StorageProvider> {
                 tls: true,
                 path_style: false,
                 flavour: S3Flavour::BackblazeB2,
+                admin_url: None,
             },
             notes: String::new(),
             created_at: Utc::now() - Duration::days(40),
@@ -504,6 +506,7 @@ pub fn snapshot() -> StatusSnapshot {
         health: Health::Running,
         version: superbackup_core::VERSION.to_string(),
         machine_label: "ANDREAS-PC".into(),
+        machine_hostname: "ANDREAS-PC".into(),
         machine_slug: "andreas-pc-a3f9c2d1".into(),
         unlocked: true,
         paused: false,
@@ -544,6 +547,7 @@ pub fn seed(data: &mut Data) {
         target_arch: std::env::consts::ARCH.to_string(),
         kopia_version: Some("0.17.0".into()),
         service_scope: false,
+        build: "0.1.0+abc123def".to_string(),
     });
     data.link_up = true;
     data.loading = false;

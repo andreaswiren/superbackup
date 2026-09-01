@@ -1790,10 +1790,15 @@ fn show_export_keys(
 
 /// The probe result a destination editor and the rotation modal both consume.
 pub fn probe_message(probe: &ProbeReply) -> String {
-    if probe.reachable && probe.writable {
-        copy::dest::VERIFY_OK.to_string()
-    } else {
-        probe.detail.clone().unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.to_string())
+    match (probe.reachable && probe.writable, probe.detail.as_deref()) {
+        // Reachable, writable, and the daemon had something to add — which is
+        // the "no repository here yet" note. Prefer it: "Verified" alone would
+        // hide the one fact the user still has to act on.
+        (true, Some(detail)) if !detail.is_empty() => detail.to_string(),
+        (true, _) => copy::dest::VERIFY_OK.to_string(),
+        (false, _) => {
+            probe.detail.clone().unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.to_string())
+        }
     }
 }
 

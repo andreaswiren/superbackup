@@ -35,6 +35,10 @@ mod cli {
     }
 }
 
+// `daemon::handler` reports which build it is, so the module that
+// answers that has to exist in this synthetic crate too.
+#[path = "../src/build.rs"]
+mod build;
 #[path = "../src/daemon/mod.rs"]
 mod daemon;
 #[path = "../src/tray/mod.rs"]
@@ -91,6 +95,7 @@ async fn every_command_answers_or_refuses_cleanly() {
             tls: true,
             path_style: false,
             flavour: superbackup_core::model::S3Flavour::Storj,
+            admin_url: None,
         },
         notes: String::new(),
         created_at: chrono::Utc::now(),
@@ -203,6 +208,22 @@ async fn every_command_answers_or_refuses_cleanly() {
     run!("provider.update", Request::ProviderUpdate { provider: Box::new(edited) });
     run!("provider.used_by", Request::ProviderUsedBy { provider: provider_id.to_string() });
     run!("provider.test", Request::ProviderTest { provider: provider_id.to_string() });
+    // These reach the network. Offline in CI they answer "could not be
+    // reached", which is still a clean, well-formed answer — which is exactly
+    // what this test asserts about every command.
+    run!(
+        "provider.list_buckets",
+        Request::ProviderListBuckets { provider: provider_id.to_string() }
+    );
+    run!(
+        "provider.list_objects",
+        Request::ProviderListObjects {
+            provider: provider_id.to_string(),
+            bucket: "dev-backups".into(),
+            prefix: "superbackup/pc/".into(),
+            max_keys: 8,
+        }
+    );
     run!(
         "provider.rotate_credentials",
         Request::ProviderRotateCredentials {
@@ -619,4 +640,245 @@ fn check(covered: &mut BTreeSet<String>, name: &str, result: superbackup_core::R
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Testing a place is not the same question as opening a repository in it
+// ---------------------------------------------------------------------------
+//
+// Both checks used to go through kopia, which meant both needed a repository
+// that already existed and an encryption key that opened it. That coupling
+// made the answer useless in the two states where the user most wants one:
+// fresh credentials with no destination yet, and a destination added but not
+// yet created. These tests pin the decoupling.
+
+/// A provider with no destinations at all can still be tested.
+///
+/// The old implementation borrowed the first destination that used the
+/// provider and gave up when there was none — "there is nothing to test
+/// against" — which is exactly the state someone is in a minute after pasting
+/// their StorJ keys.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_provider_with_no_destinations_can_still_be_tested() {
+    let harness = Harness::start("provider-alone", |_config, _home| {}).await;
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    let id = uuid::Uuid::new_v4();
+    let provider = StorageProvider {
+        id,
+        name: "lonely".into(),
+        kind: ProviderKind::S3 {
+            // A name that cannot resolve, so the test is offline-safe and
+            // deterministic: what is asserted is that the daemon *answered*,
+            // not that the internet was reachable.
+            endpoint: "https://s3.invalid.superbackup-test".into(),
+            region: "eu-1".into(),
+            credentials: S3Credentials::for_provider(&id),
+            tls: true,
+            path_style: false,
+            flavour: superbackup_core::model::S3Flavour::Storj,
+            admin_url: None,
+        },
+        notes: String::new(),
+        created_at: chrono::Utc::now(),
+        last_verified_at: None,
+    };
+    let Reply::Provider(created) =
+        harness.call(&client, Request::ProviderCreate { provider: Box::new(provider) }).await
+    else {
+        panic!("expected a provider reply")
+    };
+    let provider_id = created.provider.id.to_string();
+
+    // No destinations exist at all.
+    let Reply::Destinations(list) = harness.call(&client, Request::DestinationList {}).await else {
+        panic!("expected a destinations reply")
+    };
+    assert!(list.destinations.is_empty(), "the fixture must have no destinations");
+
+    for request in [
+        Request::ProviderTest { provider: provider_id.clone() },
+        Request::ProviderListBuckets { provider: provider_id.clone() },
+    ] {
+        let name = request.command();
+        let detail = match harness.call(&client, request).await {
+            Reply::Probe(probe) => probe.detail.unwrap_or_default(),
+            Reply::Buckets(buckets) => buckets.detail.unwrap_or_default(),
+            other => panic!("`{name}` answered with {other:?}"),
+        };
+        assert!(
+            !detail.contains("No destination uses this provider"),
+            "`{name}` still needs a destination: {detail}"
+        );
+        // A provider is an account. Whether some bucket contains a repository
+        // is not a property of an account, and must not be mentioned here.
+        assert!(
+            !detail.to_lowercase().contains("repositor"),
+            "`{name}` talked about repositories: {detail}"
+        );
+        assert!(!detail.is_empty(), "`{name}` said nothing at all");
+    }
+}
+
+/// A destination whose repository has not been created yet is *reachable*.
+///
+/// The old path built a kopia driver, which needs the encryption key, which
+/// does not exist until the repository does — so a perfectly good folder
+/// reported as unreachable. Reachability and repository presence are now two
+/// fields, and the first does not depend on the second.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_destination_with_no_repository_is_reachable_and_says_so() {
+    let mut ids = None;
+    let harness = Harness::start("uncreated", |config, home| {
+        let destination = repository("fresh", home.join("fresh-repo"));
+        ids = Some(destination.id);
+        config.destinations.push(destination);
+    })
+    .await;
+    let destination_id = ids.expect("an id").to_string();
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    // The handle exists; nothing is behind it, because the key is generated
+    // when the repository is.
+    let Reply::Probe(probe) =
+        harness.call(&client, Request::DestinationTest { destination: destination_id }).await
+    else {
+        panic!("expected a probe reply")
+    };
+    assert!(probe.reachable, "a writable folder is reachable: {:?}", probe.detail);
+    assert!(probe.writable, "the folder must be writable: {:?}", probe.detail);
+    assert_eq!(
+        probe.repository_present,
+        Some(false),
+        "there is no repository in it yet, and that is a separate fact"
+    );
+    let detail = probe.detail.unwrap_or_default();
+    // The message has to name the thing, say what it is, and say where the
+    // control lives — "use Create repository" is useless without the screen.
+    assert!(detail.contains("folder"), "{detail}");
+    assert!(detail.contains("Destinations"), "{detail}");
+    assert!(detail.contains("Create repository"), "{detail}");
+}
+
+/// A folder mirror holds no repository by definition, so the question does not
+/// apply rather than being answered "no".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirror_is_not_asked_whether_it_holds_a_repository() {
+    let mut ids = None;
+    let harness = Harness::start("mirror-probe", |config, home| {
+        let destination = mirror("copy", home.join("mirror"));
+        ids = Some(destination.id);
+        config.destinations.push(destination);
+    })
+    .await;
+    let destination_id = ids.expect("an id").to_string();
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    let Reply::Probe(probe) =
+        harness.call(&client, Request::DestinationTest { destination: destination_id }).await
+    else {
+        panic!("expected a probe reply")
+    };
+    assert!(probe.reachable && probe.writable);
+    assert_eq!(probe.repository_present, None, "a mirror has no repository to look for");
+    assert_eq!(probe.detail, None, "nothing to warn about");
+}
+
+/// A wrong secret key is reported as a credential failure — never as a missing
+/// repository, and never as an unreachable endpoint.
+///
+/// Served by a throwaway local listener that answers the way S3 does, so the
+/// whole path is exercised — signing, transport, XML, error mapping, the
+/// handler's classification — without the network and without credentials that
+/// exist anywhere.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wrong_secret_key_is_a_credential_failure_not_a_missing_repository() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener");
+    let port = listener.local_addr().expect("an address").port();
+    let served = tokio::spawn(async move {
+        // One request is all the probe makes; answer it and stop.
+        if let Ok((mut socket, _)) = listener.accept().await {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut scratch = [0u8; 4096];
+            let _ = socket.read(&mut scratch).await;
+            let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>\
+                        <Code>SignatureDoesNotMatch</Code>\
+                        <Message>The request signature we calculated does not match.</Message>\
+                        <RequestId>abc</RequestId></Error>";
+            let response = format!(
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/xml\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        }
+    });
+
+    let harness = Harness::start("bad-secret", |_config, _home| {}).await;
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    let id = uuid::Uuid::new_v4();
+    let credentials = S3Credentials::for_provider(&id);
+    let provider = StorageProvider {
+        id,
+        name: "local-s3".into(),
+        kind: ProviderKind::S3 {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            region: "eu-1".into(),
+            credentials: credentials.clone(),
+            tls: false,
+            path_style: true,
+            flavour: superbackup_core::model::S3Flavour::Other,
+            admin_url: None,
+        },
+        notes: String::new(),
+        created_at: chrono::Utc::now(),
+        last_verified_at: None,
+    };
+    // `provider.create` assigns the id, so the handles to fill are the ones on
+    // the provider that comes back, not the ones on the draft that went in.
+    let Reply::Provider(created) =
+        harness.call(&client, Request::ProviderCreate { provider: Box::new(provider) }).await
+    else {
+        panic!("expected a provider reply")
+    };
+    let provider_id = created.provider.id;
+    let ProviderKind::S3 { credentials, .. } = &created.provider.kind;
+    let credentials = credentials.clone();
+    for (handle, value) in [
+        (credentials.access_key_ref.clone(), "AKIDEXAMPLE"),
+        (credentials.secret_key_ref.clone(), "wrong-secret"),
+    ] {
+        harness
+            .call(
+                &client,
+                Request::VaultSetSecret {
+                    secret_ref: handle,
+                    value: SecretString::from_string(value.to_string()),
+                },
+            )
+            .await;
+    }
+
+    let Reply::Probe(probe) =
+        harness.call(&client, Request::ProviderTest { provider: provider_id.to_string() }).await
+    else {
+        panic!("expected a probe reply")
+    };
+    let detail = probe.detail.unwrap_or_default();
+    assert!(!probe.reachable, "a rejected signature is not a pass: {detail}");
+    assert!(detail.contains("secret key"), "the message must point at the secret key: {detail}");
+    assert!(
+        !detail.to_lowercase().contains("repositor"),
+        "a credential failure must not be dressed up as a missing repository: {detail}"
+    );
+    // And the key itself never appears in what the user is shown.
+    assert!(!detail.contains("wrong-secret"), "{detail}");
+
+    let _ = served.await;
 }

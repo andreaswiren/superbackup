@@ -1095,6 +1095,7 @@ fn provider_add(ctx: &mut Ctx, daemon: &Daemon, args: ProviderAddArgs) -> CliRes
             tls: true,
             path_style: flavour.wants_path_style(),
             flavour,
+            admin_url: None,
         },
         notes: String::new(),
         created_at: Utc::now(),

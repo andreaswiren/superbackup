@@ -412,8 +412,11 @@ pub mod size {
     pub const RAIL_COLLAPSED: f32 = 64.0;
     pub const HEADER: f32 = 56.0;
     pub const STATUS_STRIP: f32 = 28.0;
-    pub const CONTENT_PAD: f32 = 24.0;
-    pub const CONTENT_PAD_NARROW: f32 = 20.0;
+    // Raised from 24. At 24 the content sat close enough to the rail that
+    // controls read as clipped against it, and a focus ring or a 2px border on
+    // the leftmost widget had nowhere to go.
+    pub const CONTENT_PAD: f32 = 32.0;
+    pub const CONTENT_PAD_NARROW: f32 = 24.0;
     /// The width at which the rail collapses and tables shed columns.
     pub const BREAKPOINT: f32 = 1000.0;
 
@@ -421,8 +424,10 @@ pub mod size {
     pub const CONTROL_H_COMPACT: f32 = 26.0;
     pub const CONTROL_H_ONBOARDING: f32 = 36.0;
     pub const RAIL_ITEM_H: f32 = 36.0;
-    pub const TABLE_HEADER_H: f32 = 32.0;
-    pub const TABLE_ROW_H: f32 = 36.0;
+    pub const TABLE_HEADER_H: f32 = 36.0;
+    // Raised from 36: at 36 a row with an icon, a badge and a trailing
+    // menu button read as cramped rather than dense.
+    pub const TABLE_ROW_H: f32 = 42.0;
     pub const TABLE_ROW_H_COMPACT: f32 = 28.0;
     pub const JOB_CARD_H: f32 = 96.0;
     pub const BADGE_H: f32 = 20.0;

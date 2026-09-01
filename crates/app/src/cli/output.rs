@@ -94,7 +94,12 @@ impl From<Error> for CliError {
         CliError {
             code,
             message: e.to_string(),
-            hint: e.hint().map(|h| h.to_string()).or_else(|| default_hint(code)),
+            // `hint_owned`, not `hint`: almost every error the CLI renders
+            // arrived over IPC as `Error::Transported`, whose hint is an owned
+            // `String` the `&'static str` API cannot return. Using `hint`
+            // here silently dropped the daemon's own next-step advice — a
+            // locked vault printed with no "run `superbackup unlock`" at all.
+            hint: e.hint_owned().or_else(|| default_hint(code)),
         }
     }
 }

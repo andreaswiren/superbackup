@@ -1802,7 +1802,22 @@ pub fn empty_state(
     let mut primary_clicked = false;
     let mut secondary_clicked = false;
     let available = ui.available_size();
-    let top = (available.y * 0.45 - 90.0).max(0.0);
+
+    // Measure the block before placing it, so it sits in the true middle.
+    //
+    // This used to be `available.y * 0.45 - 90.0`, a guess calibrated for a
+    // full-page empty state. Inside a short box — the folder list in the job
+    // wizard is 140px — the expression goes negative, clamps to zero, and the
+    // content lands hard against the top edge instead of centred.
+    let body_text = body_override.unwrap_or(empty.body);
+    let title_h = galley(ui, empty.title, Type::H2, t.text_primary).size().y;
+    let body_h = galley_wrapped(ui, body_text, Type::Body, t.text_secondary, 420.0).size().y;
+    let mut content_h = 32.0 + space::XL + title_h + space::M + body_h;
+    if empty.primary.is_some() || empty.secondary.is_some() {
+        content_h += space::XXL + size::CONTROL_H;
+    }
+    let top = ((available.y - content_h) / 2.0).max(0.0);
+
     ui.allocate_ui_with_layout(available, Layout::top_down(Align::Center), |ui| {
         ui.add_space(top);
         let (ir, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
@@ -1957,9 +1972,15 @@ pub fn code_block(ui: &mut Ui, content: &str, max_height: f32, severity: Option<
                     ui,
                     |ui| {
                         ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
-                        for line in content.lines() {
-                            text(ui, line, Type::MonoSmall, t.text_primary);
-                        }
+                        // Explicitly vertical. The scroll area inherits its
+                        // layout from the `horizontal_top` above, so without
+                        // this every line was laid out *beside* the previous
+                        // one and a four-line block rendered as one long line.
+                        ui.vertical(|ui| {
+                            for line in content.lines() {
+                                text(ui, line, Type::MonoSmall, t.text_primary);
+                            }
+                        });
                     },
                 );
                 ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
@@ -2046,15 +2067,49 @@ pub fn row_background(ui: &Ui, rect: Rect, hovered: bool, selected: bool, focuse
 
 /// A container that gives a table the card treatment the design system asks
 /// for: `bg.surface`, 1px `border.subtle`, radius 10, clipped.
+/// The card every table sits in.
+///
+/// The inner margin is not decoration. With `Margin::ZERO` the first column's
+/// icon was jammed against the card's left border and the row's trailing "…"
+/// button against its right, with the rounded corner cutting past them. Every
+/// table in the application shares this frame, so the inset belongs here rather
+/// than being re-invented per screen.
+///
+/// Callers that size a flexible column must subtract [`TABLE_GUTTER`], as they
+/// measure available width *before* this frame is entered.
 pub fn table_frame<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
     let t = theme::tokens(ui.ctx());
     egui::Frame::new()
         .fill(t.bg_surface)
         .stroke(Stroke::new(1.0_f32, t.border_subtle))
         .corner_radius(radius::CARD)
-        .inner_margin(egui::Margin::ZERO)
+        .inner_margin(egui::Margin {
+            left: TABLE_INSET as i8,
+            right: TABLE_INSET as i8,
+            top: 0,
+            bottom: TABLE_INSET as i8 / 2,
+        })
         .show(ui, add)
 }
+
+/// The vertical space a [`divider`] occupies, so callers reserving room for one
+/// do not have to guess.
+pub const DIVIDER_H: f32 = 1.0;
+
+/// Horizontal breathing room between a table's content and its card edge.
+pub const TABLE_INSET: f32 = 14.0;
+
+/// The table card's border.
+pub const TABLE_BORDER: f32 = 1.0;
+
+/// Everything a [`table_frame`] takes from its parent's width before content
+/// starts: both insets and both borders.
+///
+/// A caller sizing a flexible column measures *before* entering the frame, so
+/// it must subtract this. Subtracting only the insets left the last column two
+/// pixels too wide, which is exactly enough for the card edge to slide under
+/// the window's right edge at the 900-pixel minimum size.
+pub const TABLE_GUTTER: f32 = TABLE_INSET * 2.0 + TABLE_BORDER * 2.0;
 
 // ---------------------------------------------------------------------------
 // Checklist rows (repository creation, provider test, rotation)

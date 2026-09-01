@@ -531,35 +531,51 @@ fn step_destinations(ui: &mut Ui, state: &mut WizardState, data: &Data) {
     }
 }
 
+/// Hourly, 08:00–17:00, Monday to Friday.
+///
+/// Expressed as cron rather than as a new `Schedule` variant: the scheduler
+/// already evaluates cron in local time with the daylight-saving behaviour this
+/// needs, so a new variant would be a second implementation of something that
+/// already works.
+const WORK_HOURS_CRON: &str = "0 8-17 * * 1-5";
+
 fn step_schedule(ui: &mut Ui, state: &mut WizardState) {
     let t = theme::tokens(ui.ctx());
+    // Each option carries a tooltip, because the label alone cannot say what
+    // "Weekly" or a cron expression will actually do, and a schedule the user
+    // has guessed at is a schedule they will not trust.
     let options = [
-        (copy::job::SCHEDULE_MANUAL, 0usize),
-        (copy::job::SCHEDULE_INTERVAL, 1),
-        (copy::job::SCHEDULE_DAILY, 2),
-        (copy::job::SCHEDULE_WEEKLY, 3),
-        (copy::job::SCHEDULE_CRON, 4),
-        (copy::job::SCHEDULE_ONCHANGE, 5),
+        (copy::job::SCHEDULE_MANUAL, copy::job::SCHEDULE_MANUAL_TIP, 0usize),
+        (copy::job::SCHEDULE_INTERVAL, copy::job::SCHEDULE_INTERVAL_TIP, 1),
+        (copy::job::SCHEDULE_WORKHOURS, copy::job::SCHEDULE_WORKHOURS_TIP, 2),
+        (copy::job::SCHEDULE_DAILY, copy::job::SCHEDULE_DAILY_TIP, 3),
+        (copy::job::SCHEDULE_WEEKLY, copy::job::SCHEDULE_WEEKLY_TIP, 4),
+        (copy::job::SCHEDULE_CRON, copy::job::SCHEDULE_CRON_TIP, 5),
+        (copy::job::SCHEDULE_ONCHANGE, copy::job::SCHEDULE_ONCHANGE_TIP, 6),
     ];
     let current = match &state.draft.schedule {
         Schedule::Manual => 0,
         Schedule::Interval { .. } => 1,
-        Schedule::Daily { .. } => 2,
-        Schedule::Weekly { .. } => 3,
-        Schedule::Cron { .. } => 4,
-        Schedule::OnChange { .. } => 5,
+        // Work hours is a cron expression underneath, so it has to be
+        // recognised by its shape or selecting it would not stick.
+        Schedule::Cron { expression } if expression == WORK_HOURS_CRON => 2,
+        Schedule::Daily { .. } => 3,
+        Schedule::Weekly { .. } => 4,
+        Schedule::Cron { .. } => 5,
+        Schedule::OnChange { .. } => 6,
     };
-    for (label, index) in options {
-        if widgets::radio(ui, current == index, label, None, true).clicked() {
+    for (label, tip, index) in options {
+        if widgets::radio(ui, current == index, label, None, true).on_hover_text(tip).clicked() {
             state.draft.schedule = match index {
                 0 => Schedule::Manual,
                 1 => Schedule::Interval { minutes: 60 },
-                2 => Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 0 }] },
-                3 => Schedule::Weekly {
+                2 => Schedule::Cron { expression: WORK_HOURS_CRON.into() },
+                3 => Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 0 }] },
+                4 => Schedule::Weekly {
                     weekdays: vec![0],
                     times: vec![TimeOfDay { hour: 2, minute: 0 }],
                 },
-                4 => Schedule::Cron { expression: "0 2 * * *".into() },
+                5 => Schedule::Cron { expression: "0 2 * * *".into() },
                 _ => Schedule::OnChange { debounce_seconds: 120, min_interval_minutes: 30 },
             };
         }
@@ -617,18 +633,71 @@ fn step_exclusions(ui: &mut Ui, state: &mut WizardState) {
                             }
                             widgets::text(ui, preset.title(), Type::BodyStrong, t.text_primary);
                         });
+                        let width = (ui.available_width() - 8.0).max(200.0);
+                        // What it matches comes before why it is safe: a user
+                        // deciding whether to tick a box needs to know what it
+                        // does first.
+                        widgets::paragraph_at(
+                            ui,
+                            preset.matches_description(),
+                            Type::Small,
+                            t.text_secondary,
+                            width,
+                        );
                         widgets::paragraph_at(
                             ui,
                             preset.rationale(),
                             Type::Small,
                             t.text_muted,
-                            (ui.available_width() - 8.0).max(200.0),
+                            width,
+                        );
+                        // And the patterns themselves, verbatim. Nothing about
+                        // what gets skipped should require trusting a summary.
+                        widgets::paragraph_at(
+                            ui,
+                            preset.patterns().join("   "),
+                            Type::MonoSmall,
+                            t.text_muted,
+                            width,
                         );
                     });
                 });
                 ui.add_space(space::M);
             }
         });
+    // The whole point of this panel: the user can see, in one place, exactly
+    // what will be skipped. Ticking boxes whose effect is described only in
+    // prose is what makes excluding anything feel risky.
+    ui.add_space(space::L);
+    let total = state.draft.exclusions.effective_patterns();
+    widgets::text(ui, copy::job::EXCL_TOTAL_TITLE, Type::BodyStrong, t.text_primary);
+    ui.add_space(space::XS);
+    widgets::paragraph_at(ui, copy::job::EXCL_TOTAL_BODY, Type::Small, t.text_muted, 640.0);
+    ui.add_space(space::S);
+    widgets::table_frame(ui, |ui| {
+        ui.add_space(space::S);
+        if total.is_empty() {
+            widgets::paragraph_at(
+                ui,
+                copy::job::EXCL_TOTAL_EMPTY,
+                Type::Small,
+                t.text_muted,
+                (ui.available_width() - 16.0).max(200.0),
+            );
+        } else {
+            widgets::paragraph_at(
+                ui,
+                total.join("   "),
+                Type::MonoSmall,
+                t.text_secondary,
+                (ui.available_width() - 16.0).max(200.0),
+            );
+            ui.add_space(space::XS);
+            widgets::text(ui, copy::job::excl_total_count(total.len()), Type::Small, t.text_muted);
+        }
+        ui.add_space(space::S);
+    });
+
     if let Some(preset) = toggle {
         if state.draft.exclusions.presets.contains(&preset) {
             state.draft.exclusions.presets.retain(|p| p != &preset);

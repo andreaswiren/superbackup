@@ -410,11 +410,16 @@ impl App {
         if sources.is_empty() {
             widgets::table_frame(ui, |ui| {
                 ui.set_min_height(160.0);
-                let (add, _) = widgets::empty_state(ui, Icon::Folder, &copy::empty::SOURCES, None);
-                if add {
-                    self.add_source_via_picker();
-                }
+                widgets::empty_state(ui, Icon::Folder, &copy::empty::SOURCES, None);
             });
+            // The empty state no longer carries its own button, and this branch
+            // returns before reaching the one below the populated list — so the
+            // single "Add folder…" has to be offered here too, in the same
+            // place it appears once a folder exists.
+            ui.add_space(space::M);
+            if Button::secondary(copy::job::SOURCES_ADD).icon(Icon::Plus).show(ui).clicked() {
+                self.add_source_via_picker();
+            }
             return;
         }
 
@@ -665,6 +670,22 @@ impl App {
                                 }
                             },
                         );
+                        // A destination that is filled by copying another is
+                        // not doing the same work as the rest of the list, and
+                        // the difference decides whether ticking it is even
+                        // valid on its own.
+                        if let Some(source_id) = destination.replicate_from {
+                            let source = self
+                                .data
+                                .destination(&source_id)
+                                .map(|d| d.name.clone())
+                                .unwrap_or_else(|| copy::chain::CHAIN_BADGE.to_string());
+                            widgets::neutral_badge(
+                                ui,
+                                &copy::chain::chain_line(&source),
+                                Some(Icon::Copy),
+                            );
+                        }
                         if !enabled {
                             widgets::neutral_badge(ui, copy::badge::DISABLED, Some(Icon::Pause));
                         } else {
@@ -704,11 +725,48 @@ impl App {
         }
 
         if let Some(id) = toggled {
+            // Ticking a replica pulls in the chain it depends on. Without it
+            // the copy would be made from whatever the previous run left
+            // behind and still report success, so the alternative to adding
+            // the source is refusing to save — and telling someone to go and
+            // tick another box is worse than ticking it and saying so.
+            let mut chain: Vec<Uuid> = Vec::new();
+            let mut cursor = Some(id);
+            for _ in 0..=superbackup_core::model::MAX_REPLICATION_DEPTH {
+                let Some(current) = cursor else { break };
+                let Some(destination) = self.data.destination(&current) else { break };
+                let Some(parent) = destination.replicate_from else { break };
+                if chain.contains(&parent) {
+                    break;
+                }
+                chain.push(parent);
+                cursor = Some(parent);
+            }
+
+            let mut added: Vec<String> = Vec::new();
             if let Some(draft) = &mut self.screens.job_editor.draft {
                 if draft.destination_ids.contains(&id) {
+                    // Removing only removes what was asked for. A source may
+                    // well be wanted for its own sake.
                     draft.destination_ids.retain(|d| d != &id);
                 } else {
                     draft.destination_ids.push(id);
+                    for parent in chain {
+                        if !draft.destination_ids.contains(&parent) {
+                            draft.destination_ids.push(parent);
+                            added.push(parent.to_string());
+                        }
+                    }
+                }
+            }
+            for parent in added {
+                if let Ok(uuid) = parent.parse::<Uuid>() {
+                    let name = self
+                        .data
+                        .destination(&uuid)
+                        .map(|d| d.name.clone())
+                        .unwrap_or_else(|| uuid.to_string());
+                    self.toasts.info(copy::toast_chain_source_added(&name));
                 }
             }
         }
@@ -970,8 +1028,22 @@ impl App {
                         // so the CLI and the window never disagree.
                         widgets::paragraph_at(
                             ui,
+                            preset.matches_description(),
+                            Type::Small,
+                            t.text_secondary,
+                            (ui.available_width() - 8.0).max(200.0),
+                        );
+                        widgets::paragraph_at(
+                            ui,
                             preset.rationale(),
                             Type::Small,
+                            t.text_muted,
+                            (ui.available_width() - 8.0).max(200.0),
+                        );
+                        widgets::paragraph_at(
+                            ui,
+                            preset.patterns().join("   "),
+                            Type::MonoSmall,
                             t.text_muted,
                             (ui.available_width() - 8.0).max(200.0),
                         );

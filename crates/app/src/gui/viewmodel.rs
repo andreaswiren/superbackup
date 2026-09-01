@@ -1339,6 +1339,7 @@ mod tests {
             health: Health::Idle,
             version: "0.1.0".into(),
             machine_label: "M".into(),
+            machine_hostname: "M".into(),
             machine_slug: "m".into(),
             unlocked: true,
             paused: false,

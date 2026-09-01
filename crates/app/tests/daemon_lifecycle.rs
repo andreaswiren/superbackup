@@ -30,6 +30,10 @@ mod cli {
     }
 }
 
+// `daemon::handler` reports which build it is, so the module that
+// answers that has to exist in this synthetic crate too.
+#[path = "../src/build.rs"]
+mod build;
 #[path = "../src/daemon/mod.rs"]
 mod daemon;
 #[path = "../src/tray/mod.rs"]

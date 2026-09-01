@@ -61,6 +61,15 @@ pub struct App {
     pub onboarding: Option<screens::onboarding::Onboarding>,
     /// The action to perform once the vault opens.
     pub pending: Option<Pending>,
+    /// Where this instance keeps its configuration, when the window was opened
+    /// by the application rather than constructed for a test.
+    ///
+    /// The window needs this for exactly one thing: creating the vault on a
+    /// first run. That cannot be asked of the daemon, because the daemon
+    /// refuses to start until the vault exists — so the process that would
+    /// answer the request is the process that will not start. It is the same
+    /// reason `superbackup init` writes the vault itself.
+    pub paths: Option<superbackup_core::paths::Paths>,
     tokens: Tokens,
     style_installed: bool,
     system_dark: bool,
@@ -76,6 +85,25 @@ impl App {
     pub fn new(ctx: &Context, endpoint: String, timeout: Duration) -> App {
         let daemon: Arc<dyn Daemon> = Arc::new(daemon::IpcDaemon::new(endpoint, timeout));
         App::new_with_daemon(ctx, daemon)
+    }
+
+    /// The same, told where its configuration lives.
+    ///
+    /// A window that knows its `Paths` can complete a first run; one that does
+    /// not simply never offers to, which is the right behaviour for the mock
+    /// windows used by tests and the screenshot harness.
+    pub fn with_paths(mut self, paths: superbackup_core::paths::Paths) -> App {
+        // A missing vault *is* the first run. Starting the flow here rather
+        // than waiting for a daemon reply matters because on a first run there
+        // is no daemon to reply: it will not start until this flow has done
+        // its work. Before this, `begin_onboarding` was reachable only from
+        // the screenshot harness, so a fresh install opened a window with
+        // nothing in it and no way forward.
+        if !superbackup_core::config::is_initialised(&paths) {
+            self.begin_onboarding();
+        }
+        self.paths = Some(paths);
+        self
     }
 
     /// A window talking to whatever transport is handed in — a real daemon, or
@@ -97,6 +125,7 @@ impl App {
             modal: None,
             onboarding: None,
             pending: None,
+            paths: None,
             tokens,
             style_installed: true,
             system_dark: ctx.style().visuals.dark_mode,
@@ -229,7 +258,14 @@ impl App {
                 let name = self.data.destination_name(id);
                 self.screens.destinations.probe(*id, probe.clone());
                 if probe.reachable && probe.writable {
-                    self.toasts.success(copy::dest_verify_ok_toast(&name));
+                    // Reachable and writable is a pass even when there is no
+                    // repository in it yet: those are separate questions, and
+                    // reporting the second as a failure of the first is what
+                    // made a working bucket read as unreachable.
+                    match probe.detail.as_deref().filter(|d| !d.is_empty()) {
+                        Some(note) => self.toasts.info(format!("{name}: {note}")),
+                        None => self.toasts.success(copy::dest_verify_ok_toast(&name)),
+                    }
                 } else {
                     self.toasts.danger(
                         name,
@@ -241,9 +277,37 @@ impl App {
                 }
                 self.ask(Intent::Destinations, Request::DestinationList {});
             }
-            (Intent::TestProvider(id), Reply::Probe(probe)) => {
-                self.screens.provider_editor.probe(*id, probe.clone());
+            (Intent::TestProvider(id), Reply::Buckets(reply)) => {
+                // The outcome is kept on the editor screen, but Test is also on
+                // every row of the providers *list* — where nothing rendered it,
+                // so pressing it there looked like the button did nothing at
+                // all. A toast reaches the user wherever they pressed it.
+                //
+                // `credentials_ok` without `listed` is a success with a
+                // caveat: the key is right and simply may not enumerate
+                // buckets. It gets a warning rather than a danger toast,
+                // because telling someone their working key is broken is the
+                // one answer that is actually wrong.
+                let name = self.data.provider_name(id);
+                let detail = reply.detail.clone().unwrap_or_default();
+                if reply.listed {
+                    self.toasts.success(copy::toast_provider_reachable(
+                        &name,
+                        &copy::prov_test_ok(reply.buckets.len()),
+                    ));
+                } else if reply.credentials_ok {
+                    self.toasts.warning(copy::toast_provider_reachable(&name, &detail));
+                } else {
+                    self.toasts.warning(copy::toast_provider_unreachable(&name, &detail));
+                }
+                self.screens.provider_editor.probe(*id, reply);
                 self.ask(Intent::Providers, Request::ProviderList {});
+            }
+            (Intent::ListBuckets(id), Reply::Buckets(reply)) => {
+                self.screens.destination_editor.buckets_arrived(*id, reply);
+            }
+            (Intent::ListObjects(id), Reply::Objects(reply)) => {
+                self.screens.destination_editor.objects_arrived(*id, reply);
             }
             (Intent::CreateRepository(id), Reply::Repository(repo)) => {
                 let name = self.data.destination_name(id);
@@ -334,7 +398,20 @@ impl App {
             E::JobCancelled => {}
             _ => match intent {
                 // Errors that belong to a screen are rendered by that screen.
-                Intent::TestProvider(id) => self.screens.provider_editor.probe_failed(id, payload),
+                Intent::TestProvider(id) => {
+                    let name = self.data.provider_name(&id);
+                    self.toasts.warning(copy::toast_provider_unreachable(&name, &payload.message));
+                    self.screens.provider_editor.probe_failed(id, payload)
+                }
+                // A picker that could not be filled is not an error the user
+                // has to deal with: the manual field is right there. The
+                // reason is shown beside it and nothing is blocked.
+                Intent::ListBuckets(id) => {
+                    self.screens.destination_editor.buckets_unavailable(id, payload.message)
+                }
+                Intent::ListObjects(id) => {
+                    self.screens.destination_editor.objects_unavailable(id, payload.message)
+                }
                 Intent::TestDestination(id) => self.screens.destinations.probe_failed(id, payload),
                 Intent::CreateRepository(_) => {
                     self.screens.destination_editor.repository_failed(payload)
@@ -476,9 +553,49 @@ impl App {
             return;
         }
         self.screens.provider_editor.probe_started(provider);
+        // `provider.list_buckets` rather than `provider.test`: it is the same
+        // authenticated call, and it comes back with the names, so the editor
+        // can show what the credentials can actually see instead of only that
+        // they worked. `provider.test` stays in the protocol for the CLI and
+        // for agents that want a plain reachable/not answer.
         self.ask(
             Intent::TestProvider(provider),
-            Request::ProviderTest { provider: provider.to_string() },
+            Request::ProviderListBuckets { provider: provider.to_string() },
+        );
+    }
+
+    /// Fetch the bucket list for the destination editor's picker.
+    ///
+    /// Never gates the editor: if the vault is locked or the request fails,
+    /// the picker degrades to the manual field, which is always present.
+    pub fn request_bucket_list(&mut self, provider: Uuid) {
+        if !self.data.gate(Action::TestProvider).allowed() {
+            self.screens
+                .destination_editor
+                .buckets_unavailable(provider, copy::dest::S3_BUCKET_LOCKED.to_string());
+            return;
+        }
+        self.screens.destination_editor.buckets_requested(provider);
+        self.ask(
+            Intent::ListBuckets(provider),
+            Request::ProviderListBuckets { provider: provider.to_string() },
+        );
+    }
+
+    /// Ask what is already stored under a destination's prefix.
+    pub fn request_prefix_check(&mut self, provider: Uuid, bucket: String, prefix: String) {
+        if !self.data.gate(Action::TestProvider).allowed() || bucket.trim().is_empty() {
+            return;
+        }
+        self.screens.destination_editor.objects_requested(provider);
+        self.ask(
+            Intent::ListObjects(provider),
+            Request::ProviderListObjects {
+                provider: provider.to_string(),
+                bucket,
+                prefix,
+                max_keys: 16,
+            },
         );
     }
 
@@ -693,7 +810,14 @@ impl App {
                 let mut content_ui = ui.new_child(
                     egui::UiBuilder::new().max_rect(content).layout(Layout::top_down(Align::Min)),
                 );
-                content_ui.set_clip_rect(content);
+                // Clip a little wider than the layout rect. Clipping at exactly
+                // the content edge shaves the outer pixel off a border or a
+                // focus ring on the leftmost and rightmost widgets, which is
+                // what made them look cut off rather than merely tight.
+                content_ui.set_clip_rect(Rect::from_min_max(
+                    egui::Pos2::new(content.left() - 4.0, content.top()),
+                    egui::Pos2::new(content.right() + 4.0, content.bottom() + 4.0),
+                ));
                 self.banners(&mut content_ui);
                 self.screen(&mut content_ui);
                 self.toasts.show(ui, full);
@@ -736,22 +860,35 @@ impl App {
                 egui::UiBuilder::new().max_rect(rect).layout(Layout::top_down(Align::Min)),
             );
             child.spacing_mut().item_spacing.y = 0.0;
+            // The hostname, not the editable label: this answers "which
+            // computer am I looking at", and a renamed label would otherwise
+            // hide it. The label is still shown when the two differ, since
+            // that is exactly when the distinction matters.
+            let hostname = self.data.machine_hostname();
+            let label = self.data.machine_label();
+            let primary =
+                if hostname.is_empty() { label.to_string() } else { hostname.to_string() };
             widgets::elided(
                 &mut child,
-                self.data.machine_label(),
+                &primary,
                 Type::BodyStrong,
                 t.text_primary,
                 rect.width(),
                 false,
             );
-            widgets::elided(
-                &mut child,
-                self.data.machine_slug(),
-                Type::Small,
-                t.text_muted,
-                rect.width(),
-                false,
-            );
+            // The slug repeats the machine name before its identifier, which is
+            // redundant under a line already showing the name. Show the
+            // identifier itself, and the label alongside when it has been
+            // changed.
+            let id = self.data.machine_slug();
+            let compact = id.rsplit('-').next().unwrap_or(id);
+            let secondary = if !label.is_empty() && !label.eq_ignore_ascii_case(&primary) {
+                format!("{label} · {compact}")
+            } else {
+                compact.to_string()
+            };
+            widgets::elided(&mut child, &secondary, Type::Small, t.text_muted, rect.width(), false);
+            let response = response.on_hover_text(format!("{primary} · {id}"));
             if response.clicked() {
                 self.go(Route::Settings(SettingsSection::General));
             }
@@ -773,14 +910,21 @@ impl App {
             }
         }
 
-        // Push the vault control to the bottom.
-        let remaining = ui.available_height() - 44.0;
+        // Push the vault control to the bottom, with the *same* gap above and
+        // below it. The reserve used to be a bare 44px, which was less than a
+        // divider plus two gaps plus the control once the control learned to
+        // size itself to its own text — so the badge sat hard against the
+        // status bar with a visible gap only above it.
+        let gap = space::L;
+        let reserve = widgets::DIVIDER_H + gap + size::RAIL_ITEM_H + gap;
+        let remaining = ui.available_height() - reserve;
         if remaining > 0.0 {
             ui.add_space(remaining);
         }
         widgets::divider(ui);
-        ui.add_space(space::L);
+        ui.add_space(gap);
         self.vault_control(ui, narrow);
+        ui.add_space(gap);
 
         if let Some(route) = go {
             self.go(route);
@@ -1172,6 +1316,18 @@ impl App {
                 _ => copy::set::SERVICE_NOT_INSTALLED,
             };
             widgets::text(ui, service, Type::Small, t.text_muted);
+
+            // superbackup's own version, next to Kopia's. Showing only Kopia's
+            // is what made "0.23.1" look like this application's version.
+            widgets::vertical_rule(ui, 14.0);
+            let build = crate::build::short();
+            let colour = if crate::build::is_dirty() { t.warning.mark } else { t.text_muted };
+            if widgets::text(ui, format!("superbackup {build}"), Type::Small, colour)
+                .on_hover_text(crate::build::long())
+                .clicked()
+            {
+                go = Some(Route::About);
+            }
 
             widgets::vertical_rule(ui, 14.0);
             match self.data.snapshot.as_ref().and_then(|s| s.kopia_version.clone()) {

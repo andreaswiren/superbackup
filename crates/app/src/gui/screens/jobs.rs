@@ -15,7 +15,7 @@ use crate::gui::data::Action;
 use crate::gui::format;
 use crate::gui::icons::Icon;
 use crate::gui::modals::{self, Modal};
-use crate::gui::nav::Route;
+use crate::gui::nav::{Route, SettingsSection};
 use crate::gui::theme::{self, size, space, Type};
 use crate::gui::viewmodel::{self, CardState, ColumnSpec, GroupBy, JobFilter, SortKey};
 use crate::gui::widgets::{self, Button};
@@ -110,10 +110,19 @@ impl App {
         let t = theme::tokens(ui.ctx());
 
         if self.data.jobs.is_empty() && !self.data.loading {
-            let (primary, _) = widgets::empty_state(ui, Icon::Repeat, &copy::empty::JOBS, None);
+            let (primary, secondary) =
+                widgets::empty_state(ui, Icon::Repeat, &copy::empty::JOBS, None);
             if primary {
                 let wizard = crate::gui::screens::wizard::WizardState::new(&self.data);
                 self.open_modal(Modal::Wizard(Box::new(wizard)));
+            }
+            if secondary {
+                // The secondary result used to be discarded, so "Import from
+                // another machine…" was a button that did nothing at all when
+                // pressed. Sharing jobs between machines is the shared-config
+                // repository, so send the user where that is actually set up
+                // rather than leaving the click unanswered.
+                self.go(Route::Settings(SettingsSection::Remote));
             }
             return;
         }
@@ -177,7 +186,10 @@ impl App {
         let mut menu: Option<(&'static str, Uuid)> = None;
         let mut sort_click: Option<SortKey> = None;
         let shown = viewmodel::fit_columns(
-            ui.available_width(),
+            // The table card insets its content, and this is measured before
+            // that frame is entered, so the budget has to lose both sides or
+            // the last column is pushed past the card edge.
+            ui.available_width() - widgets::TABLE_GUTTER,
             92.0,
             ui.spacing().item_spacing.x,
             &JOB_COLUMNS,

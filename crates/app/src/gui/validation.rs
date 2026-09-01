@@ -44,6 +44,9 @@ pub enum Field {
     Provider,
     Endpoint,
     Region,
+    AdminUrl,
+    /// The `Copy from` picker on the destination editor.
+    ReplicateFrom,
     Credentials,
     Passphrase,
     PassphraseConfirm,
@@ -141,6 +144,29 @@ pub fn validate_job(job: &Job, others: &[Job], destinations: &[Destination]) -> 
 
     let enabled_destinations: Vec<&Destination> =
         destinations.iter().filter(|d| job.destination_ids.contains(&d.id) && d.enabled).collect();
+    // A replica is filled from its source's repository, not from the folders.
+    // If the source is not in this same job, the copy would replicate whatever
+    // happened to be there — possibly a week old — and then report a fresh
+    // success, which is the failure mode where someone restores a backup they
+    // believed was current. Requiring both in one job is what makes "the
+    // offsite copy is as new as the local one" true rather than likely.
+    for id in &job.destination_ids {
+        let Some(destination) = destinations.iter().find(|d| d.id == *id) else { continue };
+        let Some(source_id) = destination.replicate_from else { continue };
+        if job.destination_ids.contains(&source_id) {
+            continue;
+        }
+        let source_name = destinations
+            .iter()
+            .find(|d| d.id == source_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| source_id.to_string());
+        report.push(
+            Field::Destinations,
+            copy::valid_replica_source_absent(&destination.name, &source_name),
+        );
+    }
+
     if job.destination_ids.is_empty() || enabled_destinations.is_empty() {
         report.push(Field::Destinations, copy::job::ERR_NO_DESTINATIONS);
     }
@@ -487,8 +513,56 @@ pub fn validate_destination(
         }
     }
 
+    validate_replication(destination, others, &mut report);
     validate_retention(&destination.retention, &mut report);
     report
+}
+
+/// The chain rules, checked in the form so the user is told at the picker
+/// rather than by the daemon after pressing Save.
+///
+/// These deliberately mirror `config::validate_replication`. The core check is
+/// the authority — it is what protects a config edited by hand or pulled from
+/// Git — and this one exists only to put the message next to the control that
+/// caused it. If the two ever disagree, the core is right.
+fn validate_replication(destination: &Destination, others: &[Destination], report: &mut Report) {
+    let Some(source_id) = destination.replicate_from else { return };
+
+    if source_id == destination.id {
+        report.push(Field::ReplicateFrom, copy::valid::REPLICA_SELF);
+        return;
+    }
+
+    // A mirror is plain files on a disk. There are no repository blobs to
+    // sync, so there is nothing `sync-to` could do here.
+    if !destination.kind.is_repository() {
+        report.push(Field::ReplicateFrom, copy::valid::REPLICA_NOT_REPOSITORY);
+        return;
+    }
+
+    let Some(source) = others.iter().find(|d| d.id == source_id) else {
+        report.push(Field::ReplicateFrom, copy::chain::source_missing(&source_id.to_string()));
+        return;
+    };
+
+    if !source.kind.is_repository() {
+        report.push(Field::ReplicateFrom, copy::valid_replica_source_mirror(&source.name));
+        return;
+    }
+
+    // Walk up from the source. If we arrive back at this destination the user
+    // has closed a loop, and no destination in it could go first.
+    let mut current = source;
+    for _ in 0..=superbackup_core::model::MAX_REPLICATION_DEPTH {
+        let Some(parent_id) = current.replicate_from else { return };
+        if parent_id == destination.id {
+            report.push(Field::ReplicateFrom, copy::valid_replica_cycle(&source.name));
+            return;
+        }
+        let Some(parent) = others.iter().find(|d| d.id == parent_id) else { return };
+        current = parent;
+    }
+    report.push(Field::ReplicateFrom, copy::valid::REPLICA_TOO_DEEP);
 }
 
 /// S3 bucket naming, which is worth checking here because the failure at run
@@ -546,6 +620,16 @@ pub fn validate_provider(
     }
     if *flavour == S3Flavour::AwsS3 && region.trim().is_empty() {
         report.push(Field::Region, copy::valid::REGION);
+    }
+    // The administration URL is documentation. The only thing worth refusing
+    // is a scheme a click would *execute* — `javascript:`, `file:` — so an
+    // empty value, a typo and a dead host are all deliberately fine. An
+    // optional field that can block a save is not optional.
+    let ProviderKind::S3 { admin_url, .. } = &provider.kind;
+    if let Some(url) = admin_url {
+        if let Err(message) = superbackup_core::model::validate_admin_url(url) {
+            report.push(Field::AdminUrl, message);
+        }
     }
 
     if credentials_required && (access_key.trim().is_empty() || secret_key.is_empty()) {
@@ -891,6 +975,137 @@ mod tests {
             created_at: Utc::now(),
             last_verified_at: Some(Utc::now()),
         }
+    }
+
+    fn repo(name: &str, path: &str) -> Destination {
+        destination(name, DestinationKind::LocalRepository { path: PathBuf::from(path) })
+    }
+
+    // -- chained destinations -----------------------------------------------
+    //
+    // These mirror `config::validate_replication`. The core check is the
+    // authority; these exist so the message lands next to the picker. If one
+    // of these ever passes while the core rejects the same config, the form is
+    // letting a user save something the daemon will refuse.
+
+    #[test]
+    fn a_destination_cannot_be_copied_from_itself() {
+        let mut d = repo("Offsite", "/backups/offsite");
+        d.replicate_from = Some(d.id);
+        let report = validate_destination(&d, &[], &[]);
+        assert_eq!(report.for_field(Field::ReplicateFrom), Some(copy::valid::REPLICA_SELF));
+    }
+
+    #[test]
+    fn a_mirror_cannot_be_a_replica() {
+        // A mirror holds plain files. There are no repository blobs for
+        // `sync-to` to copy, so this is not a preference — it cannot work.
+        let source = repo("Local", "/backups/local");
+        let mut mirror =
+            destination("Copy", DestinationKind::LocalMirror { path: PathBuf::from("/mnt/copy") });
+        mirror.replicate_from = Some(source.id);
+        let report = validate_destination(&mirror, &[source], &[]);
+        assert_eq!(
+            report.for_field(Field::ReplicateFrom),
+            Some(copy::valid::REPLICA_NOT_REPOSITORY)
+        );
+    }
+
+    #[test]
+    fn a_replica_of_a_mirror_is_rejected() {
+        let mirror =
+            destination("Mirror", DestinationKind::LocalMirror { path: PathBuf::from("/mnt/m") });
+        let mut replica = repo("Offsite", "/backups/offsite");
+        replica.replicate_from = Some(mirror.id);
+        let report = validate_destination(&replica, &[mirror], &[]);
+        assert!(
+            report.for_field(Field::ReplicateFrom).is_some_and(|m| m.contains("folder mirror")),
+            "a mirror is not a repository and cannot be a source"
+        );
+    }
+
+    #[test]
+    fn a_replica_whose_source_is_gone_says_so() {
+        let mut replica = repo("Offsite", "/backups/offsite");
+        replica.replicate_from = Some(Uuid::new_v4());
+        let report = validate_destination(&replica, &[], &[]);
+        assert!(report.for_field(Field::ReplicateFrom).is_some_and(|m| m.contains("no longer")));
+    }
+
+    #[test]
+    fn a_two_step_loop_is_rejected() {
+        // a <- b and b <- a. Neither can go first.
+        let mut a = repo("A", "/backups/a");
+        let mut b = repo("B", "/backups/b");
+        a.replicate_from = Some(b.id);
+        b.replicate_from = Some(a.id);
+        let report = validate_destination(&a, &[b], &[]);
+        assert!(
+            report.for_field(Field::ReplicateFrom).is_some_and(|m| m.contains("loop")),
+            "a cycle must be caught in the form, not only by the daemon"
+        );
+    }
+
+    #[test]
+    fn a_longer_loop_is_rejected_too() {
+        let mut a = repo("A", "/backups/a");
+        let mut b = repo("B", "/backups/b");
+        let mut c = repo("C", "/backups/c");
+        a.replicate_from = Some(c.id);
+        b.replicate_from = Some(a.id);
+        c.replicate_from = Some(b.id);
+        let report = validate_destination(&a, &[b, c], &[]);
+        assert!(report.for_field(Field::ReplicateFrom).is_some_and(|m| m.contains("loop")));
+    }
+
+    #[test]
+    fn a_valid_chain_is_accepted() {
+        let source = repo("OneDrive", "/onedrive/backup");
+        let mut replica = repo("StorJ", "/backups/storj");
+        replica.replicate_from = Some(source.id);
+        let report = validate_destination(&replica, &[source], &[]);
+        assert_eq!(
+            report.for_field(Field::ReplicateFrom),
+            None,
+            "a plain two-destination chain is the whole point of the feature"
+        );
+    }
+
+    #[test]
+    fn a_job_must_back_up_the_destination_its_replica_copies() {
+        // The failure this prevents: the offsite copy replicates whatever the
+        // source held from some earlier run, and reports a fresh success.
+        let source = repo("OneDrive", "/onedrive/backup");
+        let mut replica = repo("StorJ", "/backups/storj");
+        replica.replicate_from = Some(source.id);
+
+        let only_replica = job("Nightly", vec![replica.id]);
+        let report =
+            validate_job(&only_replica, &[], std::slice::from_ref(&replica).to_vec().as_slice());
+        // The source is not even in the destination list here, so the message
+        // has to be produced from the id alone rather than a name.
+        assert!(
+            report.for_field(Field::Destinations).is_some(),
+            "a replica alone in a job cannot be made from a fresh source"
+        );
+
+        let both = job("Nightly", vec![source.id, replica.id]);
+        let report = validate_job(&both, &[], &[source, replica]);
+        assert_eq!(
+            report.for_field(Field::Destinations),
+            None,
+            "with both present the chain is exactly what was asked for"
+        );
+    }
+
+    #[test]
+    fn a_job_of_ordinary_destinations_is_unaffected() {
+        // The chain check must not invent problems for the common case.
+        let a = repo("Local", "/backups/local");
+        let b = repo("Offsite", "/backups/offsite");
+        let j = job("Nightly", vec![a.id, b.id]);
+        let report = validate_job(&j, &[], &[a, b]);
+        assert_eq!(report.for_field(Field::Destinations), None);
     }
 
     fn job(name: &str, destinations: Vec<Uuid>) -> Job {

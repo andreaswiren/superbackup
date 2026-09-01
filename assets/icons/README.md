@@ -22,8 +22,9 @@ because the copy is not a separate thing you have to remember — it is part of
 the same object. And the copy sits down-right of the original: it has left the
 machine.
 
-The step in the cut is the increment. The direction of the slide is the
-direction the tray pip already lives in.
+The step in the cut is the increment. The direction of the slide is the corner
+the tray badge sits in — the tray mark is this mark, with a status glyph in a
+well knocked out of the corner the copy slides towards.
 
 It also, unavoidably and usefully, reads as an **S**. That was not the starting
 point — it fell out of the point symmetry — but a mark that is simultaneously
@@ -187,8 +188,9 @@ python tools/icons/build.py       # from the repository root
 ```
 
 That writes the four SVG masters, all ten PNGs, the `.ico`, the `.icns`, both
-`preview.html` pages, the contact sheets — **and** the 53 tray SVGs in
-`../tray/`, because both families come out of the same file. It then prints the
+`preview.html` pages, the contact sheets — **and** the 48 tray SVGs in
+`../tray/`, because both families come out of the same file: the tray mark *is*
+this mark, with a status badge on it. It then prints the
 measured contrast table.
 
 `python tools/icons/build.py --contrast` prints the table alone.

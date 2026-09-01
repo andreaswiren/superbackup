@@ -116,6 +116,18 @@ impl Data {
             .unwrap_or_else(|| format!("Destination {}", format::short_uuid(id)))
     }
 
+    pub fn machine_hostname(&self) -> &str {
+        self.snapshot.as_ref().map(|s| s.machine_hostname.as_str()).unwrap_or_default()
+    }
+
+    pub fn provider_name(&self, id: &Uuid) -> String {
+        self.providers
+            .iter()
+            .find(|p| &p.id == id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("Provider {}", format::short_uuid(id)))
+    }
+
     pub fn job_name(&self, id: &Uuid) -> String {
         self.job(id)
             .map(|j| j.name.clone())
@@ -517,6 +529,7 @@ mod tests {
             health,
             version: "0.1.0".into(),
             machine_label: "ANDREAS-PC".into(),
+            machine_hostname: "ANDREAS-PC".into(),
             machine_slug: "andreas-pc".into(),
             unlocked,
             paused,

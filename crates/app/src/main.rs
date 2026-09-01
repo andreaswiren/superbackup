@@ -31,6 +31,7 @@
 // tray is launched from Explorer or at login. The alternative cost was a silent
 // CLI in every terminal, which is far worse.
 
+mod build;
 mod cli;
 mod daemon;
 mod gui;
@@ -90,7 +91,29 @@ fn main() -> ExitCode {
 
     match parsed.command {
         // No subcommand: the tray, the scheduler and the IPC server, together.
-        None => daemon::run_foreground(paths, &global, daemon::Surface::Tray),
+        //
+        // Except on a first run. The daemon refuses to start without a vault,
+        // and a vault needs a passphrase only a human can supply — so before
+        // this, double-clicking the executable on a fresh machine printed
+        // "run `superbackup init`" to a console that had already been detached
+        // and exited. No window, no tray icon, no message: the primary way the
+        // application is launched did nothing at all. So a first run opens the
+        // setup window instead, and the tray starts once it has a vault.
+        None => {
+            if superbackup_core::config::is_initialised(&paths) {
+                daemon::run_foreground(paths, &global, daemon::Surface::Tray)
+            } else {
+                #[cfg(windows)]
+                detach_console();
+                let code = gui::open_or_focus(paths.clone(), &global);
+                // Setup may have been abandoned; only go on if it finished.
+                if code == ExitCode::SUCCESS && superbackup_core::config::is_initialised(&paths) {
+                    daemon::run_foreground(paths, &global, daemon::Surface::Tray)
+                } else {
+                    code
+                }
+            }
+        }
 
         Some(cli::Command::Daemon(args)) => {
             let surface =
@@ -118,7 +141,7 @@ fn main() -> ExitCode {
         },
 
         Some(cli::Command::Version) => {
-            let info = superbackup_core::build_info();
+            let info = build::identity();
             if global.json {
                 match serde_json::to_string_pretty(&info) {
                     Ok(s) => println!("{s}"),
@@ -128,7 +151,12 @@ fn main() -> ExitCode {
                     }
                 }
             } else {
-                println!("superbackup {} ({} {})", info.version, info.target_os, info.target_arch);
+                // `build::long()`, not a second hand-rolled format of the
+                // same fields: this line is what gets pasted into a bug
+                // report, and re-deriving it here is how it came to omit the
+                // commit — leaving a build from a working tree three commits
+                // past the tag indistinguishable from the release.
+                println!("{}", build::long());
             }
             ExitCode::SUCCESS
         }

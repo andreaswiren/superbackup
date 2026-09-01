@@ -27,6 +27,57 @@ use super::daemon::MockDaemon;
 use super::fixtures;
 use super::nav::{Route, SettingsSection};
 
+/// A bucket listing for the gallery.
+///
+/// `listed` false with `credentials_ok` true is the scoped-key case: the
+/// endpoint verified the signature and then declined to enumerate buckets.
+fn sample_buckets(
+    listed: bool,
+    credentials_ok: bool,
+) -> superbackup_core::ipc::protocol::BucketsReply {
+    use superbackup_core::ipc::protocol::{BucketInfo, BucketsReply};
+    BucketsReply {
+        provider_id: fixtures::PROVIDER_STORJ,
+        buckets: if listed {
+            // `storj-backups` is the fixture destination's own bucket, so the
+            // picker reads as "this one is selected" rather than as a list
+            // that happens not to contain what the field says.
+            ["storj-backups", "dev-backups", "photos-archive", "scratch"]
+                .into_iter()
+                .map(|name| BucketInfo { name: name.into(), created_at: None })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        listed,
+        credentials_ok,
+        detail: (!listed).then(|| {
+            "The credentials were accepted, but this key is not allowed to list the buckets \
+             in this account. That is normal for a key scoped to a single bucket, and it \
+             does not mean the key is wrong."
+                .to_string()
+        }),
+        latency_ms: Some(96),
+    }
+}
+
+fn sample_objects(holds_repository: bool) -> superbackup_core::ipc::protocol::ObjectsReply {
+    use superbackup_core::ipc::protocol::{ObjectInfo, ObjectsReply};
+    ObjectsReply {
+        bucket: "dev-backups".into(),
+        prefix: "superbackup/andreas-pc/".into(),
+        keys: vec![ObjectInfo {
+            key: "superbackup/andreas-pc/kopia.repository".into(),
+            size: 661,
+            last_modified: None,
+        }],
+        truncated: false,
+        holds_repository,
+        listed: true,
+        detail: None,
+    }
+}
+
 /// One image in the gallery.
 pub struct Shot {
     pub name: &'static str,
@@ -34,6 +85,14 @@ pub struct Shot {
     pub dark: bool,
     /// Put the window into the state this shot is about.
     pub setup: fn(&mut App),
+    /// Applied again *after* the first frame.
+    ///
+    /// Editors load their draft from `Data` on their first frame and reset
+    /// their per-screen flags while doing it, so anything `setup` sets that an
+    /// editor owns is wiped before it is ever drawn. This hook runs on the far
+    /// side of that, which is the only place a "the panel is open" or "the
+    /// list is expanded" state can be established for a screenshot.
+    pub refine: Option<fn(&mut App)>,
 }
 
 /// The screens the review looks at, in the order it looks at them.
@@ -43,18 +102,21 @@ pub fn gallery() -> Vec<Shot> {
             name: "01-dashboard-dark",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Dashboard),
         },
         Shot {
             name: "02-dashboard-light",
             size: [1100.0, 720.0],
             dark: false,
+            refine: None,
             setup: |app| app.go(Route::Dashboard),
         },
         Shot {
             name: "03-dashboard-locked",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 if let Some(s) = &mut app.data.snapshot {
                     s.unlocked = false;
@@ -68,18 +130,21 @@ pub fn gallery() -> Vec<Shot> {
             name: "04-dashboard-900",
             size: [900.0, 600.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Dashboard),
         },
         Shot {
             name: "05-jobs",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Jobs),
         },
         Shot {
             name: "06-job-editor-destinations",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.job_editor.open_tab(1);
                 app.go(Route::JobEditor(fixtures::JOB_DEV));
@@ -89,6 +154,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "07-job-editor-exclusions",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.job_editor.open_tab(3);
                 app.go(Route::JobEditor(fixtures::JOB_DEV));
@@ -98,6 +164,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "08-job-editor-schedule",
             size: [1100.0, 720.0],
             dark: false,
+            refine: None,
             setup: |app| {
                 app.screens.job_editor.open_tab(2);
                 app.go(Route::JobEditor(fixtures::JOB_DEV));
@@ -107,45 +174,118 @@ pub fn gallery() -> Vec<Shot> {
             name: "09-destinations",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Destinations),
         },
         Shot {
             name: "10-destination-editor-s3",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::DestinationEditor(fixtures::DEST_S3)),
         },
         Shot {
             name: "11-destination-editor-mirror",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::DestinationEditor(fixtures::DEST_MIRROR)),
         },
         Shot {
             name: "12-encryption-panel",
             size: [1100.0, 720.0],
             dark: true,
-            setup: |app| {
-                app.go(Route::NewDestination);
-                app.screens.destination_editor.encryption_open = true;
-            },
+            setup: |app| app.go(Route::NewDestination),
+            // `load` clears `encryption_open` on the editor's first frame, so
+            // setting it before that frame set it on a draft that was then
+            // thrown away — this shot has been of a *closed* panel.
+            refine: Some(|app| app.screens.destination_editor.encryption_open = true),
         },
         Shot {
             name: "13-providers",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Providers),
         },
         Shot {
             name: "14-provider-editor",
             size: [1100.0, 720.0],
             dark: false,
+            refine: None,
             setup: |app| app.go(Route::ProviderEditor(fixtures::PROVIDER_STORJ)),
+        },
+        Shot {
+            name: "14b-provider-editor-tested",
+            // Tall on purpose: the panel this shot is about sits below the
+            // fold of a 720-pixel window, and a review screenshot that shows
+            // only the top of the form reviews nothing.
+            size: [1100.0, 1800.0],
+            dark: true,
+            setup: |app| app.go(Route::ProviderEditor(fixtures::PROVIDER_STORJ)),
+            // After the editor has loaded its draft, or the load resets it.
+            refine: Some(|app| {
+                // The outcome the whole feature exists to produce: the
+                // credentials were accepted, and here is what they can see.
+                app.screens
+                    .provider_editor
+                    .probe(fixtures::PROVIDER_STORJ, &sample_buckets(true, true));
+            }),
+        },
+        Shot {
+            name: "14c-provider-editor-scoped-key",
+            // Tall on purpose: the panel this shot is about sits below the
+            // fold of a 720-pixel window, and a review screenshot that shows
+            // only the top of the form reviews nothing.
+            size: [1100.0, 1800.0],
+            dark: true,
+            setup: |app| app.go(Route::ProviderEditor(fixtures::PROVIDER_STORJ)),
+            refine: Some(|app| {
+                // The case that must not read as a failure: a key that is
+                // correct and simply may not enumerate buckets.
+                app.screens
+                    .provider_editor
+                    .probe(fixtures::PROVIDER_STORJ, &sample_buckets(false, true));
+            }),
+        },
+        Shot {
+            name: "10b-destination-editor-bucket-picker",
+            // Tall on purpose: the panel this shot is about sits below the
+            // fold of a 720-pixel window, and a review screenshot that shows
+            // only the top of the form reviews nothing.
+            size: [1100.0, 1800.0],
+            dark: true,
+            setup: |app| app.go(Route::DestinationEditor(fixtures::DEST_S3)),
+            refine: Some(|app| {
+                app.screens
+                    .destination_editor
+                    .buckets_arrived(fixtures::PROVIDER_STORJ, &sample_buckets(true, true));
+                app.screens
+                    .destination_editor
+                    .objects_arrived(fixtures::PROVIDER_STORJ, &sample_objects(true));
+            }),
+        },
+        Shot {
+            name: "10c-destination-editor-bucket-typing",
+            // Tall on purpose: the panel this shot is about sits below the
+            // fold of a 720-pixel window, and a review screenshot that shows
+            // only the top of the form reviews nothing.
+            size: [1100.0, 1800.0],
+            dark: true,
+            setup: |app| app.go(Route::DestinationEditor(fixtures::DEST_S3)),
+            // Listing unavailable — offline, or a scoped key. Typing must
+            // still be fully available, and nothing may be blocked.
+            refine: Some(|app| {
+                app.screens
+                    .destination_editor
+                    .buckets_arrived(fixtures::PROVIDER_STORJ, &sample_buckets(false, true));
+            }),
         },
         Shot {
             name: "15-activity",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.activity.range = super::viewmodel::TimeRange::All;
                 app.go(Route::Activity);
@@ -155,6 +295,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "16-run-detail-partial-failure",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.run_detail.expanded_details = Some(fixtures::DEST_S3);
                 app.go(Route::RunDetail(fixtures::RUN_PARTIAL));
@@ -164,6 +305,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "17-restore",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.restore.select(fixtures::DEST_LOCAL);
                 app.screens.restore.snapshots_arrived(fixtures::DEST_LOCAL, sample_snapshots());
@@ -174,6 +316,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "18-restore-browser",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.restore.select(fixtures::DEST_LOCAL);
                 app.screens.restore.snapshots_arrived(fixtures::DEST_LOCAL, sample_snapshots());
@@ -192,6 +335,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "19-restore-locked",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 if let Some(s) = &mut app.data.snapshot {
                     s.unlocked = false;
@@ -203,18 +347,21 @@ pub fn gallery() -> Vec<Shot> {
             name: "20-settings-general",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Settings(SettingsSection::General)),
         },
         Shot {
             name: "21-settings-security",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Settings(SettingsSection::Security)),
         },
         Shot {
             name: "22-settings-bandwidth",
             size: [1100.0, 720.0],
             dark: false,
+            refine: None,
             setup: |app| {
                 app.data.settings.bandwidth.upload_kbps = Some(2000);
                 app.data.settings.bandwidth.schedule =
@@ -232,12 +379,14 @@ pub fn gallery() -> Vec<Shot> {
             name: "23-about",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::About),
         },
         Shot {
             name: "24-unlock-modal",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 if let Some(s) = &mut app.data.snapshot {
                     s.unlocked = false;
@@ -252,6 +401,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "25-wizard-template",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.go(Route::Jobs);
                 let wizard = super::screens::wizard::WizardState::new(&app.data);
@@ -262,6 +412,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "26-write-it-down",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.go(Route::Destinations);
                 app.open_modal(super::modals::Modal::WriteDown(super::modals::WriteDownState {
@@ -277,6 +428,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "27-remove-destination-confirm",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.go(Route::Destinations);
                 let confirm =
@@ -288,6 +440,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "28-onboarding-passphrase",
             size: [880.0, 640.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.begin_onboarding();
                 app.onboarding_goto(super::validation::OnboardingStep::Passphrase);
@@ -301,6 +454,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "29-onboarding-no-recovery",
             size: [880.0, 640.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.begin_onboarding();
                 app.onboarding_goto(super::validation::OnboardingStep::NoRecovery);
@@ -313,6 +467,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "30-onboarding-welcome",
             size: [880.0, 640.0],
             dark: false,
+            refine: None,
             setup: |app| {
                 app.begin_onboarding();
                 app.onboarding_goto(super::validation::OnboardingStep::Welcome);
@@ -322,6 +477,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "31-empty-dashboard",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.data.jobs.clear();
                 if let Some(s) = &mut app.data.snapshot {
@@ -335,6 +491,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "33-settings-kopia",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.settings.kopia_probe = Some(sample_kopia_probe());
                 app.go(Route::Settings(SettingsSection::Kopia));
@@ -344,6 +501,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "34-settings-kopia-light",
             size: [1100.0, 720.0],
             dark: false,
+            refine: None,
             setup: |app| {
                 app.screens.settings.kopia_probe = Some(sample_kopia_probe());
                 app.go(Route::Settings(SettingsSection::Kopia));
@@ -353,6 +511,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "35-job-preview",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 let run = sample_preview_run();
                 let run_id = run.run_id;
@@ -366,6 +525,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "36-export-encryption-keys",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.go(Route::Settings(SettingsSection::Security));
                 app.open_modal(super::modals::Modal::ExportKeys(
@@ -377,6 +537,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "37-export-encryption-keys-ready",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.go(Route::Settings(SettingsSection::Security));
                 let mut state = super::modals::ExportKeysState::default();
@@ -390,6 +551,7 @@ pub fn gallery() -> Vec<Shot> {
             // is about sits below the folder and validation sections.
             size: [1100.0, 1500.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.screens.destination_editor.key_check = Some((
                     fixtures::DEST_LOCAL,
@@ -402,6 +564,7 @@ pub fn gallery() -> Vec<Shot> {
             name: "32-daemon-unreachable",
             size: [1100.0, 720.0],
             dark: true,
+            refine: None,
             setup: |app| {
                 app.data.link_up = false;
                 if let Some(s) = &mut app.data.snapshot {
@@ -657,6 +820,7 @@ pub fn capture(shot: &Shot) -> image::RgbaImage {
     };
     app.preview_mode();
     (shot.setup)(&mut app);
+    let mut refined = shot.refine.is_none();
 
     let pixels_per_point = 2.0;
     let width = (shot.size[0] * pixels_per_point) as usize;
@@ -686,6 +850,12 @@ pub fn capture(shot: &Shot) -> image::RgbaImage {
         let frame = ctx.run(input, |ctx| app.frame(ctx));
         canvas.textures.apply(&frame.textures_delta);
         output = Some(frame);
+        if !refined {
+            if let Some(refine) = shot.refine {
+                refine(&mut app);
+            }
+            refined = true;
+        }
     }
 
     let output = output.expect("at least one frame was run");
@@ -941,6 +1111,7 @@ mod tests {
             name: "test",
             size: [900.0, 600.0],
             dark: true,
+            refine: None,
             setup: |app| app.go(Route::Dashboard),
         };
         let image = capture(&shot);

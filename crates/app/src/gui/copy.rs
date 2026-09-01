@@ -110,6 +110,11 @@ pub fn trigger(t: superbackup_core::state::Trigger) -> &'static str {
 // ---------------------------------------------------------------------------
 
 pub mod onboarding {
+    pub const VAULT_NO_PATHS: &str =
+        "This window does not know where to store the vault, so setup cannot be completed here.          Run `superbackup init` in a terminal instead.";
+    pub const VAULT_ALREADY: &str =
+        "A vault already exists. Another window or a terminal created one while this was open —          close this and open superbackup again to unlock it.";
+
     pub const WELCOME_TITLE: &str = "Welcome to superbackup";
     pub const WELCOME_BODY: &str =
         "Set up encrypted, scheduled backups of the folders you work in. This takes about two minutes.";
@@ -352,11 +357,16 @@ pub mod empty {
         primary: Some("Clear filters"),
         secondary: None,
     };
+    /// Deliberately carries **no** action button.
+    ///
+    /// Both places that show it — the new-job wizard and the job editor —
+    /// already have an "Add folder…" button directly beneath the list, so an
+    /// identical button inside the empty state gave the user the same choice
+    /// twice, one of which vanished as soon as a folder was added.
     pub const SOURCES: Empty = Empty {
-        title: "No folders yet",
-        body:
-            "Add the folders this job should back up. You can drop folders onto the window as well.",
-        primary: Some("Add folder…"),
+        title: "No folders added yet",
+        body: "Add folders below, or drag and drop them onto this window.",
+        primary: None,
         secondary: None,
     };
     pub const DESTINATIONS: Empty = Empty {
@@ -664,7 +674,25 @@ pub mod job {
 
     pub const SCHEDULE_MANUAL: &str = "Manual only";
     pub const SCHEDULE_MANUAL_BODY: &str = "Runs when you ask, or when the command line asks.";
-    pub const SCHEDULE_INTERVAL: &str = "Every so often";
+    /// "Every so often" said nothing about how often, which is the only thing
+    /// the option is choosing. The interval field beside it supplies the number.
+    pub const SCHEDULE_INTERVAL: &str = "Every hour";
+    /// Shown on hover, so the summary line can stay short.
+    pub const SCHEDULE_MANUAL_TIP: &str =
+        "Nothing runs on its own. Use \"Back up now\", or `superbackup run <job>`.";
+    pub const SCHEDULE_INTERVAL_TIP: &str =
+        "Repeats on a fixed clock from when superbackup started, regardless of the time of day.          Set the interval beside it — hourly is the default.";
+    pub const SCHEDULE_DAILY_TIP: &str =
+        "Runs at the times you list, every day, in this machine's local time. Handles daylight          saving in both directions.";
+    pub const SCHEDULE_WEEKLY_TIP: &str =
+        "Runs at the times you list, but only on the weekdays you tick.";
+    pub const SCHEDULE_WORKHOURS_TIP: &str =
+        "Hourly between 08:00 and 17:00, Monday to Friday. Nothing runs overnight or at the          weekend, so a large job cannot tie up the machine while you are away.";
+    pub const SCHEDULE_CRON_TIP: &str =
+        "A five-field cron expression, evaluated in local time. Use this when the other options          cannot express what you need.";
+    pub const SCHEDULE_ONCHANGE_TIP: &str =
+        "Watches the folders and runs once they have been quiet for the waiting period. Files          matched by your exclusions never wake it.";
+    pub const SCHEDULE_WORKHOURS: &str = "During work hours";
     pub const SCHEDULE_INTERVAL_UNIT: &str = "minutes";
     pub const SCHEDULE_INTERVAL_WARN: &str =
         "Running more often than every 15 minutes keeps the disk busy on large folders.";
@@ -697,6 +725,19 @@ pub mod job {
     pub const EXCL_SELECT_DEFAULTS: &str = "Select developer defaults";
     pub const EXCL_CLEAR_ALL: &str = "Clear all";
     pub const EXCL_RISKY: &str = "Excluding this can lose work that exists nowhere else.";
+    pub const EXCL_TOTAL_TITLE: &str = "Everything this job will skip";
+    pub const EXCL_TOTAL_BODY: &str =
+        "The complete list, from the presets above plus any patterns you added. Anything not          matched here is backed up.";
+    pub const EXCL_TOTAL_EMPTY: &str =
+        "Nothing is excluded. Every file under your chosen folders will be backed up.";
+    /// Shown under the total, so the count is not mistaken for a file count.
+    pub fn excl_total_count(patterns: usize) -> String {
+        if patterns == 1 {
+            "1 pattern".to_string()
+        } else {
+            format!("{patterns} patterns")
+        }
+    }
     pub const EXCL_GITIGNORE: &str = "Use .gitignore files found in the folders";
     pub const EXCL_GITIGNORE_BODY: &str = "Honours each repository's own ignore rules. Slower on very large trees, because every directory is checked.";
     pub const EXCL_CACHEDIR: &str = "Skip folders tagged with CACHEDIR.TAG";
@@ -847,6 +888,22 @@ pub mod dest {
     pub const S3_PROVIDER_EDIT: &str = "Edit provider";
     pub const S3_BUCKET: &str = "Bucket";
     pub const S3_LIST_BUCKETS: &str = "List buckets";
+    pub const S3_BUCKET_HELPER: &str = "Type the name, or list what this provider can see.";
+    pub const S3_BUCKET_CHOOSE: &str = "Choose a bucket";
+    pub const S3_BUCKET_TYPE: &str = "Type a name instead";
+    pub const S3_BUCKET_LISTING: &str = "Asking the provider…";
+    pub const S3_BUCKET_RETRY: &str = "Try again";
+    pub const S3_BUCKET_LOCKED: &str =
+        "Unlock the vault to list this provider's buckets. You can type the name meanwhile.";
+    pub const S3_BUCKET_UNSAVED: &str =
+        "Save the provider first to list its buckets. You can type the name meanwhile.";
+    pub const S3_PREFIX_UNKNOWN: &str = "What is already stored here could not be checked.";
+    pub const S3_ADMIN_OPEN: &str = "Administration panel";
+    pub const S3_PREFIX_CHECK: &str = "Check this prefix";
+    pub const S3_PREFIX_HAS_REPO: &str = "A repository already exists at this prefix. Adding a destination here will connect to it rather than create a new one.";
+    pub const S3_PREFIX_EMPTY: &str = "Nothing is stored at this prefix yet.";
+    pub const S3_PREFIX_OCCUPIED: &str =
+        "This prefix already holds other objects, but no repository.";
     pub const S3_PREFIX: &str = "Key prefix";
     pub const S3_PREFIX_BODY: &str = "The default contains this machine's folder name, which is what keeps several computers and several jobs apart inside one bucket.";
     pub const S3_CREDS: &str = "Credentials for this bucket";
@@ -922,6 +979,61 @@ pub fn dest_delete_also_files(path: &str) -> String {
 }
 pub fn confirm_type_name(name: &str) -> String {
     format!("Type {name} to confirm")
+}
+
+/// Chained destinations: filling one destination from another rather than
+/// from the sources a second time.
+///
+/// The whole difficulty of this feature is a single fact that the interface
+/// has to say out loud, because guessing wrong about it loses data: a replica
+/// **is the same repository as its source**, with the same encryption key and
+/// the same passphrase. `kopia repository sync-to` copies the format blob, so
+/// there is no version of this where the offsite copy has a key of its own.
+/// Someone who believes otherwise will store one passphrase, lose the other,
+/// and discover at restore time that their "independent" second copy was never
+/// independent.
+pub mod chain {
+    pub const TITLE: &str = "Where this destination gets its data";
+
+    pub const FROM_SOURCES: &str = "From the job's folders";
+    pub const FROM_SOURCES_HELP: &str =
+        "Read the folders, then pack and encrypt them into this repository.";
+
+    pub const FROM_DESTINATION: &str = "Copied from another destination";
+    pub const FROM_DESTINATION_HELP: &str =
+        "Copy an existing repository here block for block. The folders are read once, by the          first destination, instead of once per destination — which is what makes a slow          offsite upload cheap.";
+
+    pub const PICK_LABEL: &str = "Copy from";
+    pub const PICK_PLACEHOLDER: &str = "Choose a destination…";
+    pub const PICK_EMPTY: &str =
+        "There is no other repository destination to copy from yet. Add one first — a local          folder or OneDrive is the usual choice — and it can then feed this one.";
+
+    /// The one thing a user must not misunderstand.
+    pub const SHARED_KEY_TITLE: &str = "This copy shares the source's encryption key";
+    pub const SHARED_KEY_BODY: &str =
+        "A copy is the same repository in a second place, not a second repository. It is opened          with the source's passphrase, and it has no separate key of its own. Keep that one          passphrase safe and both copies stay readable; lose it and neither can be restored.";
+
+    /// Shown in place of the encryption panel.
+    pub const ENCRYPTION_INHERITED: &str = "Encryption is inherited from the source";
+    pub const ENCRYPTION_INHERITED_BODY: &str =
+        "Algorithm, hash, block splitting and passphrase all come from the source destination.          There is nothing to choose here, and nothing separate to write down.";
+
+    /// Shown in place of "Create repository".
+    pub const NO_CREATE: &str = "Nothing to create here";
+    pub const NO_CREATE_BODY: &str =
+        "The first copy creates this repository as part of the job. Creating one here first          would make a different, empty repository that the copy would then refuse to write over.";
+
+    pub const NEEDS_SOURCE_IN_JOB: &str = "Also back up the source";
+    pub const CHAIN_BADGE: &str = "Copy";
+
+    /// How the chain reads on the job editor and the run detail.
+    pub fn chain_line(source: &str) -> String {
+        format!("Copied from {source} after it finishes")
+    }
+
+    pub fn source_missing(id: &str) -> String {
+        format!("The destination this one copies from ({id}) no longer exists")
+    }
 }
 
 pub mod enc {
@@ -1027,6 +1139,12 @@ pub mod prov {
     pub const PATH_STYLE_BODY: &str =
         "Required by MinIO and some gateways. StorJ and Amazon S3 accept the default.";
 
+    pub const ADMIN_URL: &str = "Administration panel";
+    pub const ADMIN_URL_BODY: &str = "Optional. Where you log in to manage this account and rotate its keys — a note to yourself, nothing connects to it.";
+    pub const ADMIN_URL_PLACEHOLDER: &str = "https://storj.io/login";
+    pub const ADMIN_URL_OPEN: &str = "Open";
+    pub const ADMIN_URL_INVALID: &str = "Only http:// and https:// addresses are allowed here.";
+
     pub const CREDS_TITLE: &str = "Credentials";
     pub const ACCESS_KEY: &str = "Access key ID";
     pub const SECRET_KEY: &str = "Secret access key";
@@ -1050,6 +1168,9 @@ pub mod prov {
     pub const TEST_LISTING: &str = "Listing buckets";
     pub const TEST_OK_NONE: &str = "Connected. This account has no buckets yet.";
     pub const TEST_SHOW_BUCKETS: &str = "Show buckets";
+    pub const TEST_HIDE_BUCKETS: &str = "Hide buckets";
+    pub const TEST_RUNNING: &str = "Checking the credentials against the endpoint…";
+    pub const TEST_DENIED_HINT: &str = "Type the bucket name when you add a destination.";
 
     pub const ERR_DNS: &str = "That endpoint could not be found. Check the address for a typo.";
     pub const ERR_TLS_ACTION: &str = "Turn off TLS";
@@ -1096,7 +1217,11 @@ pub fn prov_path_style_from_flavour(flavour: &str) -> String {
     format!("Set automatically for {flavour}.")
 }
 pub fn prov_test_ok(count: usize) -> String {
-    format!("Connected. Found {count} buckets.")
+    match count {
+        0 => prov::TEST_OK_NONE.to_string(),
+        1 => "Connected. Found 1 bucket.".to_string(),
+        n => format!("Connected. Found {n} buckets."),
+    }
 }
 pub fn prov_test_more_buckets(count: usize) -> String {
     format!("and {count} more")
@@ -1852,8 +1977,11 @@ pub mod about {
 pub fn about_version(version: &str) -> String {
     format!("superbackup {version}")
 }
-pub fn about_build(os: &str, arch: &str, date: &str) -> String {
-    format!("{os}-{arch} · built {date}")
+pub fn about_daemon_build(build: &str) -> String {
+    format!("background service is running {build}")
+}
+pub fn about_build(os: &str, arch: &str) -> String {
+    format!("{os}-{arch}")
 }
 
 // ---------------------------------------------------------------------------
@@ -1948,6 +2076,13 @@ pub mod valid {
         "Choose between 0 and 1,000. Zero means maintenance never runs on a schedule.";
     pub const DEST_NAME_EMPTY: &str = "Give the destination a name.";
     pub const DEST_PATH_RELATIVE: &str = "Use a full path.";
+
+    // -- chained destinations -----------------------------------------------
+    pub const REPLICA_SELF: &str = "A destination cannot be copied from itself.";
+    pub const REPLICA_NOT_REPOSITORY: &str =
+        "A folder mirror holds plain files rather than repository blocks, so it cannot be a copy          of a repository. Choose a repository destination, or turn this back to reading the          job's folders.";
+    pub const REPLICA_TOO_DEEP: &str =
+        "This chain is too long. Copy from a destination nearer the start of it.";
     pub const BUCKET: &str =
         "Bucket names are 3 to 63 characters, using lowercase letters, digits, dots and hyphens.";
     pub const BUCKET_IP: &str = "A bucket name cannot look like an IP address.";
@@ -1979,6 +2114,21 @@ pub fn valid_job_name_dup(name: &str) -> String {
 }
 pub fn valid_dest_name_dup(name: &str) -> String {
     format!("There is already a destination called {name}.")
+}
+pub fn valid_replica_source_mirror(name: &str) -> String {
+    format!(
+        "{name} is a folder mirror, which holds plain files rather than a repository. Only a          repository destination can be copied from."
+    )
+}
+pub fn valid_replica_cycle(name: &str) -> String {
+    format!(
+        "That would form a loop: {name} is already fed, directly or indirectly, by this          destination. One of them has to go first."
+    )
+}
+pub fn valid_replica_source_absent(replica: &str, source: &str) -> String {
+    format!(
+        "{replica} is copied from {source}, which this job does not back up. Add {source} to          this job as well — otherwise the copy would be made from whatever this run did not          update, and still report success."
+    )
 }
 pub fn valid_provider_name_dup(name: &str) -> String {
     format!("There is already a provider called {name}.")
@@ -2056,6 +2206,12 @@ pub mod toast {
     pub const JOBS_ENABLED_ALL: &str = "Jobs re-enabled";
 }
 
+pub fn toast_chain_source_added(name: &str) -> String {
+    format!("{name} was added too — the copy is made from it, so it has to run in the same job.")
+}
+pub fn onboarding_vault_failed(detail: &str) -> String {
+    format!("The vault could not be created: {detail}")
+}
 pub fn toast_created(name: &str) -> String {
     format!("{name} created")
 }
@@ -2188,6 +2344,23 @@ pub fn a11y_toast(title: &str, body: &str) -> String {
 }
 pub fn a11y_breadcrumb(path: &str, items: usize) -> String {
     format!("Location: {path}, {items} items")
+}
+
+/// Outcome of testing a storage provider, shown wherever the user pressed it.
+pub fn toast_provider_reachable(name: &str, detail: &str) -> String {
+    if detail.is_empty() {
+        format!("{name} answered.")
+    } else {
+        format!("{name} answered. {detail}")
+    }
+}
+
+pub fn toast_provider_unreachable(name: &str, detail: &str) -> String {
+    if detail.is_empty() {
+        format!("{name} could not be reached.")
+    } else {
+        format!("{name} could not be reached. {detail}")
+    }
 }
 
 #[cfg(test)]

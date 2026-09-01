@@ -25,6 +25,14 @@ use crate::gui::widgets::{self, Button};
 pub enum ProbeState {
     Running,
     Ok,
+    /// Reachable, credentials accepted, writable — and no repository here yet.
+    ///
+    /// A pass with a note, never a failure. This row used to read
+    /// "Unreachable" for a bucket that was demonstrably reachable, because the
+    /// probe answered "can I open the repository?" rather than "can I reach
+    /// this place?". They are different questions and this is the answer to
+    /// the second one.
+    OkNoRepository(String),
     Failed(String),
 }
 
@@ -41,10 +49,10 @@ impl State {
         self.probes.insert(id, ProbeState::Running);
     }
     pub fn probe(&mut self, id: Uuid, probe: ProbeReply) {
-        let state = if probe.reachable && probe.writable {
-            ProbeState::Ok
-        } else {
-            ProbeState::Failed(modals::probe_message(&probe))
+        let state = match (probe.reachable && probe.writable, probe.repository_present) {
+            (true, Some(false)) => ProbeState::OkNoRepository(modals::probe_message(&probe)),
+            (true, _) => ProbeState::Ok,
+            (false, _) => ProbeState::Failed(modals::probe_message(&probe)),
         };
         self.probes.insert(id, state);
     }
@@ -57,9 +65,15 @@ impl State {
     pub fn probing(&self, id: Uuid) -> bool {
         matches!(self.probes.get(&id), Some(ProbeState::Running))
     }
-    pub fn probe_message(&self, id: Uuid) -> Option<&str> {
+    /// The message to show in place for `id`, and how loudly.
+    ///
+    /// `OkNoRepository` is deliberately included: the destination is fine and
+    /// the user still has one step left, which is worth saying — but as
+    /// information, not as an error.
+    pub fn probe_message(&self, id: Uuid) -> Option<(widgets::BannerKind, &str)> {
         match self.probes.get(&id) {
-            Some(ProbeState::Failed(message)) => Some(message),
+            Some(ProbeState::Failed(message)) => Some((widgets::BannerKind::Danger, message)),
+            Some(ProbeState::OkNoRepository(message)) => Some((widgets::BannerKind::Info, message)),
             _ => None,
         }
     }
@@ -155,7 +169,10 @@ impl App {
             .collect();
 
         let shown = viewmodel::fit_columns(
-            ui.available_width(),
+            // The table card insets its content, and this is measured before
+            // that frame is entered, so the budget has to lose both sides or
+            // the last column is pushed past the card edge.
+            ui.available_width() - widgets::TABLE_GUTTER,
             200.0,
             ui.spacing().item_spacing.x,
             &DESTINATION_COLUMNS,
@@ -374,12 +391,12 @@ impl App {
                 });
         });
 
-        // A failed probe explains itself in place rather than only in a toast.
+        // A probe explains itself in place rather than only in a toast.
         for destination in &rows {
-            if let Some(message) = self.screens.destinations.probe_message(destination.id) {
+            if let Some((kind, message)) = self.screens.destinations.probe_message(destination.id) {
                 ui.add_space(space::L);
                 let title = format!("{}: {}", destination.name, message);
-                widgets::banner(ui, widgets::BannerKind::Danger, &title, None, |_| {});
+                widgets::banner(ui, kind, &title, None, |_| {});
             }
         }
 

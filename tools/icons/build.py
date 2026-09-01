@@ -97,18 +97,26 @@ CONTRAST_CHECKS = [
     ("app", f"plate rim {geo.PLATE_EDGE}", "dark desktop #202020", geo.PLATE_EDGE, "#202020"),
     ("app", f"plate rim {geo.PLATE_EDGE}", f"plate {geo.PLATE}", geo.PLATE_EDGE, geo.PLATE),
     ("app", "monochrome #000000", "white", "#000000", "#FFFFFF"),
-    ("tray", "ring ink -light #22262E", "light taskbar #F3F3F3", "#22262E", "#F3F3F3"),
-    ("tray", "ring ink -dark #E8ECF2", "dark taskbar #202020", "#E8ECF2", "#202020"),
-    ("tray", "attention pip #E0A83A", "light taskbar #F3F3F3", "#E0A83A", "#F3F3F3"),
-    ("tray", "attention pip #E0A83A", "dark taskbar #202020", "#E0A83A", "#202020"),
-    ("tray", "attention pip ink #1A1206", "pip #E0A83A", "#1A1206", "#E0A83A"),
-    ("tray", "failed pip #C2313A", "light taskbar #F3F3F3", "#C2313A", "#F3F3F3"),
-    ("tray", "failed pip #C2313A", "dark taskbar #202020", "#C2313A", "#202020"),
-    ("tray", "failed pip ink #FFFFFF", "pip #C2313A", "#FFFFFF", "#C2313A"),
-    ("tray", "running base arc #3A4250", "light taskbar #F3F3F3", "#3A4250", "#F3F3F3"),
-    ("tray", "running base arc #3A4250", "dark taskbar #202020", "#3A4250", "#202020"),
-    ("tray", "running arc #5B9BFF", "light taskbar #F3F3F3", "#5B9BFF", "#F3F3F3"),
-    ("tray", "running arc #5B9BFF", "dark taskbar #202020", "#5B9BFF", "#202020"),
+    ("tray", f"mark ink -light {geo.MARK_INK['light']}", "light taskbar #F3F3F3", geo.MARK_INK["light"], "#F3F3F3"),
+    ("tray", f"mark ink -dark {geo.MARK_INK['dark']}", "dark taskbar #202020", geo.MARK_INK["dark"], "#202020"),
+    ("tray", f"idle badge -light {geo.BADGE_INK['light']['idle']}", "light taskbar #F3F3F3", geo.BADGE_INK["light"]["idle"], "#F3F3F3"),
+    ("tray", f"running badge -light {geo.BADGE_INK['light']['running']}", "light taskbar #F3F3F3", geo.BADGE_INK["light"]["running"], "#F3F3F3"),
+    ("tray", f"attention badge -light {geo.BADGE_INK['light']['attention']}", "light taskbar #F3F3F3", geo.BADGE_INK["light"]["attention"], "#F3F3F3"),
+    ("tray", f"paused badge -light {geo.BADGE_INK['light']['paused']}", "light taskbar #F3F3F3", geo.BADGE_INK["light"]["paused"], "#F3F3F3"),
+    ("tray", f"failed badge -light {geo.BADGE_INK['light']['failed']}", "light taskbar #F3F3F3", geo.BADGE_INK["light"]["failed"], "#F3F3F3"),
+    ("tray", f"idle badge -dark {geo.BADGE_INK['dark']['idle']}", "dark taskbar #202020", geo.BADGE_INK["dark"]["idle"], "#202020"),
+    ("tray", f"running badge -dark {geo.BADGE_INK['dark']['running']}", "dark taskbar #202020", geo.BADGE_INK["dark"]["running"], "#202020"),
+    ("tray", f"attention badge -dark {geo.BADGE_INK['dark']['attention']}", "dark taskbar #202020", geo.BADGE_INK["dark"]["attention"], "#202020"),
+    ("tray", f"paused badge -dark {geo.BADGE_INK['dark']['paused']}", "dark taskbar #202020", geo.BADGE_INK["dark"]["paused"], "#202020"),
+    ("tray", f"failed badge -dark {geo.BADGE_INK['dark']['failed']}", "dark taskbar #202020", geo.BADGE_INK["dark"]["failed"], "#202020"),
+    ("tray", f"idle badge -light vs its own mark ink", "never touch: see the clear space", geo.BADGE_INK["light"]["idle"], geo.MARK_INK["light"]),
+    ("tray", f"attention badge -light vs its own mark ink", "never touch: see the clear space", geo.BADGE_INK["light"]["attention"], geo.MARK_INK["light"]),
+    ("tray", f"failed badge -light vs its own mark ink", "never touch: see the clear space", geo.BADGE_INK["light"]["failed"], geo.MARK_INK["light"]),
+    ("tray", f"idle badge -dark vs its own mark ink", "never touch: see the clear space", geo.BADGE_INK["dark"]["idle"], geo.MARK_INK["dark"]),
+    ("tray", f"attention badge -dark vs its own mark ink", "never touch: see the clear space", geo.BADGE_INK["dark"]["attention"], geo.MARK_INK["dark"]),
+    ("tray", f"failed badge -dark vs its own mark ink", "never touch: see the clear space", geo.BADGE_INK["dark"]["failed"], geo.MARK_INK["dark"]),
+    ("tray", "template #000000", "light menu bar #F3F3F3", "#000000", "#F3F3F3"),
+    ("tray", "template inverted #FFFFFF", "dark menu bar #202020", "#FFFFFF", "#202020"),
 ]
 
 
@@ -425,7 +433,7 @@ file with <code>python tools/icons/build.py</code>.</p>
 __SECTIONS__
 """
         .replace("__SECTIONS__", _preview_sections(large, small, mono)),
-        encoding="utf-8",
+        encoding="utf-8", newline="\n",
     )
 
 
@@ -531,7 +539,7 @@ state that has quietly started depending on colour.</p>
 __SECTIONS__
 """
         .replace("__SECTIONS__", "\n".join(sections)),
-        encoding="utf-8",
+        encoding="utf-8", newline="\n",
     )
 
 
@@ -561,7 +569,7 @@ def build() -> None:
             "superbackup-mono.svg": geo.app_svg(512, geo.MONO_PROFILE, plate=False, mono=True),
         }
         for name, svg in masters.items():
-            (ICONS / name).write_text(svg + "\n", encoding="utf-8")
+            (ICONS / name).write_text(svg + "\n", encoding="utf-8", newline="\n")
 
         tray_written: list[str] = []
         for variant in geo.TRAY_VARIANTS:
@@ -570,26 +578,24 @@ def build() -> None:
                     for frame in range(geo.RUNNING_FRAMES):
                         stem = geo.tray_stem(state, variant, frame)
                         (TRAY / f"{stem}.svg").write_text(
-                            geo.tray_svg(state, variant, frame) + "\n", encoding="utf-8"
+                            geo.tray_svg(state, variant, frame) + "\n", encoding="utf-8", newline="\n"
                         )
                         tray_written.append(stem)
                 else:
                     stem = geo.tray_stem(state, variant)
                     (TRAY / f"{stem}.svg").write_text(
-                        geo.tray_svg(state, variant) + "\n", encoding="utf-8"
+                        geo.tray_svg(state, variant) + "\n", encoding="utf-8", newline="\n"
                     )
                     tray_written.append(stem)
 
-        # The bare stems the repository README and §7.2's Linux row refer to.
-        # Drawn in §7.2's neutral `#8B93A5`, which is the one ink that is
-        # legible on a light *and* a dark page — see assets/tray/README.md.
-        neutral = dict(geo.RING_INK)
-        geo.RING_INK["dark"] = "#8B93A5"
-        for state in geo.TRAY_STATES:
-            (TRAY / f"{state}.svg").write_text(
-                geo.tray_svg(state, "dark") + "\n", encoding="utf-8"
-            )
-        geo.RING_INK.update(neutral)
+        # Anything left over from an earlier naming — the bare `<state>.svg`
+        # files, the old `running-NN.svg` — is removed rather than left to rot
+        # next to the current set, where it would be mistaken for a variant
+        # that still ships.
+        current = {f"{stem}.svg" for stem in tray_written}
+        for stale in sorted(TRAY.glob("*.svg")):
+            if stale.name not in current:
+                stale.unlink()
 
         # -- rasterise -----------------------------------------------------
         jobs = []
@@ -634,7 +640,7 @@ def build() -> None:
         write_tray_preview(TRAY / "preview.html")
 
         print(f"masters      {len(masters)}")
-        print(f"tray svg     {len(tray_written) + len(geo.TRAY_STATES)}")
+        print(f"tray svg     {len(tray_written)}")
         print(f"png          {len(PNG_SIZES)}")
         print(f"ico          {len(ICO_SIZES)} sizes, {(ICONS / 'superbackup.ico').stat().st_size} bytes")
         print(f"icns         {len(ICNS_ENTRIES)} entries, {(ICONS / 'superbackup.icns').stat().st_size} bytes")

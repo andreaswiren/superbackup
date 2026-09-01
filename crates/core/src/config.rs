@@ -1099,6 +1099,16 @@ pub struct Store {
     outcome: LoadOutcome,
 }
 
+/// Has this installation been set up yet?
+///
+/// Public because the *window* has to answer it before any daemon exists: the
+/// daemon will not start without a vault, so "is this a first run" cannot be
+/// an IPC question. Exposed as a predicate rather than by making `VaultFile`
+/// public, which would hand out the file handling as well as the fact.
+pub fn is_initialised(paths: &Paths) -> bool {
+    VaultFile::exists(paths)
+}
+
 impl Store {
     /// Open an existing installation. The vault is left locked.
     ///

@@ -8,7 +8,7 @@ use chrono::Utc;
 use egui::{Align, Layout, Ui};
 use uuid::Uuid;
 
-use superbackup_core::ipc::protocol::{ErrorPayload, ProbeReply, Request, SecretString};
+use superbackup_core::ipc::protocol::{BucketsReply, ErrorPayload, Request, SecretString};
 use superbackup_core::model::{ProviderKind, S3Credentials, S3Flavour, SecretRef, StorageProvider};
 
 use crate::gui::app::App;
@@ -22,10 +22,24 @@ use crate::gui::theme::{self, radius, space, Type};
 use crate::gui::validation::{self, Field};
 use crate::gui::widgets::{self, Button, StepState};
 
+/// What the last credential check established.
+///
+/// Four states rather than three, because "the credentials are right and this
+/// key may not list buckets" is a real and common outcome that is neither a
+/// success nor a failure. Folding it into `Failed` would tell the user their
+/// key is wrong when it is not; folding it into `Ok` would hide why the bucket
+/// list is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProbeState {
     Running,
-    Ok { buckets: Vec<String> },
+    /// Signed in, and this is everything the account owns.
+    Ok {
+        buckets: Vec<String>,
+    },
+    /// Signed in; the endpoint would not list. The credentials are proven.
+    Qualified {
+        detail: String,
+    },
     Failed(String),
 }
 
@@ -51,16 +65,39 @@ impl State {
     pub fn probe_started(&mut self, id: Uuid) {
         self.probes.insert(id, ProbeState::Running);
     }
-    pub fn probe(&mut self, id: Uuid, probe: ProbeReply) {
-        let state = if probe.reachable {
-            ProbeState::Ok { buckets: Vec::new() }
-        } else {
-            ProbeState::Failed(modals::probe_message(&probe))
+    /// Record the outcome of a `provider.list_buckets`.
+    pub fn probe(&mut self, id: Uuid, reply: &BucketsReply) {
+        let state = match (reply.listed, reply.credentials_ok) {
+            (true, _) => {
+                ProbeState::Ok { buckets: reply.buckets.iter().map(|b| b.name.clone()).collect() }
+            }
+            (false, true) => ProbeState::Qualified {
+                detail: reply.detail.clone().unwrap_or_else(|| copy::prov::ERR_NO_LIST.to_string()),
+            },
+            (false, false) => ProbeState::Failed(
+                reply.detail.clone().unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.to_string()),
+            ),
         };
+        // A successful listing shows its buckets rather than hiding them
+        // behind a disclosure the user has to find: the names *are* the
+        // result. The link becomes "Hide buckets" from here.
+        self.show_buckets = matches!(state, ProbeState::Ok { .. });
         self.probes.insert(id, state);
     }
+
     pub fn probe_failed(&mut self, id: Uuid, payload: ErrorPayload) {
         self.probes.insert(id, ProbeState::Failed(payload.message));
+    }
+    /// The outcome for `id`, for anything that needs to reason about it
+    /// without laying out a frame.
+    ///
+    /// Only `crates/app/tests/gui_app.rs` calls it — the screens read the map
+    /// directly — which from the binary's side looks unused. The allow is on
+    /// this item rather than the file so a genuinely dead screen method still
+    /// gets caught.
+    #[allow(dead_code)]
+    pub fn probe_state(&self, id: Uuid) -> Option<ProbeState> {
+        self.probes.get(&id).cloned()
     }
     pub fn probing(&self, id: Uuid) -> bool {
         matches!(self.probes.get(&id), Some(ProbeState::Running))
@@ -103,6 +140,7 @@ impl State {
                         tls: true,
                         path_style: S3Flavour::Storj.wants_path_style(),
                         flavour: S3Flavour::Storj,
+                        admin_url: S3Flavour::Storj.default_admin_url().map(str::to_string),
                     },
                     notes: String::new(),
                     created_at: Utc::now(),
@@ -144,6 +182,7 @@ impl App {
         let mut save = false;
         let mut test = false;
         let mut rotate = false;
+        let mut open_admin: Option<String> = None;
 
         widgets::scroll_area(ui, "provider-editor", |ui| {
             // The impact strip: used by N destinations across M jobs.
@@ -218,7 +257,7 @@ impl App {
                 }
             });
 
-            self.provider_connection(ui, &report);
+            open_admin = self.provider_connection(ui, &report);
             self.provider_credentials(ui, &report, existing.as_ref());
             self.provider_test_panel(ui, existing.as_ref());
 
@@ -232,8 +271,11 @@ impl App {
                     save = true;
                 }
                 let gate = self.data.gate(Action::TestProvider);
-                let mut test_button =
-                    Button::secondary(copy::action::TEST_CONNECTION).icon(Icon::PlugZap);
+                let running =
+                    existing.as_ref().is_some_and(|p| self.screens.provider_editor.probing(p.id));
+                let mut test_button = Button::secondary(copy::action::TEST_CONNECTION)
+                    .icon(Icon::PlugZap)
+                    .busy(running);
                 if let Some(reason) = gate.reason() {
                     test_button = test_button.disabled_because(reason);
                 } else if existing.is_none() {
@@ -258,6 +300,13 @@ impl App {
             self.screens.provider_editor.show_errors = true;
             if report.ok() {
                 self.save_provider(existing.is_some());
+            }
+        }
+        if let Some(url) = open_admin {
+            // A documentation link, opened in the user's own browser. Nothing
+            // in this application ever connects to it itself.
+            if let Err(e) = open::that_detached(&url) {
+                self.toasts.warning(format!("That address could not be opened ({e})."));
             }
         }
         if test {
@@ -295,15 +344,20 @@ impl App {
         }
     }
 
-    fn provider_connection(&mut self, ui: &mut Ui, report: &validation::Report) {
+    /// The connection panel. Returns an administration URL the user asked to
+    /// open, so the browser is launched after the borrow on the draft ends
+    /// rather than in the middle of it.
+    fn provider_connection(&mut self, ui: &mut Ui, report: &validation::Report) -> Option<String> {
         let t = theme::tokens(ui.ctx());
         widgets::form_group(ui, "Connection", None);
         let mut filled_message: Option<String> = None;
+        let mut open_admin_url: Option<String> = None;
 
         let Some(draft) = &mut self.screens.provider_editor.draft else {
-            return;
+            return None;
         };
-        let ProviderKind::S3 { endpoint, region, tls, path_style, flavour, .. } = &mut draft.kind;
+        let ProviderKind::S3 { endpoint, region, tls, path_style, flavour, admin_url, .. } =
+            &mut draft.kind;
 
         let flavours: Vec<String> =
             S3Flavour::all().iter().map(|f| f.title().to_string()).collect();
@@ -329,6 +383,14 @@ impl App {
                     *region = chosen.default_region().unwrap_or("").to_string();
                 }
                 *path_style = chosen.wants_path_style();
+                // Same rule as the endpoint and region: fill it in when the
+                // field is empty or still holds the previous flavour's
+                // suggestion, and never overwrite something the user typed.
+                let admin_is_default = admin_url.as_deref().map(str::trim).unwrap_or("").is_empty()
+                    || admin_url.as_deref() == previous.default_admin_url();
+                if admin_is_default {
+                    *admin_url = chosen.default_admin_url().map(str::to_string);
+                }
                 filled_message = Some(copy::prov_type_filled(chosen.title()));
             }
         }
@@ -400,18 +462,48 @@ impl App {
         {
             *path_style = path_style_on;
         }
-        // The model says this field changes nothing today; the interface must
-        // not imply an effect it does not have.
+        // kopia still ignores this; superbackup's own bucket listing honours
+        // it. Saying both is the only honest version, and saying neither is
+        // how a control comes to imply an effect it does not have.
         ui.horizontal(|ui| {
             ui.add_space(44.0);
             widgets::paragraph_at(
                 ui,
-                "kopia's S3 backend chooses the addressing style itself, so this is recorded but not acted on yet.",
+                "Used when superbackup lists buckets itself. kopia's S3 backend picks the addressing style on its own, so backups are unaffected either way.",
                 Type::Small,
                 t.text_muted,
                 520.0,
             );
         });
+
+        ui.add_space(space::XL);
+        let mut admin = admin_url.clone().unwrap_or_default();
+        let response = widgets::Field::new()
+            .label(copy::prov::ADMIN_URL)
+            .helper(copy::prov::ADMIN_URL_BODY)
+            .placeholder(copy::prov::ADMIN_URL_PLACEHOLDER)
+            .width(420.0)
+            .mono()
+            .error(report.for_field(Field::AdminUrl))
+            .show(ui, &mut admin);
+        if response.changed() {
+            // Stored as `None` rather than `Some("")` so a cleared field is
+            // genuinely absent from `config.json` rather than present and
+            // empty.
+            *admin_url = (!admin.trim().is_empty()).then(|| admin.trim().to_string());
+        }
+        let openable = admin_url
+            .as_deref()
+            .filter(|u| superbackup_core::model::validate_admin_url(u).is_ok())
+            .filter(|u| !u.trim().is_empty())
+            .map(str::to_string);
+        if let Some(url) = openable {
+            ui.add_space(space::S);
+            if widgets::link(ui, copy::prov::ADMIN_URL_OPEN).clicked() {
+                open_admin_url = Some(url);
+            }
+        }
+        open_admin_url
     }
 
     fn provider_credentials(
@@ -505,10 +597,28 @@ impl App {
             copy::prov::TEST_LISTING,
         ];
         match state {
+            // The four steps are what the request actually does, in order, so
+            // a check that hangs shows where it hung rather than spinning
+            // anonymously.
             ProbeState::Running => {
+                widgets::text(ui, copy::prov::TEST_RUNNING, Type::BodyStrong, t.text_primary);
+                ui.add_space(space::S);
                 for step in steps {
                     widgets::checklist_row(ui, StepState::Running, step, None);
                 }
+            }
+            // The case that must not be reported as a failure: the endpoint
+            // verified the signature and then declined to list. The key pair
+            // is proven correct, so this is a warning about a missing
+            // permission, not an error about a bad credential.
+            ProbeState::Qualified { detail } => {
+                widgets::banner(
+                    ui,
+                    widgets::BannerKind::Warning,
+                    &detail,
+                    Some(copy::prov::TEST_DENIED_HINT),
+                    |_| {},
+                );
             }
             ProbeState::Ok { buckets } => {
                 widgets::banner(
@@ -520,9 +630,14 @@ impl App {
                 );
                 if !buckets.is_empty() {
                     ui.add_space(space::M);
-                    if widgets::link(ui, copy::prov::TEST_SHOW_BUCKETS).clicked() {
-                        self.screens.provider_editor.show_buckets =
-                            !self.screens.provider_editor.show_buckets;
+                    let showing = self.screens.provider_editor.show_buckets;
+                    let label = if showing {
+                        copy::prov::TEST_HIDE_BUCKETS
+                    } else {
+                        copy::prov::TEST_SHOW_BUCKETS
+                    };
+                    if widgets::link(ui, label).clicked() {
+                        self.screens.provider_editor.show_buckets = !showing;
                     }
                     if self.screens.provider_editor.show_buckets {
                         widgets::code_block(ui, &buckets.join("\n"), 200.0, None);
@@ -556,7 +671,6 @@ impl App {
                 }
             }
         }
-        let _ = t;
     }
 
     fn save_provider(&mut self, existing: bool) {

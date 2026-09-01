@@ -65,6 +65,26 @@ const MAX_LISTING_ENTRIES: usize = 2_000;
 /// Cap on `snapshot.list` when the caller passes 0 or something absurd.
 const MAX_SNAPSHOTS: usize = 500;
 
+/// Kopia's format blob. Its presence, and nothing else, is what "there is a
+/// repository here" means — reading it needs the repository key, and needing
+/// the key is precisely the coupling `dest.test` exists without.
+const KOPIA_FORMAT_BLOB: &str = "kopia.repository";
+
+/// What one `ListBuckets` against a provider established.
+///
+/// Deliberately not a `Result`: "the endpoint answered and refused to list"
+/// is neither a success nor a failure, it is a *qualified* success, and a type
+/// with only two outcomes would force that third case into whichever of them
+/// fitted worse. `credentials_ok` without `listed` is the case that exists.
+#[derive(Debug, Clone)]
+struct BucketProbe {
+    buckets: Vec<BucketInfo>,
+    listed: bool,
+    credentials_ok: bool,
+    detail: Option<String>,
+    latency_ms: Option<u64>,
+}
+
 /// The IPC surface of a running daemon.
 #[derive(Debug, Clone)]
 pub struct DaemonHandler {
@@ -121,6 +141,213 @@ impl DaemonHandler {
         let driver = build_driver(&store, &self.runtime.paths, binary, &destination);
         drop(store);
         Ok((destination, driver?))
+    }
+
+    /// Resolve a provider's stored key pair for one S3 request.
+    ///
+    /// The resolved material lives only as long as the returned [`S3Keys`],
+    /// which zeroes both halves on drop. Nothing here logs, formats or
+    /// returns it: the only thing that ever sees the secret is the signer.
+    async fn provider_keys(
+        &self,
+        provider: &StorageProvider,
+    ) -> Result<superbackup_core::s3::S3Keys> {
+        let ProviderKind::S3 { credentials, .. } = &provider.kind;
+        self.resolve_keys(credentials, &provider.name).await
+    }
+
+    /// Resolve one credential handle set. Shared by the provider probe and the
+    /// destination probe so a destination with its own key pair and a
+    /// destination inheriting the provider's are read the same way.
+    async fn resolve_keys(
+        &self,
+        credentials: &superbackup_core::model::S3Credentials,
+        owner: &str,
+    ) -> Result<superbackup_core::s3::S3Keys> {
+        let store = self.runtime.store.lock().await;
+        let access = store.secret(&credentials.access_key_ref)?;
+        let secret = store.secret(&credentials.secret_key_ref)?;
+        let (Some(access), Some(secret)) = (access, secret) else {
+            // Not `Error::Locked` and not a vault error: the vault is fine and
+            // simply has nothing under this handle, which is what an unsaved
+            // provider looks like. Saying "the vault has no entry for
+            // s3.access:…" reads like corruption for what is an unfinished
+            // form.
+            return Err(Error::Validation(format!(
+                "\"{owner}\" has no credentials stored yet. Enter an access key and a secret key \
+                 and save it first."
+            )));
+        };
+        let token = match &credentials.session_token_ref {
+            Some(handle) => store.secret(handle)?,
+            None => None,
+        };
+        Ok(superbackup_core::s3::S3Keys::new(access, secret).with_session_token(token))
+    }
+
+    /// Record that this provider's credentials were accepted just now.
+    ///
+    /// `last_verified_at` was cleared on a key rotation but never set by
+    /// anything, so the providers screen's "Last checked" column could only
+    /// ever be empty. A successful, authenticated `ListBuckets` is precisely
+    /// the event that column is about.
+    ///
+    /// A failure to persist it is swallowed: a bookkeeping timestamp must
+    /// never turn a successful credential check into a reported failure.
+    async fn mark_provider_verified(&self, id: Uuid) {
+        let now = Utc::now();
+        if let Err(e) = self
+            .commit(move |config| {
+                if let Some(slot) = config.providers.iter_mut().find(|p| p.id == id) {
+                    slot.last_verified_at = Some(now);
+                }
+                Ok(())
+            })
+            .await
+        {
+            tracing::warn!(error = %e, "could not record the provider check timestamp");
+        }
+    }
+
+    /// Reach an S3 destination without a repository key.
+    ///
+    /// Three facts in at most three round trips: the bucket answers and the
+    /// credentials are accepted (the listing), the prefix can be written to
+    /// (the probe), and whether a repository is already there (the listing
+    /// again, targeted at the exact format-blob key).
+    async fn probe_s3_destination(
+        &self,
+        destination: &Destination,
+        bucket: &str,
+        prefix: &str,
+    ) -> ProbeReply {
+        let unreachable = |detail: String| ProbeReply {
+            reachable: false,
+            writable: false,
+            latency_ms: None,
+            repository_present: None,
+            detail: Some(detail),
+        };
+
+        let config = self.config().await;
+        let Some(provider) =
+            destination.kind.provider_id().and_then(|id| config.provider(id)).cloned()
+        else {
+            return unreachable(format!(
+                "\"{}\" points at a storage provider that is no longer in the configuration.",
+                destination.name
+            ));
+        };
+        // A destination may pin its own key pair; `effective_credentials`
+        // resolves the override before the provider's.
+        let credentials = match destination.kind.effective_credentials(Some(&provider)) {
+            Some(c) => c.clone(),
+            None => return unreachable(format!("\"{}\" has no credentials.", destination.name)),
+        };
+        let keys = match self.resolve_keys(&credentials, &provider.name).await {
+            Ok(keys) => keys,
+            Err(e) => return unreachable(e.to_string()),
+        };
+        let client = match superbackup_core::s3::S3Client::new() {
+            Ok(client) => client,
+            Err(e) => return unreachable(e.message()),
+        };
+
+        let describe = |e: superbackup_core::s3::S3Error| match e.hint() {
+            Some(hint) => format!("{} {hint}", e.message()),
+            None => e.message(),
+        };
+
+        // One targeted listing: it proves endpoint, TLS, credentials and
+        // bucket existence, and its result *is* the repository answer.
+        let format_blob = format!("{prefix}{}", KOPIA_FORMAT_BLOB);
+        let repository_present =
+            match client.object_exists(&provider, &keys, bucket, &format_blob).await {
+                Ok(present) => present,
+                Err(e) => return unreachable(describe(e)),
+            };
+
+        // Reachable and authenticated from here on: a write failure is a
+        // permission problem to report, not a reason to claim the bucket
+        // cannot be reached.
+        let (writable, write_problem) =
+            match client.write_probe(&provider, &keys, bucket, prefix).await {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(describe(e))),
+            };
+
+        ProbeReply {
+            reachable: true,
+            writable,
+            latency_ms: None,
+            repository_present: Some(repository_present),
+            detail: match (writable, repository_present) {
+                (false, _) => write_problem,
+                (true, false) => Some(copy_no_repository_yet(&destination.kind)),
+                (true, true) => None,
+            },
+        }
+    }
+
+    /// Ask a provider for its bucket list, and classify what came back.
+    ///
+    /// One place, because `provider.test`, `provider.list_buckets` and the
+    /// destination editor's picker must agree about what "the credentials are
+    /// fine but the key cannot list" means. Three call sites deciding that
+    /// separately is how one of them ends up telling the user their key is
+    /// wrong when it is not.
+    async fn probe_provider(&self, provider: &StorageProvider) -> BucketProbe {
+        let keys = match self.provider_keys(provider).await {
+            Ok(keys) => keys,
+            Err(e) => {
+                return BucketProbe {
+                    buckets: Vec::new(),
+                    listed: false,
+                    credentials_ok: false,
+                    detail: Some(e.to_string()),
+                    latency_ms: None,
+                }
+            }
+        };
+        let client = match superbackup_core::s3::S3Client::new() {
+            Ok(client) => client,
+            Err(e) => {
+                return BucketProbe {
+                    buckets: Vec::new(),
+                    listed: false,
+                    credentials_ok: false,
+                    detail: Some(e.message()),
+                    latency_ms: None,
+                }
+            }
+        };
+        let started = std::time::Instant::now();
+        let result = client.list_buckets(provider, &keys).await;
+        let latency = Some(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+        match result {
+            Ok(buckets) => BucketProbe {
+                buckets: buckets
+                    .into_iter()
+                    .map(|b| BucketInfo { name: b.name, created_at: b.created_at })
+                    .collect(),
+                listed: true,
+                credentials_ok: true,
+                detail: None,
+                latency_ms: latency,
+            },
+            Err(e) => BucketProbe {
+                buckets: Vec::new(),
+                listed: false,
+                // `AccessDenied` means the signature verified before the
+                // policy refused, so the key pair is provably right.
+                credentials_ok: e.credentials_accepted(),
+                detail: Some(match e.hint() {
+                    Some(hint) => format!("{} {hint}", e.message()),
+                    None => e.message(),
+                }),
+                latency_ms: latency,
+            },
+        }
     }
 
     fn unlocked_reply(&self, unlocked: bool) -> UnlockedReply {
@@ -388,6 +615,7 @@ impl Handler for DaemonHandler {
             target_arch: std::env::consts::ARCH.to_string(),
             kopia_version: self.runtime.kopia_version(),
             service_scope: self.runtime.paths.service_scope,
+            build: crate::build::short(),
         })
     }
 
@@ -984,6 +1212,30 @@ impl Handler for DaemonHandler {
         Ok(AckReply {})
     }
 
+    /// Answer "can I reach this place with these credentials?" — and report
+    /// "is there a repository here?" as a separate fact.
+    ///
+    /// These used to be one answer, and the coupling was backwards. The old
+    /// path built a [`superbackup_core::kopia::KopiaDriver`] and asked kopia to
+    /// open the repository, which needs the repository encryption key. A
+    /// destination that has been added but not yet created has no key, so the
+    /// test could not run at all — and a perfectly reachable bucket with
+    /// correct credentials reported as *unreachable*, which sends the user to
+    /// debug the one thing that was never wrong.
+    ///
+    /// So reachability is now established without any key at all:
+    ///
+    /// * S3 — one `ListObjectsV2`, which proves the endpoint resolves, TLS
+    ///   succeeds, the credentials are accepted and the bucket exists, plus a
+    ///   bounded write probe, because a bucket that cannot be written to fails
+    ///   every backup.
+    /// * local, OneDrive — the directory probe: exists, and a file can be
+    ///   written and removed.
+    ///
+    /// Whether a repository is present is then answered by *looking for*
+    /// kopia's `kopia.repository` format blob, never by opening it. Opening it
+    /// is `dest.check_key`'s job and needs the key this deliberately does not
+    /// touch.
     async fn test_destination(
         &self,
         _ctx: &RequestContext,
@@ -993,49 +1245,47 @@ impl Handler for DaemonHandler {
         let config = self.config().await;
         let target = resolve_destination(&config, &destination)?.clone();
         let started = std::time::Instant::now();
+        let elapsed = || started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
-        // A folder mirror has no repository, so the honest test is "can I
-        // write a file here?" rather than a kopia round trip.
-        if let DestinationKind::LocalMirror { path } = &target.kind {
-            let (reachable, writable, detail) = probe_directory(path).await;
-            return Ok(ProbeReply {
-                reachable,
-                writable,
-                latency_ms: Some(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
-                detail,
-            });
+        if let DestinationKind::S3 { bucket, prefix, .. } = &target.kind {
+            let reply = self.probe_s3_destination(&target, bucket, prefix).await;
+            return Ok(ProbeReply { latency_ms: Some(elapsed()), ..reply });
         }
 
-        let (_, driver) = self.driver_for(&destination).await?;
-        let ctx = RunContext::new();
-        let result = driver.test_connection(&ctx).await;
-        let latency = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        Ok(match result {
-            Ok(test) => ProbeReply {
-                reachable: true,
-                // Connecting proves the credentials are accepted; kopia has no
-                // read-only connect, so a successful connect is a write probe.
-                writable: true,
-                latency_ms: Some(latency),
-                detail: Some(test.summary()),
-            },
-            Err(e) => ProbeReply {
-                reachable: false,
-                writable: false,
-                latency_ms: Some(latency),
-                detail: Some(e.message),
-            },
+        let Some(path) = target.kind.local_path().cloned() else {
+            return Err(Error::Internal(format!("\"{}\" has no location to test", target.name)));
+        };
+        let (reachable, writable, problem) = probe_directory(&path).await;
+
+        // A folder mirror is a plain copy and holds no repository, so the
+        // question does not apply to it rather than being answered "no".
+        let repository_present = if target.kind.is_repository() && reachable {
+            Some(
+                tokio::task::spawn_blocking(move || path.join(KOPIA_FORMAT_BLOB).is_file())
+                    .await
+                    .unwrap_or(false),
+            )
+        } else {
+            None
+        };
+
+        let detail =
+            match (reachable, writable, repository_present) {
+                (true, true, Some(false)) => Some(copy_no_repository_yet(&target.kind)),
+                (true, true, _) => None,
+                _ => Some(problem.unwrap_or_else(|| {
+                    "The location could not be reached or written to.".to_string()
+                })),
+            };
+        Ok(ProbeReply {
+            reachable,
+            writable,
+            latency_ms: Some(elapsed()),
+            repository_present,
+            detail,
         })
     }
 
-    /// Prove a repository encryption key works, by opening the repository with
-    /// it. Deliberately not a format check: a key that looks right and is
-    /// wrong is exactly the failure the user is trying to rule out.
-    ///
-    /// A candidate key is used for this call and thrown away. Storing it would
-    /// be a different, destructive operation — a repository whose vault entry
-    /// no longer matches its actual key is unopenable — so the caller has to
-    /// ask for that separately, after seeing that the key works.
     async fn check_encryption_key(
         &self,
         _ctx: &RequestContext,
@@ -1425,27 +1675,132 @@ impl Handler for DaemonHandler {
         Ok(AckReply {})
     }
 
+    /// Test a provider by signing a real `ListBuckets` against it.
+    ///
+    /// This used to borrow the first destination that used the provider and
+    /// ask kopia to open a repository there, because kopia is the only thing
+    /// that could talk to S3. That made the answer useless exactly when it was
+    /// wanted: before any destination exists — which is when someone has just
+    /// pasted a key pair and wants to know whether it is right — it could only
+    /// say "there is nothing to test against".
+    ///
+    /// `ListBuckets` is authenticated, so a success proves the endpoint
+    /// resolves, TLS works, the clock is close enough, and both halves of the
+    /// key pair are correct. It writes nothing, which is why `writable` is
+    /// false rather than optimistic: proving a write needs a destination and a
+    /// repository, and claiming otherwise here would be a lie the user only
+    /// discovers during a backup.
     async fn test_provider(&self, _ctx: &RequestContext, provider: String) -> Result<ProbeReply> {
         self.require_unlocked().await?;
         let config = self.config().await;
         let target = resolve_provider(&config, &provider)?.clone();
-        // A provider is only reachable through a destination that uses it —
-        // kopia has no "test these credentials" command of its own — so the
-        // probe borrows the first destination that inherits them.
-        let Some(destination) = config.destinations_using(&target.id).first().map(|d| (*d).clone())
-        else {
-            return Ok(ProbeReply {
-                reachable: false,
-                writable: false,
-                latency_ms: None,
-                detail: Some(
-                    "No destination uses this provider yet, so there is nothing to test against. \
-                     Add a bucket destination first."
-                        .into(),
-                ),
-            });
+        let probe = self.probe_provider(&target).await;
+
+        // A key that authenticates and then is not allowed to list buckets is
+        // a *working* key — scoping a key to one bucket is the recommended
+        // shape, and `s3:ListAllMyBuckets` is exactly what such a key lacks.
+        // Reporting that as unreachable would send the user to regenerate
+        // credentials that were never wrong.
+        let reachable = probe.listed || probe.credentials_ok;
+        let detail =
+            probe.detail.clone().or_else(|| Some(copy_buckets_visible(probe.buckets.len())));
+        if reachable {
+            self.mark_provider_verified(target.id).await;
+        }
+        Ok(ProbeReply {
+            reachable,
+            // A provider is an account, not a place. Nothing was written to,
+            // and nothing here may claim otherwise.
+            writable: false,
+            latency_ms: probe.latency_ms,
+            // Whether some bucket contains a repository is not a property of
+            // an account, so the question does not apply.
+            repository_present: None,
+            detail,
+        })
+    }
+
+    async fn list_buckets(&self, _ctx: &RequestContext, provider: String) -> Result<BucketsReply> {
+        self.require_unlocked().await?;
+        let config = self.config().await;
+        let target = resolve_provider(&config, &provider)?.clone();
+        let probe = self.probe_provider(&target).await;
+        if probe.listed || probe.credentials_ok {
+            self.mark_provider_verified(target.id).await;
+        }
+        Ok(BucketsReply {
+            provider_id: target.id,
+            buckets: probe.buckets,
+            listed: probe.listed,
+            credentials_ok: probe.credentials_ok,
+            detail: probe.detail,
+            latency_ms: probe.latency_ms,
+        })
+    }
+
+    async fn list_objects(
+        &self,
+        _ctx: &RequestContext,
+        provider: String,
+        bucket: String,
+        prefix: String,
+        max_keys: u32,
+    ) -> Result<ObjectsReply> {
+        self.require_unlocked().await?;
+        let config = self.config().await;
+        let target = resolve_provider(&config, &provider)?.clone();
+        let keys = self.provider_keys(&target).await?;
+        let client =
+            superbackup_core::s3::S3Client::new().map_err(superbackup_core::Error::from)?;
+
+        // A failed listing is an answer, not an error: "I could not look" must
+        // never be the thing that stops a destination being created.
+        let unavailable = |detail: String| ObjectsReply {
+            bucket: bucket.clone(),
+            prefix: prefix.clone(),
+            keys: Vec::new(),
+            truncated: false,
+            holds_repository: false,
+            listed: false,
+            detail: Some(detail),
         };
-        self.test_destination(_ctx, destination.id.to_string()).await
+        match client.list_objects_v2(&target, &keys, &bucket, &prefix, max_keys).await {
+            Ok(listing) => {
+                // `holds_repository` is answered by an exact lookup rather
+                // than by scanning the page above, because the page is capped:
+                // a prefix with more objects than `max_keys` could hold a
+                // repository the caller never saw, and answering "no" to
+                // "would creating one here collide?" is the wrong way round to
+                // be wrong.
+                let format_blob = format!("{prefix}{KOPIA_FORMAT_BLOB}");
+                let holds_repository = listing.holds_kopia_repository()
+                    || client
+                        .object_exists(&target, &keys, &bucket, &format_blob)
+                        .await
+                        .unwrap_or(false);
+                Ok(ObjectsReply {
+                    bucket,
+                    prefix,
+                    holds_repository,
+                    truncated: listing.truncated,
+                    keys: listing
+                        .keys
+                        .into_iter()
+                        .map(|o| ObjectInfo {
+                            key: o.key,
+                            size: o.size,
+                            last_modified: o.last_modified,
+                        })
+                        .collect(),
+                    listed: true,
+                    detail: None,
+                })
+            }
+            Err(e) => Ok(unavailable(match e.hint() {
+                Some(hint) => format!("{} {hint}", e.message()),
+                None => e.message(),
+            })),
+        }
     }
 
     async fn provider_used_by(
@@ -2431,6 +2786,43 @@ pub fn service_reach_summary(config: &superbackup_core::model::Config) -> String
         parts.push(format!("{} will work with caveats.", degraded.join(", ")));
     }
     parts.join(" ")
+}
+
+/// What to say when a destination exists but its repository does not yet.
+///
+/// Not an error: the user added a destination and has not yet run the one-time
+/// step that initialises encrypted storage in it.
+///
+/// The wording has to carry three things, because the first version carried
+/// none of them and the user quite reasonably asked what it meant. It must name
+/// the right thing — a bucket is not a folder — say what a repository *is* in
+/// terms of what it does for them, and say where the control lives, because
+/// "use Create repository" is useless if you do not know which screen it is on.
+fn copy_no_repository_yet(kind: &DestinationKind) -> String {
+    let place = match kind {
+        DestinationKind::S3 { .. } => "bucket",
+        DestinationKind::OneDrive { .. } => "OneDrive folder",
+        _ => "folder",
+    };
+    format!(
+        "The {place} is reachable, but it has no backup repository in it yet. A repository \
+         is the encrypted store superbackup writes snapshots into, and it is created once \
+         per destination. Open this destination from the Destinations list and choose \
+         \"Create repository\" to set it up."
+    )
+}
+
+/// What a successful credential check actually established.
+///
+/// Says "signed in" rather than "connected", because that is the stronger and
+/// more useful claim: the endpoint verified a signature, so the key pair is
+/// right and the clock is close enough. The bucket count is the evidence.
+fn copy_buckets_visible(count: usize) -> String {
+    match count {
+        0 => "The credentials were accepted. This account owns no buckets yet.".to_string(),
+        1 => "The credentials were accepted; 1 bucket is visible.".to_string(),
+        n => format!("The credentials were accepted; {n} buckets are visible."),
+    }
 }
 
 #[cfg(test)]

@@ -655,65 +655,66 @@ pub fn health_mark(
     use superbackup_core::state::Health as H;
 
     let size = rect.width().min(rect.height());
-    let scale = size / 32.0;
     let c = rect.center();
-    let p = |x: f32, y: f32| c + Vec2::new((x - 16.0) * scale, (y - 16.0) * scale);
-    let ring_w = 3.0 * scale;
-    let r = 10.5 * scale;
 
-    let arc = |from: f32, sweep: f32, colour: Color32, width: f32| {
-        let steps = (sweep.abs() / 8.0).ceil().max(4.0) as usize;
-        let pts: Vec<Pos2> = (0..=steps)
-            .map(|i| {
-                let a = (from + sweep * i as f32 / steps as f32).to_radians();
-                c + Vec2::new(r * a.cos(), r * a.sin())
-            })
-            .collect();
-        painter.add(Shape::line(pts, Stroke::new(width, colour)));
-    };
+    // The same five badge silhouettes the tray draws.
+    //
+    // This used to be the retired ring-and-pip, so the window showed one mark
+    // and the notification area a different one — for the same five states.
+    // Shape carries the state here too: a filled disc, an open ring, a
+    // triangle, two bars, a cross. None is distinguished by colour alone.
+    let badge = pip.map(|(fill, _)| fill).unwrap_or(ink);
+    let br = size * 0.36;
+    let stroke_w = (br * 0.42).max(1.5);
 
     match health {
         H::Idle => {
-            painter.circle_stroke(c, r, Stroke::new(ring_w, ink));
-            painter.circle_filled(c, 3.0 * scale, ink);
-        }
-        H::Paused => {
-            painter.circle_stroke(c, r, Stroke::new(ring_w, ink));
-            let bar = |x: f32| {
-                painter.rect_filled(
-                    Rect::from_min_max(p(x - 1.7, 10.5), p(x + 1.7, 21.5)),
-                    egui::CornerRadius::same((1.7 * scale).round().clamp(0.0, 255.0) as u8),
-                    ink,
-                );
-            };
-            bar(13.3);
-            bar(18.7);
+            painter.circle_filled(c, br, badge);
         }
         H::Running => {
-            // 280° base arc with an 80° gap at down-right, plus a 90° arc
-            // sweeping round it.
-            arc(85.0, 280.0, ink, ring_w);
-            let start = 85.0 + spin.rem_euclid(1.0) * 360.0;
-            arc(start, 90.0, pip.map(|(f, _)| f).unwrap_or(ink), ring_w);
+            // The only badge with a hole, and the only one that moves.
+            let gap = 70.0_f32;
+            let from = spin;
+            let sweep = 360.0 - gap;
+            let steps = 40;
+            let rr = br - stroke_w / 2.0;
+            let pts: Vec<Pos2> = (0..=steps)
+                .map(|i| {
+                    let a = (from + sweep * i as f32 / steps as f32).to_radians();
+                    c + Vec2::new(rr * a.cos(), rr * a.sin())
+                })
+                .collect();
+            painter.add(Shape::line(pts, Stroke::new(stroke_w, badge)));
         }
-        H::Attention | H::Failed => {
-            arc(85.0, 280.0, ink, ring_w);
-            if let Some((fill, glyph)) = pip {
-                let pc = p(23.0, 23.0);
-                let pr = 6.0 * scale;
-                // The 1.5-unit knockout, so the pip reads as separate from the
-                // ring on any taskbar colour.
-                painter.circle_filled(pc, pr + 1.5 * scale, Color32::TRANSPARENT);
-                painter.circle_filled(pc, pr, fill);
-                let gw = Stroke::new(2.4 * scale, glyph);
-                if health == H::Attention {
-                    painter.line_segment([p(23.0, 19.8), p(23.0, 23.4)], gw);
-                    painter.circle_filled(p(23.0, 26.0), 1.3 * scale, glyph);
-                } else {
-                    painter.line_segment([p(20.9, 20.9), p(25.1, 25.1)], gw);
-                    painter.line_segment([p(25.1, 20.9), p(20.9, 25.1)], gw);
-                }
+        H::Attention => {
+            // The only badge with a flat base and a point.
+            let t = [
+                c + Vec2::new(0.0, -br),
+                c + Vec2::new(br * 0.92, br * 0.72),
+                c + Vec2::new(-br * 0.92, br * 0.72),
+            ];
+            painter.add(Shape::convex_polygon(t.to_vec(), badge, Stroke::NONE));
+        }
+        H::Paused => {
+            // The only badge that is not a single shape.
+            let w = br * 0.34;
+            let h = br * 1.3;
+            for dx in [-br * 0.42, br * 0.42] {
+                painter.rect_filled(
+                    Rect::from_center_size(c + Vec2::new(dx, 0.0), Vec2::new(w, h)),
+                    w * 0.5,
+                    badge,
+                );
             }
+        }
+        H::Failed => {
+            // The only badge with diagonals. A diagonal spreads across two
+            // pixel columns, so it carries a slightly heavier stroke to weigh
+            // the same as the others.
+            let d = br * 0.62;
+            let w = Stroke::new(stroke_w * 1.2, badge);
+            painter.line_segment([c + Vec2::new(-d, -d), c + Vec2::new(d, d)], w);
+            painter.line_segment([c + Vec2::new(d, -d), c + Vec2::new(-d, d)], w);
         }
     }
 }

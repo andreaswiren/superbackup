@@ -5309,6 +5309,7 @@ dependencies = [
  "globset",
  "hex",
  "hkdf",
+ "hmac",
  "hostname",
  "humantime",
  "interprocess",

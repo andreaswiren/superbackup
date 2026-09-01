@@ -22,13 +22,13 @@ use std::path::PathBuf;
 use chrono::Utc;
 use superbackup_core::error::ErrorCode;
 use superbackup_core::ipc::protocol::{
-    self, AckReply, BandwidthReply, CheckStatus, ConflictPolicy, DestinationReply,
-    DestinationsReply, DoctorCheck, DoctorReply, ErrorPayload, HealthReply, JobReply, JobsReply,
-    ListingReply, PauseReply, ProbeReply, ProviderReply, ProvidersReply, RemoteDiffReply,
-    RemoteStatusReply, Reply, RepositoryReply, Request, RequestId, RunsReply, SchemaReply,
-    SecretRefsReply, SecretString, ServiceReply, SettingsReply, SnapshotsReply, StartedReply,
-    StatusReply, StoppedReply, StorageStatsReply, SubscribedReply, UnlockedReply, UsedByReply,
-    VersionReply,
+    self, AckReply, BandwidthReply, BucketInfo, BucketsReply, CheckStatus, ConflictPolicy,
+    DestinationReply, DestinationsReply, DoctorCheck, DoctorReply, ErrorPayload, HealthReply,
+    JobReply, JobsReply, ListingReply, ObjectInfo, ObjectsReply, PauseReply, ProbeReply,
+    ProviderReply, ProvidersReply, RemoteDiffReply, RemoteStatusReply, Reply, RepositoryReply,
+    Request, RequestId, RunsReply, SchemaReply, SecretRefsReply, SecretString, ServiceReply,
+    SettingsReply, SnapshotsReply, StartedReply, StatusReply, StoppedReply, StorageStatsReply,
+    SubscribedReply, UnlockedReply, UsedByReply, VersionReply,
 };
 use superbackup_core::ipc::{
     ClientFrame, ServerFrame, Topic, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
@@ -97,6 +97,7 @@ fn provider() -> StorageProvider {
             tls: true,
             path_style: false,
             flavour: S3Flavour::Storj,
+            admin_url: None,
         },
         notes: String::new(),
         created_at: Utc::now(),
@@ -109,6 +110,7 @@ fn snapshot() -> StatusSnapshot {
         health: Health::Idle,
         version: "0.1.0".into(),
         machine_label: "test".into(),
+        machine_hostname: "test".into(),
         machine_slug: "test".into(),
         unlocked: false,
         paused: false,
@@ -180,6 +182,13 @@ fn sample_requests() -> Vec<Request> {
         Request::ProviderUpdate { provider: Box::new(provider()) },
         Request::ProviderDelete { provider: "storj".into(), force: false },
         Request::ProviderTest { provider: "storj".into() },
+        Request::ProviderListBuckets { provider: "storj".into() },
+        Request::ProviderListObjects {
+            provider: "storj".into(),
+            bucket: "dev-backups".into(),
+            prefix: "superbackup/pc/".into(),
+            max_keys: 100,
+        },
         Request::ProviderUsedBy { provider: "storj".into() },
         Request::ProviderRotateCredentials {
             provider: "storj".into(),
@@ -281,6 +290,7 @@ fn sample_replies() -> Vec<Reply> {
             target_arch: "x86_64".into(),
             kopia_version: None,
             service_scope: false,
+            build: "0.1.0".into(),
         }),
         Reply::Health(HealthReply {
             health: Health::Attention,
@@ -313,6 +323,28 @@ fn sample_replies() -> Vec<Reply> {
             reachable: true,
             writable: true,
             latency_ms: Some(12),
+            repository_present: Some(true),
+            detail: None,
+        }),
+        Reply::Buckets(BucketsReply {
+            provider_id: Uuid::nil(),
+            buckets: vec![BucketInfo { name: "dev-backups".into(), created_at: Some(Utc::now()) }],
+            listed: true,
+            credentials_ok: true,
+            detail: None,
+            latency_ms: Some(84),
+        }),
+        Reply::Objects(ObjectsReply {
+            bucket: "dev-backups".into(),
+            prefix: "superbackup/pc/".into(),
+            keys: vec![ObjectInfo {
+                key: "superbackup/pc/kopia.repository".into(),
+                size: 661,
+                last_modified: Some(Utc::now()),
+            }],
+            truncated: false,
+            holds_repository: true,
+            listed: true,
             detail: None,
         }),
         Reply::Repository(RepositoryReply {
@@ -789,6 +821,7 @@ fn outbound_frames_are_scrubbed() {
             reachable: false,
             writable: false,
             latency_ms: None,
+            repository_present: None,
             detail: Some("AWS_SECRET_ACCESS_KEY=abc/def+123 rejected".into()),
         })),
     }
@@ -890,4 +923,28 @@ fn every_error_code_survives_the_round_trip_to_a_client() {
             rebuilt.code()
         );
     }
+}
+
+/// A message must not gain its variant's prefix twice on the way to a client.
+///
+/// `Error::Config`'s `Display` is "configuration error: {0}". The payload
+/// carries the *formatted* message, so rebuilding `Error::Config(message)`
+/// produced "configuration error: configuration error: …" — which a user saw
+/// verbatim in the destinations screen. Every prefixed variant was affected.
+#[test]
+fn a_transported_message_is_not_prefixed_twice() {
+    use superbackup_core::error::{Error, ErrorCode};
+    use superbackup_core::ipc::protocol::ErrorPayload;
+
+    let original = Error::Config("the vault has no entry for that secret".into());
+    let wire = original.to_string();
+    assert_eq!(wire, "configuration error: the vault has no entry for that secret");
+
+    let payload =
+        ErrorPayload { code: ErrorCode::Config, message: wire.clone(), hint: None, detail: None };
+    let rebuilt = payload.into_error();
+
+    assert_eq!(rebuilt.to_string(), wire, "the prefix was applied a second time");
+    assert_eq!(rebuilt.code(), ErrorCode::Config, "the code must still survive");
+    assert_eq!(rebuilt.to_string().matches("configuration error").count(), 1);
 }

@@ -83,7 +83,7 @@ pub fn open_or_focus(paths: Paths, global: &crate::cli::GlobalArgs) -> ExitCode 
     let outcome = eframe::run_native(
         "superbackup",
         options,
-        Box::new(move |cc| Ok(Box::new(Window::new(&cc.egui_ctx, endpoint, timeout)))),
+        Box::new(move |cc| Ok(Box::new(Window::new(&cc.egui_ctx, endpoint, timeout, paths)))),
     );
 
     match outcome {
@@ -101,8 +101,8 @@ struct Window {
 }
 
 impl Window {
-    fn new(ctx: &egui::Context, endpoint: String, timeout: Duration) -> Window {
-        Window { app: app::App::new(ctx, endpoint, timeout) }
+    fn new(ctx: &egui::Context, endpoint: String, timeout: Duration, paths: Paths) -> Window {
+        Window { app: app::App::new(ctx, endpoint, timeout).with_paths(paths) }
     }
 }
 

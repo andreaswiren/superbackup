@@ -188,6 +188,18 @@ impl App {
                 widgets::text(ui, &destination.destination_name, Type::H2, t.text_primary);
                 ui.add_space(space::L);
                 widgets::status_badge(ui, destination.status);
+                // A replica's history is only readable if it says it is one.
+                // The name carried here is the source's name *at run time*, so
+                // a later rename cannot make an old run describe a chain that
+                // never existed.
+                if let Some(origin) = &destination.replicated_from {
+                    ui.add_space(space::M);
+                    widgets::neutral_badge(
+                        ui,
+                        &copy::chain::chain_line(&origin.destination_name),
+                        Some(Icon::Copy),
+                    );
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let (Some(started), Some(finished)) =
                         (destination.started_at, destination.finished_at)
@@ -202,6 +214,16 @@ impl App {
                 });
             });
             ui.add_space(space::L);
+
+            // "Skipped" with no reason is the single most common way a
+            // backup tool loses a user's trust: the run is not red, nothing
+            // says why, and the copy silently is not there. The reason is
+            // deliberately not styled as an error — a destination skipped
+            // because the one it copies from failed is not itself broken.
+            if let Some(reason) = &destination.skipped_reason {
+                widgets::banner(ui, widgets::BannerKind::Info, reason, None, |_| {});
+                ui.add_space(space::L);
+            }
 
             match &destination.snapshot_id {
                 Some(id) => {

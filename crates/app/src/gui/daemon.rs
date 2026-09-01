@@ -55,6 +55,13 @@ pub enum Intent {
     /// A destination probe, keyed by the destination it belongs to.
     TestDestination(uuid::Uuid),
     TestProvider(uuid::Uuid),
+    /// A bucket list was requested for the destination editor's picker, keyed
+    /// by the provider it was asked of. Distinct from [`Intent::TestProvider`]
+    /// so that listing buckets while editing a destination does not raise the
+    /// "provider tested" toast or overwrite the editor's own test result.
+    ListBuckets(uuid::Uuid),
+    /// The objects under one destination's prefix, keyed by the provider.
+    ListObjects(uuid::Uuid),
     CreateRepository(uuid::Uuid),
     Snapshots(uuid::Uuid),
     Browse(uuid::Uuid, String),

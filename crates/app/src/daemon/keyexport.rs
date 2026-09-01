@@ -487,6 +487,7 @@ mod tests {
                 tls: true,
                 path_style: false,
                 flavour: Default::default(),
+                admin_url: None,
             },
             created_at: Utc::now(),
             last_verified_at: None,

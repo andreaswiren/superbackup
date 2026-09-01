@@ -50,13 +50,22 @@ impl State {
 
 /// `UX_SPEC.md` §10.1. Destinations is the remainder — the fan-out is the one
 /// column that must never be dropped — and uploaded goes first.
-const RUN_COLUMNS: [ColumnSpec; 6] = [
+/// Every column the table actually builds except the flexible one.
+///
+/// The trailing chevron is in the list even though it is never dropped and
+/// nothing branches on it. It has to be: `fit_columns` decides what fits by
+/// adding these widths up, and a column the table draws but the budget does
+/// not know about is simply overflow — 32 pixels of it plus a gap, which at
+/// the 900-pixel minimum window size was exactly enough to push the card past
+/// the right edge with no way for the flexible column to absorb it.
+const RUN_COLUMNS: [ColumnSpec; 7] = [
     ColumnSpec::keep("status", 32.0),
     ColumnSpec::keep("started", 120.0),
     ColumnSpec::keep("job", 160.0),
     ColumnSpec::droppable("trigger", 84.0, 2),
     ColumnSpec::droppable("duration", 76.0, 3),
     ColumnSpec::droppable("uploaded", 84.0, 1),
+    ColumnSpec::keep("chevron", 32.0),
 ];
 
 impl App {
@@ -174,7 +183,10 @@ impl App {
         }
 
         let shown = viewmodel::fit_columns(
-            ui.available_width(),
+            // The table card insets its content, and this is measured before
+            // that frame is entered, so the budget has to lose both sides or
+            // the last column is pushed past the card edge.
+            ui.available_width() - widgets::TABLE_GUTTER,
             150.0,
             ui.spacing().item_spacing.x,
             &RUN_COLUMNS,

@@ -867,6 +867,7 @@ mod tests {
             health: Health::Running,
             version: "0".into(),
             machine_label: "pc".into(),
+            machine_hostname: "pc".into(),
             machine_slug: "pc".into(),
             unlocked: true,
             paused: false,

@@ -28,6 +28,7 @@ fn provider(name: &str) -> StorageProvider {
             tls: true,
             path_style: false,
             flavour: S3Flavour::Storj,
+            admin_url: None,
         },
         notes: String::new(),
         created_at: chrono::Utc::now(),

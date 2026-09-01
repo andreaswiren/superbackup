@@ -31,6 +31,16 @@ mod cli {
     }
 }
 
+/// The real `crate::build`, not a stub.
+///
+/// The status strip names it, and it is nothing but constants from the build
+/// script's environment — which is set for every target in this package, test
+/// binaries included. Including it by path costs nothing and cannot drift from
+/// what the window actually shows, unlike the hand-written `cli` stub above,
+/// which exists only because `crate::cli` is far too large to compile here.
+#[path = "../src/build.rs"]
+mod build;
+
 #[path = "../src/gui/mod.rs"]
 mod gui;
 
@@ -310,4 +320,142 @@ fn no_screen_draws_outside_the_window() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The bucket picker and the provider test, as view models
+// ---------------------------------------------------------------------------
+//
+// Driven as data, with no frame laid out. The states are the whole point of the
+// feature — a picker that becomes the only way in, or a working key reported as
+// broken, are behaviour bugs, not rendering bugs, and they should fail here.
+
+use superbackup_core::ipc::protocol::{BucketInfo, BucketsReply, ObjectInfo, ObjectsReply};
+
+fn buckets_reply(names: &[&str], listed: bool, credentials_ok: bool) -> BucketsReply {
+    BucketsReply {
+        provider_id: uuid::Uuid::nil(),
+        buckets: names
+            .iter()
+            .map(|n| BucketInfo { name: (*n).to_string(), created_at: None })
+            .collect(),
+        listed,
+        credentials_ok,
+        detail: (!listed).then(|| "the key may not list buckets".to_string()),
+        latency_ms: Some(10),
+    }
+}
+
+#[test]
+fn a_successful_listing_fills_the_picker() {
+    let mut state = gui::screens::destination_editor::State::default();
+    let provider = uuid::Uuid::new_v4();
+    state.buckets_requested(provider);
+    assert_eq!(state.picker(provider), gui::screens::destination_editor::BucketPicker::Loading);
+    state.buckets_arrived(provider, &buckets_reply(&["a", "b"], true, true));
+    assert_eq!(
+        state.picker(provider),
+        gui::screens::destination_editor::BucketPicker::Ready(vec!["a".into(), "b".into()])
+    );
+}
+
+#[test]
+fn a_key_that_cannot_list_leaves_the_picker_unavailable_and_never_blocks() {
+    // The scoped-key case. The credentials are fine; the list is not
+    // available; the destination must still be creatable by typing.
+    let mut state = gui::screens::destination_editor::State::default();
+    let provider = uuid::Uuid::new_v4();
+    state.buckets_arrived(provider, &buckets_reply(&[], false, true));
+    let gui::screens::destination_editor::BucketPicker::Unavailable(detail) =
+        state.picker(provider)
+    else {
+        panic!("a refused listing must be `Unavailable`, not `Ready` and not a panic");
+    };
+    assert!(!detail.is_empty(), "the reason has to reach the user");
+
+    // Typing is untouched by any of this: the field is plain state that the
+    // picker never owns.
+    state.bucket_input = "typed-by-hand".into();
+    assert_eq!(state.bucket_input, "typed-by-hand");
+}
+
+#[test]
+fn a_listing_for_one_provider_is_not_shown_under_another() {
+    let mut state = gui::screens::destination_editor::State::default();
+    let storj = uuid::Uuid::new_v4();
+    let backblaze = uuid::Uuid::new_v4();
+    state.buckets_arrived(storj, &buckets_reply(&["storj-only"], true, true));
+    assert_eq!(
+        state.picker(backblaze),
+        gui::screens::destination_editor::BucketPicker::Idle,
+        "switching provider must not show the other account's buckets"
+    );
+}
+
+#[test]
+fn an_empty_account_is_an_answer_not_a_failure() {
+    let mut state = gui::screens::destination_editor::State::default();
+    let provider = uuid::Uuid::new_v4();
+    state.buckets_arrived(provider, &buckets_reply(&[], true, true));
+    assert_eq!(
+        state.picker(provider),
+        gui::screens::destination_editor::BucketPicker::Ready(Vec::new())
+    );
+}
+
+fn objects_reply(keys: &[&str], listed: bool, holds_repository: bool) -> ObjectsReply {
+    ObjectsReply {
+        bucket: "b".into(),
+        prefix: "p/".into(),
+        keys: keys
+            .iter()
+            .map(|k| ObjectInfo { key: (*k).to_string(), size: 1, last_modified: None })
+            .collect(),
+        truncated: false,
+        holds_repository,
+        listed,
+        detail: (!listed).then(|| "offline".to_string()),
+    }
+}
+
+#[test]
+fn the_prefix_check_distinguishes_a_repository_from_clutter_from_nothing() {
+    use gui::screens::destination_editor::PrefixCheck;
+    let provider = uuid::Uuid::new_v4();
+    let cases = [
+        (objects_reply(&["p/kopia.repository"], true, true), PrefixCheck::Repository),
+        (objects_reply(&["p/notes.txt"], true, false), PrefixCheck::Occupied),
+        (objects_reply(&[], true, false), PrefixCheck::Empty),
+    ];
+    for (reply, expected) in cases {
+        let mut state = gui::screens::destination_editor::State::default();
+        state.objects_arrived(provider, &reply);
+        assert_eq!(state.prefix_state(provider), Some(expected));
+    }
+    let mut state = gui::screens::destination_editor::State::default();
+    state.objects_arrived(provider, &objects_reply(&[], false, false));
+    assert!(matches!(state.prefix_state(provider), Some(PrefixCheck::Unavailable(_))));
+}
+
+#[test]
+fn a_scoped_key_is_a_qualified_success_in_the_provider_editor_not_a_failure() {
+    use gui::screens::provider_editor::ProbeState;
+    let mut state = gui::screens::provider_editor::State::default();
+    let provider = uuid::Uuid::new_v4();
+
+    state.probe(provider, &buckets_reply(&["one", "two"], true, true));
+    assert!(matches!(state.probe_state(provider), Some(ProbeState::Ok { .. })));
+
+    // Credentials proven, listing refused. This must not render as a failure:
+    // telling someone their working key is wrong is the one answer that is
+    // actively harmful.
+    state.probe(provider, &buckets_reply(&[], false, true));
+    assert!(
+        matches!(state.probe_state(provider), Some(ProbeState::Qualified { .. })),
+        "a refused listing with valid credentials is a qualified success"
+    );
+
+    // Credentials not proven at all is a genuine failure.
+    state.probe(provider, &buckets_reply(&[], false, false));
+    assert!(matches!(state.probe_state(provider), Some(ProbeState::Failed(_))));
 }

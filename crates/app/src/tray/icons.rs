@@ -1,72 +1,201 @@
-//! The five tray marks, generated from `DESIGN_SYSTEM.md` §7 and rasterised
-//! at run time.
+//! The five tray marks: the **application mark** with a status badge on it,
+//! generated from `DESIGN_SYSTEM.md` §7 and rasterised at run time.
 //!
-//! ## Why the SVG is generated rather than read from `assets/tray/`
+//! ## Why the mark is the base of every tray icon
 //!
-//! `assets/tray/README.md` says it plainly: the shipped SVGs are an earlier,
-//! single-variant design, kept only so that something renders. The
-//! specification they were superseded by needs things a fixed file cannot
-//! give:
+//! An earlier version of this module drew an abstract ring with a status pip.
+//! It encoded state well and carried no brand identity at all — it looked
+//! nothing like `assets/icons/superbackup.svg`, so the one place the
+//! application is seen all day did not say which application it was. People
+//! find a program in a crowded notification area by its icon; Dropbox, Docker
+//! Desktop and OneDrive all show the brand mark with status layered onto it,
+//! and for the same reason.
 //!
-//! * **Two variants per state on Windows**, swapped on the taskbar's
-//!   `SystemUsesLightTheme` preference, so each is genuinely high-contrast on
-//!   the taskbar it is actually drawn on rather than a compromise that is
-//!   optimal on neither.
-//! * **A macOS template image**, which is pure black plus alpha with every
-//!   colour stripped — the same geometry, a different palette.
-//! * **Twelve animation frames** for the running state, at 30° apart.
+//! The reasoning that led to the ring was sound but stopped one step short:
+//! five states must stay distinguishable at 16 px *and* under macOS's
+//! monochrome template rendering, and a brand mark alone cannot encode status.
+//! The conclusion drawn was that the mark had to be abandoned. The conclusion
+//! available was that the mark had to be **combined** with a status indicator.
 //!
-//! That is five states × two Windows variants, plus a template set, plus
-//! twelve frames — around forty files to keep in sync by hand. Generating them
-//! from one parameterised description means the geometry cannot drift between
-//! variants, which is exactly the property §7.2's "shape carries state, colour
-//! is confirmation" depends on.
+//! So: every mark is the interlock — one rounded square cut along a stepped
+//! line into two congruent halves, the lower one slid down-right so the cut
+//! opens into a kerf — with a circular well knocked out of its bottom-right
+//! corner and one bold status glyph sitting in that well.
 //!
-//! ## Geometry (§7.1), verbatim
+//! ## What carries the state
 //!
-//! Canvas 32 × 32, centred on (16, 16), round joins and caps.
+//! The **badge's silhouette**, never an interior detail and never colour:
 //!
-//! * Ring: circle at (16, 16), radius 10.5, stroke 3.0.
-//! * Open ring: the same circle as a 280° arc, leaving an 80° gap centred on
-//!   the +45° (down-right) direction. Arc start 85°, sweep 280° clockwise,
-//!   0° = east with y pointing down.
-//! * Pip: circle at (23, 23), radius 6.0, filled, separated from the arc by a
-//!   1.5-unit knockout so the mark composites correctly on any taskbar colour.
-//! * Pip glyph: stroke 2.4 in `pip.ink`.
-//! * Safe area: nothing within 1 unit of the edge.
+//! | `Health` | Badge | Why it survives 16 px |
+//! |---|---|---|
+//! | `Idle` | a filled disc | solid, no interior structure at all |
+//! | `Running` | the same disc opened into a ring with a gap that rotates | the only badge with a hole in the middle |
+//! | `Attention` | a triangle | the only badge with a flat base and a point |
+//! | `Paused` | two bars | the only badge that is not one connected shape |
+//! | `Failed` | a cross | the only badge made of diagonals |
 //!
-//! The knockout is a real cutout, not a background-coloured stroke: a stroke
-//! painted in "the taskbar colour" is wrong the moment the user changes their
-//! accent, and wrong always on Linux panels that are not the colour we
-//! guessed.
+//! `Idle` and `Running` are deliberately the same circle — whole, then opened
+//! and turning. Nothing is distinguished by an interior glyph, because that is
+//! precisely what failed before: a 2.4-unit glyph inside a 6-unit pip is
+//! 1.2 px at 16 px, and `attention` and `failed` became the same smear.
+//!
+//! ## One drawing, not two
+//!
+//! The previous design needed a `LARGE` and a `SMALL` profile because its
+//! proportions did not survive 16 px. This one is *drawn* at the 16 px floor:
+//! every feature is at least 3.0 canvas units, which is 1.5 px at 16 px, so
+//! the same drawing is used at every size and there is no profile switch to
+//! get wrong. The floor is asserted by `no_feature_falls_below_the_stroke_floor`.
+//!
+//! ## Geometry (§7.1)
+//!
+//! Canvas 32 × 32.
+//!
+//! * Mark: bounding box 24.5 units square with its top-left at (0.7, 0.7);
+//!   kerf 3.1; corner radius, cut step and inner radius are fractions of the
+//!   square's side, exactly as `assets/icons/superbackup-mono.svg` draws them.
+//! * Badge: centred (24.5, 24.5), every glyph inscribed in a circle of radius
+//!   6.8, stroke 3.4 (4.08 on diagonals — a diagonal antialiases across two
+//!   pixel columns and reads lighter than an axis-aligned stroke of the same
+//!   width).
+//! * Clear space: a disc of radius 6.8 + 2.8 is knocked out of the mark's
+//!   alpha. It is a real cutout, not a stroke painted in "the taskbar colour":
+//!   such a stroke is wrong the moment the user changes their accent, and
+//!   always wrong on a Linux panel whose colour we did not guess.
+//! * The composition spans 0.7 … 31.3 in both axes — the same 0.7-unit margin
+//!   the mark has, so the icon fills its slot the way the shell's own icons do.
+//!
+//! **The mark stays in one piece.** The knockout is a disc taken out of the
+//! lower half's inner corner, and if it reaches too far that half is severed
+//! into two fragments and the mark stops reading as *two congruent pieces* —
+//! which is the entire idea. A 25.5-unit mark did exactly that: connected in
+//! the vector, three fragments once rasterised at 16 px and 20 px. 24.5 is the
+//! largest span that stays two pieces at every size, and
+//! `the_mark_is_two_pieces_at_every_size` holds the line.
 
 use std::collections::HashMap;
-use std::f32::consts::PI;
+use std::f32::consts::{PI, SQRT_2};
 use std::sync::Mutex;
 
 use superbackup_core::state::Health;
 
 /// The design canvas. Every coordinate below is in these units.
-const CANVAS: f32 = 32.0;
+pub const CANVAS: f32 = 32.0;
 
-/// Ring geometry, §7.1. Shared by every profile.
-const CENTRE: f32 = 16.0;
-const RING_RADIUS: f32 = 10.5;
-const RING_STROKE: f32 = 3.0;
+// ---------------------------------------------------------------------------
+// The mark
+// ---------------------------------------------------------------------------
 
-/// Where the gap in the open ring is centred: the down-right diagonal, §7.1.
-const GAP_BEARING_DEG: f32 = 45.0;
+/// Side of the mark's bounding square, and the top-left it is placed at.
+///
+/// The largest span whose lower half survives the badge knockout as one piece
+/// at 16 px — see the module docs.
+pub const MARK_SPAN: f32 = 24.5;
+pub const MARK_ORIGIN: f32 = 0.7;
 
-/// Pip centre, §7.1. Its *radius* is per profile.
-const PIP_X: f32 = 23.0;
-const PIP_Y: f32 = 23.0;
+/// The gap the slid half opens up. 3.1 units is 1.55 px at 16 px; below the
+/// 1.5 px floor the two halves fuse into one blob and the mark loses the only
+/// thing that says it is two pieces.
+pub const KERF: f32 = 3.1;
 
-/// Clear space between the pip and the arc, §7.1.
-const PIP_KNOCKOUT: f32 = 1.5;
+/// Corner radius, cut step and inner-corner radius, as fractions of the square's
+/// side. The same three numbers `tools/icons/geometry.py` draws the monochrome
+/// application mark with.
+const CORNER_FRACTION: f32 = 0.20;
+const STEP_FRACTION: f32 = 0.30;
+const INNER_FRACTION: f32 = 0.045;
+
+// ---------------------------------------------------------------------------
+// The badge
+// ---------------------------------------------------------------------------
+
+/// Badge centre. On the down-right diagonal, which is the direction the copied
+/// half slides — the mark already points at this corner.
+pub const BADGE_X: f32 = 24.5;
+pub const BADGE_Y: f32 = 24.5;
+
+/// Every badge glyph is inscribed in this radius, so the clear space around it
+/// is guaranteed by construction rather than checked shape by shape.
+pub const BADGE_RADIUS: f32 = 6.8;
+
+/// Badge stroke. 1.7 px at 16 px.
+pub const BADGE_STROKE: f32 = 3.4;
+
+/// Clear space between the badge and the mark, knocked out of the mark's alpha.
+///
+/// 2.8 units is 1.4 px at 16 px, which is under the 1.5 px stroke floor — and
+/// deliberately so, because this is a *gap*, not a stroke. A stroke has to show
+/// its shape; a gap only has to break contact, and the number was picked by
+/// measuring where it stops doing that rather than by rounding up to the floor:
+///
+/// | Clearance | Badge separate from the mark at 16 px? |
+/// |---|---|
+/// | 2.4 | **no** — in the template, where mark and badge are the same black, `running`, `paused` and `failed` fuse into the mark |
+/// | 2.6 | yes, at every size, state, variant and alpha threshold |
+/// | 2.8 | yes, with margin — what is used |
+///
+/// Taking it to 3.0 would work too, but only by shrinking the mark from 24.5
+/// units to 21.7 to keep the lower half in one piece — a tenth of the mark's
+/// width paid for a gap that is already sufficient at 2.8.
+/// `the_badge_never_touches_the_mark` is the standing check.
+pub const BADGE_CLEARANCE: f32 = 2.8;
+
+/// Diagonal strokes are drawn this much heavier than axis-aligned ones.
+///
+/// A diagonal spreads its coverage over two pixel columns, so a 3.4-unit
+/// diagonal reads visibly lighter than a 3.4-unit vertical at 16 px. `failed`
+/// is the state that must never be the faintest thing on the taskbar.
+const DIAGONAL_WEIGHT: f32 = 1.20;
+
+/// `idle`'s disc, as a fraction of the badge radius. Nearly filling the badge
+/// circle is deliberate: it pairs with `running`, which is the same circle
+/// opened into a ring.
+const IDLE_DISC: f32 = 0.88;
+
+/// Rounding on the `attention` triangle's corners, as a fraction of the badge
+/// radius.
+const TRIANGLE_CORNER: f32 = 0.20;
+
+/// `paused`'s bars: how far each sits from the centre (× stroke) and how tall
+/// it is (× the ring radius).
+///
+/// The offset is set by the *gap*, not by taste: two bars that merge are one
+/// bar, so `2 · offset · stroke − stroke` has to clear [`FEATURE_FLOOR`]. At
+/// 0.92 it was 2.86 units — 1.43 px at 16 px — and
+/// `no_feature_falls_below_the_stroke_floor` rejected it.
+const PAUSE_OFFSET: f32 = 0.97;
+const PAUSE_HEIGHT: f32 = 1.45;
 
 /// Running animation, §7.2: twelve frames.
 pub const RUNNING_FRAMES: usize = 12;
-const RUNNING_ARC_DEG: f32 = 90.0;
+
+/// How much of the ring is drawn, and where the gap starts on frame 0. 0° is
+/// east, y down.
+const RUNNING_SWEEP_DEG: f32 = 250.0;
+const RUNNING_PHASE_DEG: f32 = 55.0;
+
+/// The smallest feature any variant may render, in canvas units.
+///
+/// One canvas unit is half a pixel at 16 px, so 3.0 units is the 1.5 px floor
+/// §7.1 sets. Everything above is measured against it by
+/// `no_feature_falls_below_the_stroke_floor`.
+pub const FEATURE_FLOOR: f32 = 3.0;
+
+/// The floor, for the constants that are knowable without arithmetic on a
+/// profile: a build that lowers one of these does not compile.
+///
+/// `no_feature_falls_below_the_stroke_floor` covers the derived features too —
+/// the mark's thinnest limb, the ring's hole, the gap between `paused`'s bars —
+/// which need the products and differences a `const` context cannot take the
+/// square root of.
+const _: () = {
+    assert!(KERF >= FEATURE_FLOOR);
+    assert!(BADGE_STROKE >= FEATURE_FLOOR);
+    // And the composition stays inside the canvas with the same margin on all
+    // four sides, so the icon fills its slot without touching the edge.
+    assert!(BADGE_X + BADGE_RADIUS <= CANVAS - MARK_ORIGIN);
+    assert!(MARK_ORIGIN + MARK_SPAN <= CANVAS - MARK_ORIGIN);
+};
 
 /// The size a mark is rasterised at when nothing better is known.
 ///
@@ -75,131 +204,16 @@ const RUNNING_ARC_DEG: f32 = 90.0;
 /// the size the reference assets in `assets/tray/` are drawn at.
 pub const RASTER_SIZE: u32 = 32;
 
-/// At or below this many pixels, the chunky profile is used.
-///
-/// 20 px is the 125% DPI notification-area size on Windows. §7.1's
-/// proportions survive at 24 and above and do not at 16 or 20 — see
-/// [`Profile`].
-pub const SMALL_PROFILE_MAX: u32 = 20;
-
-/// Everything about a mark that changes with the size it is drawn at.
-///
-/// # Why size-specific proportions exist at all
-///
-/// §7.1 fixes one set of numbers on a 32-unit canvas and §7.3 says shape, not
-/// colour, carries the state. Those two cannot both hold at every size, and
-/// rasterising proved it: at 16 px one canvas unit is half a pixel, so the
-/// specified 2.4-unit glyph stroke lands at **1.2 px** and the exclamation's
-/// 1.3-unit dot at 0.65 px — both under §7.1's own "no stroke below 1.5 px at
-/// 16 px" rule. The result is that `attention` and `failed` become an open
-/// ring plus an indistinct smear, told apart only by that smear's *lightness*
-/// — which is precisely the colour-only distinction §7.2 forbids, and which
-/// vanishes completely in the macOS template where both are the same hole.
-///
-/// It held at 24 px and above and failed at 16 and 20, which on Windows is the
-/// common case.
-///
-/// So the mark gets a second profile. Below 24 px the pip grows and the glyph
-/// thickens past the 1.5 px floor, and the mark is chunkier than the drawing
-/// at 32 px. That is the right trade: a chunky mark somebody can read beats an
-/// elegant one nobody can.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Profile {
-    /// Radius of the filled status pip.
-    pub pip_radius: f32,
-    /// Stroke width of the glyph drawn inside the pip.
-    pub pip_stroke: f32,
-    /// The exclamation's bar, as `(top, bottom)`.
-    pub bar: (f32, f32),
-    /// The exclamation's dot: radius, and its centre's y.
-    pub dot: (f32, f32),
-    /// How far each arm of the cross reaches from the pip's centre.
-    pub cross_reach: f32,
-    /// Radius of the solid disc at the centre of the `idle` mark.
-    pub centre_dot: f32,
-}
-
-/// §7.1's numbers, unchanged. Used at 24 px and above, where they work.
-pub const LARGE: Profile = Profile {
-    pip_radius: 6.0,
-    pip_stroke: 2.4,
-    bar: (19.8, 23.4),
-    dot: (1.3, 26.0),
-    cross_reach: 2.97,
-    centre_dot: 3.0,
-};
-
-/// The chunky profile, for 16 px and 20 px.
-///
-/// Every number is driven by one constraint: at 16 px a canvas unit is half a
-/// pixel, so nothing may be thinner than 3.0 units. The glyph stroke is 3.2
-/// (1.6 px), the pip grows to 7.6 so the glyph still fits inside it with a
-/// margin, and the exclamation's bar and dot are pulled apart to 2.35 units
-/// (1.18 px) of clear space so the two stay two shapes rather than merging
-/// into one blob.
-///
-/// The pip at radius 7.6 spans 15.4–30.6 on the canvas, inside §7.1's
-/// one-unit safe area.
-pub const SMALL: Profile = Profile {
-    pip_radius: 7.6,
-    pip_stroke: 3.2,
-    bar: (17.8, 21.8),
-    dot: (1.85, 27.6),
-    cross_reach: 3.5,
-    centre_dot: 3.6,
-};
-
-impl Profile {
-    /// The profile to draw a mark of `size` pixels with.
-    pub fn for_size(size: u32) -> Profile {
-        if size <= SMALL_PROFILE_MAX {
-            SMALL
-        } else {
-            LARGE
-        }
-    }
-
-    /// Start angle and sweep of the open ring, derived rather than fixed.
-    ///
-    /// §7.1 specifies "arc start 85°, sweep 280°, round caps" and a 1.5-unit
-    /// knockout separating the pip from the arc. Those numbers contradict each
-    /// other. The knockout disc — radius `pip_radius + 1.5`, centred on the
-    /// pip — cuts the ring circle over 45° ± 43°, i.e. 2°–88°, while the
-    /// specified gap is only 5°–85°. The knockout is *wider than the gap it is
-    /// meant to clear*, so it slices both round terminals off the arc and
-    /// leaves flat crescents. "Sweep 280° with round caps" does not describe
-    /// what is drawn.
-    ///
-    /// Of the two ways out — shrink the pip to 4.0 units, or widen the gap —
-    /// only widening survives 16 px: shrinking the pip makes the glyph
-    /// legibility problem worse, and the pip is the thing carrying the state.
-    ///
-    /// So the gap is *computed* from the pip instead of being another constant
-    /// that can drift away from it: half the gap is the knockout's own
-    /// half-angle, plus the angle the arc's round cap subtends, plus two
-    /// degrees of daylight. A future change to the pip radius re-derives the
-    /// arc automatically, and
-    /// `the_round_caps_survive_the_knockout` asserts the relationship holds.
-    pub fn arc_span(&self) -> (f32, f32) {
-        let pip_distance = ((PIP_X - CENTRE).powi(2) + (PIP_Y - CENTRE).powi(2)).sqrt();
-        let knockout = self.pip_radius + PIP_KNOCKOUT;
-        // Law of cosines: where the knockout circle crosses the ring circle.
-        let cosine = (pip_distance.powi(2) + RING_RADIUS.powi(2) - knockout.powi(2))
-            / (2.0 * pip_distance * RING_RADIUS);
-        let knockout_half = cosine.clamp(-1.0, 1.0).acos().to_degrees();
-        // A round cap projects half a stroke width beyond the path's endpoint.
-        let cap_half = ((RING_STROKE / 2.0) / RING_RADIUS).asin().to_degrees();
-        let gap_half = knockout_half + cap_half + 2.0;
-        (GAP_BEARING_DEG + gap_half, 360.0 - 2.0 * gap_half)
-    }
-}
+// ---------------------------------------------------------------------------
+// Variants
+// ---------------------------------------------------------------------------
 
 /// Which taskbar the mark is being drawn on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Variant {
-    /// Light taskbar: dark ink. §7.4 `-light`, ring ink `#22262E`.
+    /// Light taskbar: dark ink. §7.4 `-light`, mark ink `#22262E`.
     LightTaskbar,
-    /// Dark taskbar: light ink. §7.4 `-dark`, ring ink `#E8ECF2`.
+    /// Dark taskbar: light ink. §7.4 `-dark`, mark ink `#E8ECF2`.
     DarkTaskbar,
     /// macOS template image: pure black plus alpha, no colour at all. The OS
     /// inverts it for a dark menu bar, so state must be carried entirely by
@@ -225,7 +239,8 @@ impl Variant {
         }
     }
 
-    fn ring_ink(self) -> &'static str {
+    /// The ink the application mark itself is drawn in.
+    pub fn mark_ink(self) -> &'static str {
         match self {
             Variant::LightTaskbar => "#22262E",
             Variant::DarkTaskbar => "#E8ECF2",
@@ -233,60 +248,31 @@ impl Variant {
         }
     }
 
-    /// Whether chromatic accents survive. They do not in a template image.
-    fn colour(self, chromatic: &'static str) -> &'static str {
+    /// The ink the status badge is drawn in.
+    ///
+    /// Variant-aware for every state, which the previous design was not: it
+    /// fixed `#E0A83A` and `#C2313A` for both taskbars, and those are 1.92:1
+    /// on a light taskbar and 2.94:1 on a dark one — both under SC 1.4.11's
+    /// 3:1, and the second is the *failure* state. Every value here is a §2
+    /// token chosen for the taskbar it is drawn on, and the worst of the ten
+    /// is 4.95:1. See `assets/tray/README.md` for the measured table.
+    pub fn badge_ink(self, health: Health) -> &'static str {
         match self {
             Variant::Template => "#000000",
-            _ => chromatic,
-        }
-    }
-
-    /// The ink drawn *inside* a coloured pip, for the two Windows variants.
-    ///
-    /// A template image never reaches here: see [`svg`], which punches its
-    /// glyph out of the pip's alpha instead of painting one on top.
-    fn pip_ink(self, chromatic: &'static str) -> &'static str {
-        chromatic
-    }
-
-    /// The dim ring the `running` mark's moving arc travels along.
-    ///
-    /// §7.2 fixes this at `#3A4250` for both Windows variants, and that is
-    /// wrong on one of them: it is 9.12:1 on a light taskbar and **1.61:1** on
-    /// a dark one, so on a dark taskbar the base ring disappears and only the
-    /// blue arc remains. `running` then stops sharing the ring silhouette that
-    /// makes all five marks read as one application — which is the whole
-    /// premise of §7.2.
-    ///
-    /// So it is variant-aware, like every other ink in §7.4. The dark-taskbar
-    /// value is §7.2's own neutral `#8B93A5` (about 5.1:1 on `#202020`):
-    /// clearly present, and still dim enough that the moving arc reads as the
-    /// thing that is moving.
-    fn base_arc_ink(self) -> &'static str {
-        match self {
-            Variant::LightTaskbar => "#3A4250",
-            Variant::DarkTaskbar => "#8B93A5",
-            Variant::Template => "#000000",
-        }
-    }
-
-    /// The arc that travels round the `running` mark.
-    ///
-    /// Variant-aware for the same reason the base arc is, and it is the same
-    /// defect: §7.2's `#5B9BFF` is 5.88:1 on a dark taskbar and **2.50:1** on
-    /// a light one, so on a light taskbar the moving half of the mark is the
-    /// part that fades out. Fixing only the base arc would have left `running`
-    /// half-invisible on light taskbars instead of on dark ones.
-    ///
-    /// The light-taskbar value is the design system's own §2.2 `info` token
-    /// `#155FCC` (5.35:1 on `#F3F3F3`), so no new colour is invented — this is
-    /// §7.4's existing "two variants per state" rule applied to an ink that
-    /// had been left out of it.
-    fn moving_arc_ink(self) -> &'static str {
-        match self {
-            Variant::LightTaskbar => "#155FCC",
-            Variant::DarkTaskbar => "#5B9BFF",
-            Variant::Template => "#000000",
+            Variant::LightTaskbar => match health {
+                Health::Idle => "#12793B",      // §2.2 success
+                Health::Running => "#155FCC",   // §2.2 info
+                Health::Attention => "#8A5B00", // §2.2 warning
+                Health::Paused => "#5E6774",    // §2.2 neutral
+                Health::Failed => "#B3242B",    // §2.2 danger.fill
+            },
+            Variant::DarkTaskbar => match health {
+                Health::Idle => "#4FBF6B",      // §2.1 success
+                Health::Running => "#5B9BFF",   // §2.1 accent
+                Health::Attention => "#E0A83A", // §2.1 warning
+                Health::Paused => "#8B93A5",    // §2.1 neutral
+                Health::Failed => "#FF6B72",    // §2.1 danger
+            },
         }
     }
 }
@@ -351,193 +337,267 @@ impl IconKey {
 }
 
 // ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
+/// Three decimals, trailing zeros trimmed. Keeps the generated document small
+/// and, more usefully, keeps it diffable against `tools/icons/geometry.py`,
+/// which formats the same way.
+fn n(value: f32) -> String {
+    let mut text = format!("{value:.3}");
+    if text.contains('.') {
+        text = text.trim_end_matches('0').trim_end_matches('.').to_string();
+    }
+    if text == "-0" || text.is_empty() {
+        "0".to_string()
+    } else {
+        text
+    }
+}
+
+/// Path data for a closed polygon with a per-vertex corner radius.
+///
+/// Handles reflex corners: the mark's inner corners turn the other way, and a
+/// naive implementation sweeps those arcs backwards and draws a bow tie. Mirrors
+/// `rounded_polygon` in `tools/icons/geometry.py` line for line, because the
+/// reference SVGs in `assets/tray/` and the marks this module draws at run time
+/// have to be the same drawing.
+fn rounded_polygon(points: &[(f32, f32, f32)]) -> String {
+    let count = points.len();
+    let mut segments: Vec<String> = Vec::with_capacity(count * 2 + 1);
+
+    for i in 0..count {
+        let (px, py, requested) = points[i];
+        let (ax, ay, _) = points[(i + count - 1) % count];
+        let (bx, by, _) = points[(i + 1) % count];
+
+        let v1 = (ax - px, ay - py);
+        let v2 = (bx - px, by - py);
+        let l1 = v1.0.hypot(v1.1).max(f32::MIN_POSITIVE);
+        let l2 = v2.0.hypot(v2.1).max(f32::MIN_POSITIVE);
+        let u1 = (v1.0 / l1, v1.1 / l1);
+        let u2 = (v2.0 / l2, v2.1 / l2);
+
+        // Clamp so neighbouring corners cannot eat each other's edge.
+        let radius = requested.min(l1 / 2.0).min(l2 / 2.0);
+        if radius <= 0.0005 {
+            let lead = if segments.is_empty() { "M" } else { "L" };
+            segments.push(format!("{lead} {} {}", n(px), n(py)));
+            continue;
+        }
+
+        let angle = (u1.0 * u2.0 + u1.1 * u2.1).clamp(-1.0, 1.0).acos();
+        let mut setback = if angle > 1e-6 { radius / (angle / 2.0).tan() } else { 0.0 };
+        setback = setback.min(l1 / 2.0).min(l2 / 2.0);
+        // Recover the radius the clamped setback actually implies.
+        let radius = setback * (angle / 2.0).tan();
+
+        let start = (px + u1.0 * setback, py + u1.1 * setback);
+        let end = (px + u2.0 * setback, py + u2.1 * setback);
+        // The cross product's sign gives the turn direction, which is the sweep.
+        let cross = u1.0 * u2.1 - u1.1 * u2.0;
+        let sweep = if cross > 0.0 { 0 } else { 1 };
+
+        let lead = if segments.is_empty() { "M" } else { "L" };
+        segments.push(format!("{lead} {} {}", n(start.0), n(start.1)));
+        segments.push(format!(
+            "A {} {} 0 0 {sweep} {} {}",
+            n(radius),
+            n(radius),
+            n(end.0),
+            n(end.1)
+        ));
+    }
+    segments.push("Z".to_string());
+    segments.join(" ")
+}
+
+/// The two congruent halves of the application mark.
+///
+/// Returns the path data for one half and the transform that produces the
+/// other. The second piece is the first **rotated 180°** about the square's
+/// centre and translated by `(KERF, KERF)`; that translation is the only thing
+/// that opens the cut, which is why the kerf is exactly uniform along every
+/// segment of it without a single hand-placed coordinate. The two pieces are
+/// congruent by construction — a backup that is not identical to the original
+/// is not a backup, and the mark cannot be drawn any other way.
+fn interlock() -> (String, String) {
+    let side = MARK_SPAN - KERF;
+    let radius = side * CORNER_FRACTION;
+    let step = side * STEP_FRACTION;
+    let inner = side * INNER_FRACTION;
+
+    // The union spans `side + KERF` = MARK_SPAN, so the first piece starts at 0.
+    let (x0, y0) = (0.0_f32, 0.0_f32);
+    let x1 = x0 + side;
+    let cx = x0 + side / 2.0;
+    let cy = y0 + side / 2.0;
+
+    let piece = rounded_polygon(&[
+        (x0, y0, radius),       // outer top-left
+        (x1, y0, radius),       // outer top-right
+        (x1, cy - step, inner), // the cut leaves the right edge
+        (cx, cy - step, inner), // inner corner (reflex)
+        (cx, cy + step, inner), // inner corner
+        (x0, cy + step, inner), // the cut leaves the left edge
+    ]);
+    let transform = format!("translate({} {}) rotate(180 {} {})", n(KERF), n(KERF), n(cx), n(cy));
+    (piece, transform)
+}
+
+/// Point on a circle at `degrees`, with 0° = east and y increasing downwards.
+fn on_circle(cx: f32, cy: f32, radius: f32, degrees: f32) -> (f32, f32) {
+    let radians = degrees * PI / 180.0;
+    (cx + radius * radians.cos(), cy + radius * radians.sin())
+}
+
+// ---------------------------------------------------------------------------
+// The badge
+// ---------------------------------------------------------------------------
+
+/// The radius the stroked badge glyphs are drawn on, so their outer edge lands
+/// exactly on [`BADGE_RADIUS`].
+fn ring_radius() -> f32 {
+    BADGE_RADIUS - BADGE_STROKE / 2.0
+}
+
+/// Half the diagonal reach of `failed`'s cross, sized so its round caps also
+/// land on [`BADGE_RADIUS`].
+fn cross_reach() -> f32 {
+    (BADGE_RADIUS - BADGE_STROKE * DIAGONAL_WEIGHT / 2.0) / SQRT_2
+}
+
+/// The badge for one state, painted in `ink`.
+///
+/// Every shape here is inscribed in a circle of [`BADGE_RADIUS`] about the badge
+/// centre. That is not an aesthetic preference: the clear space in the mark is a
+/// disc of `BADGE_RADIUS + BADGE_CLEARANCE`, so inscribing the glyph is what
+/// makes the clearance true for every state without measuring each one.
+fn badge(health: Health, frame: usize, ink: &str) -> String {
+    let stroke = n(BADGE_STROKE);
+    match health {
+        Health::Idle => format!(
+            "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{ink}\"/>",
+            n(BADGE_X),
+            n(BADGE_Y),
+            n(BADGE_RADIUS * IDLE_DISC)
+        ),
+        Health::Running => {
+            // The same circle as `idle`, opened into a ring whose gap travels
+            // round it. The animation is carried by *alpha*, not colour, so it
+            // survives the macOS template — and the ring's hole is what keeps
+            // `running` distinct from `idle` in a single still frame.
+            let radius = ring_radius();
+            let start = RUNNING_PHASE_DEG + frame as f32 * 360.0 / RUNNING_FRAMES as f32;
+            let (x0, y0) = on_circle(BADGE_X, BADGE_Y, radius, start);
+            let (x1, y1) = on_circle(BADGE_X, BADGE_Y, radius, start + RUNNING_SWEEP_DEG);
+            let large = if RUNNING_SWEEP_DEG > 180.0 { 1 } else { 0 };
+            format!(
+                "<path d=\"M {} {} A {} {} 0 {large} 1 {} {}\" fill=\"none\" stroke=\"{ink}\" \
+                 stroke-width=\"{stroke}\" stroke-linecap=\"round\"/>",
+                n(x0),
+                n(y0),
+                n(radius),
+                n(radius),
+                n(x1),
+                n(y1)
+            )
+        }
+        Health::Attention => {
+            // An equilateral triangle inscribed in the badge circle: the
+            // largest triangle that fits, 1.73 r across by 1.5 r tall, so its
+            // flat base and its point cannot be read as `idle`'s disc.
+            let mut points = Vec::with_capacity(3);
+            for k in 0..3 {
+                let angle = -90.0 + 120.0 * k as f32;
+                let (x, y) = on_circle(BADGE_X, BADGE_Y, BADGE_RADIUS, angle);
+                points.push((x, y, BADGE_RADIUS * TRIANGLE_CORNER));
+            }
+            format!(
+                "<path d=\"{}\" fill=\"{ink}\" stroke-linejoin=\"round\"/>",
+                rounded_polygon(&points)
+            )
+        }
+        Health::Paused => {
+            // The only badge that is not one connected shape.
+            let offset = BADGE_STROKE * PAUSE_OFFSET;
+            let half = ring_radius() * PAUSE_HEIGHT / 2.0;
+            format!(
+                "<path d=\"M {} {} L {} {} M {} {} L {} {}\" fill=\"none\" stroke=\"{ink}\" \
+                 stroke-width=\"{stroke}\" stroke-linecap=\"round\"/>",
+                n(BADGE_X - offset),
+                n(BADGE_Y - half),
+                n(BADGE_X - offset),
+                n(BADGE_Y + half),
+                n(BADGE_X + offset),
+                n(BADGE_Y - half),
+                n(BADGE_X + offset),
+                n(BADGE_Y + half)
+            )
+        }
+        Health::Failed => {
+            // The only badge made of diagonals, and the only one drawn heavier
+            // than BADGE_STROKE — see DIAGONAL_WEIGHT.
+            let a = cross_reach();
+            format!(
+                "<path d=\"M {} {} L {} {} M {} {} L {} {}\" fill=\"none\" stroke=\"{ink}\" \
+                 stroke-width=\"{}\" stroke-linecap=\"round\"/>",
+                n(BADGE_X - a),
+                n(BADGE_Y - a),
+                n(BADGE_X + a),
+                n(BADGE_Y + a),
+                n(BADGE_X + a),
+                n(BADGE_Y - a),
+                n(BADGE_X - a),
+                n(BADGE_Y + a),
+                n(BADGE_STROKE * DIAGONAL_WEIGHT)
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SVG generation
 // ---------------------------------------------------------------------------
 
-/// Point on the ring at `degrees`, with 0° = east and y increasing downwards.
-fn on_ring(degrees: f32) -> (f32, f32) {
-    let radians = degrees * PI / 180.0;
-    (CENTRE + RING_RADIUS * radians.cos(), CENTRE + RING_RADIUS * radians.sin())
-}
-
-/// An SVG arc path along the ring, clockwise from `start` for `sweep` degrees.
-fn arc_path(start_deg: f32, sweep_deg: f32) -> String {
-    let (x0, y0) = on_ring(start_deg);
-    let (x1, y1) = on_ring(start_deg + sweep_deg);
-    // `large-arc` is 1 past a half turn; `sweep` is 1 for clockwise in SVG's
-    // y-down coordinate system, which is the direction §7.1 specifies.
-    let large = if sweep_deg.abs() > 180.0 { 1 } else { 0 };
-    format!("M {x0:.3} {y0:.3} A {RING_RADIUS} {RING_RADIUS} 0 {large} 1 {x1:.3} {y1:.3}")
-}
-
-/// The span of the travelling arc on `frame`, clipped to the open ring.
-///
-/// The arc used to be drawn on the full circle, so on four frames in twelve it
-/// crossed the gap and the silhouette was momentarily a **closed** ring —
-/// which is exactly what distinguishes `idle` and `paused`. A transient
-/// collision with two other states is still a collision, and the fix costs
-/// four lines: the arc's centre travels the base span and its ends are clipped
-/// to it, so the mark reads as something moving *along* the ring and
-/// disappearing into the gap rather than sealing it.
-///
-/// Clipping the centre rather than the leading edge is what keeps every frame
-/// non-empty: at the extremes half the arc is still on the ring, so the mark
-/// never blinks out.
-fn travelling_arc(frame: usize, start: f32, sweep: f32) -> Option<(f32, f32)> {
-    let progress = (frame % RUNNING_FRAMES) as f32 / RUNNING_FRAMES as f32;
-    let centre = start + progress * sweep;
-    let head = (centre + RUNNING_ARC_DEG / 2.0).min(start + sweep);
-    let tail = (centre - RUNNING_ARC_DEG / 2.0).max(start);
-    let visible = head - tail;
-    (visible > 0.5).then_some((tail, visible))
-}
-
-/// The complete SVG document for one mark, drawn with `profile`.
+/// The complete SVG document for one mark.
 ///
 /// Returned as text rather than as a rendered tree so that it can be asserted
 /// on in tests, dumped for a designer to check against the spec, and written
 /// out as a build artefact without changing anything here.
-pub fn svg(key: IconKey, profile: Profile) -> String {
-    let variant = key.variant;
-    let ring = variant.ring_ink();
-    let (arc_start, arc_sweep) = profile.arc_span();
-    let pip_radius = profile.pip_radius;
-    let pip_stroke = profile.pip_stroke;
-    let mut defs = String::new();
-    let mut body = String::new();
+pub fn svg(key: IconKey) -> String {
+    let (piece, transform) = interlock();
+    let ink = key.variant.mark_ink();
 
-    // The knockout mask: white keeps, black cuts. Only the states that carry
-    // a pip need it, and applying it unconditionally would eat into the ring
-    // of the states that do not.
-    let has_pip = matches!(key.health, Health::Attention | Health::Failed);
-    let mask = if has_pip {
-        defs.push_str(&format!(
-            "<mask id=\"pip-knockout\">\
-               <rect x=\"0\" y=\"0\" width=\"{CANVAS}\" height=\"{CANVAS}\" fill=\"#fff\"/>\
-               <circle cx=\"{PIP_X}\" cy=\"{PIP_Y}\" r=\"{:.2}\" fill=\"#000\"/>\
-             </mask>",
-            pip_radius + PIP_KNOCKOUT
-        ));
-        " mask=\"url(#pip-knockout)\""
-    } else {
-        ""
-    };
+    // White keeps, black cuts. The well is knocked out of the mark's alpha in
+    // every state — including `idle`, so that all five marks are pixel-identical
+    // outside the badge and the set reads as one application rather than five.
+    let defs = format!(
+        "<defs><mask id=\"badge-clearance\">\
+           <rect x=\"0\" y=\"0\" width=\"{c}\" height=\"{c}\" fill=\"#fff\"/>\
+           <circle cx=\"{x}\" cy=\"{y}\" r=\"{r}\" fill=\"#000\"/>\
+         </mask></defs>",
+        c = n(CANVAS),
+        x = n(BADGE_X),
+        y = n(BADGE_Y),
+        r = n(BADGE_RADIUS + BADGE_CLEARANCE)
+    );
 
-    match key.health {
-        Health::Idle => {
-            // Closed ring plus a solid centre disc: the only closed ring with
-            // a centre dot, which is what makes it greyscale-distinct.
-            body.push_str(&format!(
-                "<circle cx=\"{CENTRE}\" cy=\"{CENTRE}\" r=\"{RING_RADIUS}\" fill=\"none\" \
-                 stroke=\"{ring}\" stroke-width=\"{RING_STROKE}\"/>\
-                 <circle cx=\"{CENTRE}\" cy=\"{CENTRE}\" r=\"{}\" fill=\"{ring}\"/>",
-                profile.centre_dot
-            ));
-        }
-        Health::Paused => {
-            // Closed ring plus two interior bars: the only two-bar state.
-            body.push_str(&format!(
-                "<circle cx=\"{CENTRE}\" cy=\"{CENTRE}\" r=\"{RING_RADIUS}\" fill=\"none\" \
-                 stroke=\"{ring}\" stroke-width=\"{RING_STROKE}\"/>"
-            ));
-            for centre_x in [13.3_f32, 18.7_f32] {
-                body.push_str(&format!(
-                    "<rect x=\"{:.2}\" y=\"10.5\" width=\"3.4\" height=\"11\" rx=\"1.7\" \
-                     fill=\"{ring}\"/>",
-                    centre_x - 1.7
-                ));
-            }
-        }
-        Health::Running => {
-            // Open ring, no pip, no centre dot — the only state with neither,
-            // and the only one that animates.
-            body.push_str(&format!(
-                "<path d=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{RING_STROKE}\" \
-                 stroke-linecap=\"round\"/>",
-                arc_path(arc_start, arc_sweep),
-                variant.base_arc_ink()
-            ));
-            if let Some((start, sweep)) = travelling_arc(key.frame, arc_start, arc_sweep) {
-                body.push_str(&format!(
-                    "<path d=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{RING_STROKE}\" \
-                     stroke-linecap=\"round\"/>",
-                    arc_path(start, sweep),
-                    variant.moving_arc_ink()
-                ));
-            }
-        }
-        Health::Attention | Health::Failed => {
-            body.push_str(&format!(
-                "<path d=\"{}\" fill=\"none\" stroke=\"{ring}\" stroke-width=\"{RING_STROKE}\" \
-                 stroke-linecap=\"round\"{mask}/>",
-                arc_path(arc_start, arc_sweep)
-            ));
+    let mark = format!(
+        "<g transform=\"translate({o} {o})\" mask=\"url(#badge-clearance)\">\
+           <path d=\"{piece}\" fill=\"{ink}\"/>\
+           <path d=\"{piece}\" fill=\"{ink}\" transform=\"{transform}\"/>\
+         </g>",
+        o = n(MARK_ORIGIN)
+    );
 
-            let (fill, chromatic_ink) = if key.health == Health::Attention {
-                (variant.colour("#E0A83A"), "#1A1206")
-            } else {
-                (variant.colour("#C2313A"), "#FFFFFF")
-            };
-            let glyph = |ink: &str| -> String {
-                if key.health == Health::Attention {
-                    let (top, bottom) = profile.bar;
-                    let (dot_r, dot_y) = profile.dot;
-                    format!(
-                        "<path d=\"M {PIP_X} {top} L {PIP_X} {bottom}\" stroke=\"{ink}\" \
-                         stroke-width=\"{pip_stroke}\" stroke-linecap=\"round\"/>\
-                         <circle cx=\"{PIP_X}\" cy=\"{dot_y}\" r=\"{dot_r}\" fill=\"{ink}\"/>"
-                    )
-                } else {
-                    // The cross is expressed as a reach from the pip's centre
-                    // rather than as four literal coordinates, so it scales
-                    // with the pip instead of having to be re-derived by hand
-                    // for every profile.
-                    let arm = profile.cross_reach / std::f32::consts::SQRT_2;
-                    let (lo_x, lo_y) = (PIP_X - arm, PIP_Y - arm);
-                    let (hi_x, hi_y) = (PIP_X + arm, PIP_Y + arm);
-                    format!(
-                        "<path d=\"M {lo_x:.2} {lo_y:.2} L {hi_x:.2} {hi_y:.2} \
-                         M {hi_x:.2} {lo_y:.2} L {lo_x:.2} {hi_y:.2}\" stroke=\"{ink}\" \
-                         stroke-width=\"{pip_stroke}\" stroke-linecap=\"round\"/>"
-                    )
-                }
-            };
+    let badge = badge(key.health, key.frame, key.variant.badge_ink(key.health));
 
-            if variant == Variant::Template {
-                // A template image is *alpha only* — macOS throws the colour
-                // away — so a glyph painted on top of the pip in any colour is
-                // simply opaque, and `attention` and `failed` both render as
-                // an open ring with a plain filled pip. Two states, one
-                // picture, in the one place §7.4 says shape must carry the
-                // meaning.
-                //
-                // The glyph therefore has to be a *hole*: drawn black on a
-                // white pip in a mask, so it removes alpha instead of adding
-                // ink. `assets/tray/` has always done this; the code had not.
-                defs.push_str(&format!(
-                    "<mask id=\"pip-glyph\">\
-                       <circle cx=\"{PIP_X}\" cy=\"{PIP_Y}\" r=\"{pip_radius}\" fill=\"#fff\"/>{}\
-                     </mask>",
-                    glyph("#000")
-                ));
-                body.push_str(&format!(
-                    "<circle cx=\"{PIP_X}\" cy=\"{PIP_Y}\" r=\"{pip_radius}\" fill=\"{fill}\" \
-                     mask=\"url(#pip-glyph)\"/>"
-                ));
-            } else {
-                body.push_str(&format!(
-                    "<circle cx=\"{PIP_X}\" cy=\"{PIP_Y}\" r=\"{pip_radius}\" fill=\"{fill}\"/>{}",
-                    glyph(variant.pip_ink(chromatic_ink))
-                ));
-            }
-        }
-    }
-
-    let defs_block = if defs.is_empty() { String::new() } else { format!("<defs>{defs}</defs>") };
     format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{CANVAS}\" height=\"{CANVAS}\" \
-         viewBox=\"0 0 {CANVAS} {CANVAS}\" fill=\"none\" stroke-linejoin=\"round\" \
-         stroke-linecap=\"round\">{defs_block}{body}</svg>"
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{c}\" height=\"{c}\" \
+         viewBox=\"0 0 {c} {c}\" fill=\"none\" stroke-linejoin=\"round\" \
+         stroke-linecap=\"round\">{defs}{mark}{badge}</svg>",
+        c = n(CANVAS)
     )
 }
 
@@ -552,7 +612,7 @@ pub fn svg(key: IconKey, profile: Profile) -> String {
 /// taskbar and wrong on a translucent one, which is the default on Windows 11
 /// — hence the explicit `demultiply`.
 pub fn rasterise(key: IconKey, size: u32) -> Result<Vec<u8>, String> {
-    let document = svg(key, Profile::for_size(size));
+    let document = svg(key);
     let options = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_str(&document, &options)
         .map_err(|e| format!("the generated tray SVG did not parse: {e}"))?;
@@ -600,11 +660,10 @@ fn demul(channel: u8, alpha: u8) -> u8 {
 ///
 /// This used to be a flat 32, on the reasoning that every platform downscales
 /// better than it upscales. Rasterising proved the reasoning incomplete:
-/// downscaling *geometry* is not the same as downscaling a photograph, and a
-/// 32-unit mark reduced to 16 px loses the 1.2 px glyph that carries the
-/// state. Rendering natively at the size the shell will use is what lets
-/// [`Profile`] do its job at all — a chunky 16 px profile is pointless if the
-/// bitmap handed over is 32 px and Windows shrinks it.
+/// downscaling *geometry* is not the same as downscaling a photograph. The mark
+/// is drawn at the 16 px floor — a 3.1-unit kerf is 1.55 px there — and handing
+/// the shell a 32 px bitmap to shrink throws that away and fuses the two halves
+/// back together.
 ///
 /// Windows publishes the number as `SM_CXSMICON`: 16 at 100%, 20 at 125%, 24
 /// at 150%, 32 at 200%. Elsewhere there is no equivalent to ask, so
@@ -650,8 +709,8 @@ pub fn icon(key: IconKey, size: u32) -> Result<tray_icon::Icon, String> {
 /// Rasterised marks, kept so the running animation does not re-render an SVG
 /// twelve times a second.
 ///
-/// Keyed by size as well as by mark, because the same mark is a different
-/// drawing at 16 px and at 32 px — see [`Profile`]. Still bounded by
+/// Keyed by size as well as by mark, because a machine can be asked for more
+/// than one size (a DPI change re-reads `SM_CXSMICON`). Bounded by
 /// construction: five states × three variants × twelve frames × the one or two
 /// sizes a machine ever asks for, and only the frames actually shown are built.
 #[derive(Default)]
@@ -699,12 +758,16 @@ mod tests {
         [Health::Idle, Health::Running, Health::Attention, Health::Paused, Health::Failed]
     }
 
+    fn all_variants() -> [Variant; 3] {
+        [Variant::LightTaskbar, Variant::DarkTaskbar, Variant::Template]
+    }
+
     #[test]
     fn every_state_and_variant_produces_a_parseable_svg() {
         for health in all_states() {
-            for variant in [Variant::LightTaskbar, Variant::DarkTaskbar, Variant::Template] {
+            for variant in all_variants() {
                 let key = IconKey::new(health, variant, 0);
-                let document = svg(key, LARGE);
+                let document = svg(key);
                 assert!(document.starts_with("<svg"), "{health:?}/{variant:?}");
                 resvg::usvg::Tree::from_str(&document, &resvg::usvg::Options::default())
                     .unwrap_or_else(|e| panic!("{health:?}/{variant:?} did not parse: {e}"));
@@ -715,7 +778,7 @@ mod tests {
     #[test]
     fn every_state_and_variant_rasterises_to_visible_pixels() {
         for health in all_states() {
-            for variant in [Variant::LightTaskbar, Variant::DarkTaskbar, Variant::Template] {
+            for variant in all_variants() {
                 let key = IconKey::new(health, variant, 0);
                 let rgba = rasterise(key, RASTER_SIZE).expect("rasterise");
                 assert_eq!(rgba.len(), (RASTER_SIZE * RASTER_SIZE * 4) as usize);
@@ -742,16 +805,17 @@ mod tests {
 
     #[test]
     fn the_running_animation_has_twelve_distinct_frames() {
-        let mut rendered = Vec::new();
-        for frame in 0..RUNNING_FRAMES {
-            rendered.push(
-                rasterise(IconKey::new(Health::Running, Variant::DarkTaskbar, frame), 32)
-                    .expect("frame"),
-            );
-        }
-        for (i, a) in rendered.iter().enumerate() {
-            for (j, b) in rendered.iter().enumerate().skip(i + 1) {
-                assert_ne!(a, b, "running frames {i} and {j} are identical");
+        for variant in all_variants() {
+            let mut rendered = Vec::new();
+            for frame in 0..RUNNING_FRAMES {
+                rendered.push(
+                    rasterise(IconKey::new(Health::Running, variant, frame), 16).expect("frame"),
+                );
+            }
+            for (i, a) in rendered.iter().enumerate() {
+                for (j, b) in rendered.iter().enumerate().skip(i + 1) {
+                    assert_ne!(a, b, "{variant:?} running frames {i} and {j} are identical");
+                }
             }
         }
     }
@@ -769,13 +833,14 @@ mod tests {
         // §7.4: macOS strips colour, so state must survive as silhouette. If a
         // chromatic channel ever appears here, the mark has become
         // colour-dependent and will be unreadable in the menu bar.
+        let chromatic = [
+            "#12793B", "#4FBF6B", "#155FCC", "#5B9BFF", "#8A5B00", "#E0A83A", "#5E6774", "#8B93A5",
+            "#B3242B", "#FF6B72", "#22262E", "#E8ECF2",
+        ];
         for health in all_states() {
-            let document = svg(IconKey::new(health, Variant::Template, 0), LARGE);
-            for chromatic in ["#E0A83A", "#C2313A", "#5B9BFF", "#3A4250", "#8B93A5"] {
-                assert!(
-                    !document.contains(chromatic),
-                    "{health:?} template still contains {chromatic}"
-                );
+            let document = svg(IconKey::new(health, Variant::Template, 0));
+            for colour in chromatic {
+                assert!(!document.contains(colour), "{health:?} template still contains {colour}");
             }
         }
     }
@@ -795,15 +860,73 @@ mod tests {
     }
 
     #[test]
-    fn the_pip_knockout_only_exists_where_there_is_a_pip() {
-        for health in [Health::Attention, Health::Failed] {
+    fn every_state_carries_the_same_clear_space() {
+        // The badge well is knocked out of every state, not only the badged
+        // ones. That is what lets `the_base_mark_is_common_to_all_five_states`
+        // compare the marks pixel for pixel.
+        for health in all_states() {
             assert!(
-                svg(IconKey::new(health, Variant::DarkTaskbar, 0), LARGE).contains("pip-knockout")
+                svg(IconKey::new(health, Variant::DarkTaskbar, 0)).contains("badge-clearance"),
+                "{health:?} has no clear space round its badge"
             );
         }
-        for health in [Health::Idle, Health::Paused, Health::Running] {
+    }
+
+    /// Every badge glyph is inside the circle the clear space is cut for.
+    ///
+    /// This is the invariant that makes the clearance true for all five states
+    /// without measuring each shape: the well is a disc of
+    /// `BADGE_RADIUS + BADGE_CLEARANCE`, so anything within `BADGE_RADIUS` of
+    /// the badge centre is separated from the mark by at least `BADGE_CLEARANCE`.
+    #[test]
+    fn every_badge_glyph_is_inscribed_in_the_badge_radius() {
+        let extents = [
+            ("idle disc", BADGE_RADIUS * IDLE_DISC),
+            ("running ring", ring_radius() + BADGE_STROKE / 2.0),
+            ("attention triangle", BADGE_RADIUS),
+            ("paused bars, across", BADGE_STROKE * PAUSE_OFFSET + BADGE_STROKE / 2.0),
+            ("paused bars, down", ring_radius() * PAUSE_HEIGHT / 2.0 + BADGE_STROKE / 2.0),
+            ("failed cross", cross_reach() * SQRT_2 + BADGE_STROKE * DIAGONAL_WEIGHT / 2.0),
+        ];
+        for (what, extent) in extents {
             assert!(
-                !svg(IconKey::new(health, Variant::DarkTaskbar, 0), LARGE).contains("pip-knockout")
+                extent <= BADGE_RADIUS + 1e-4,
+                "{what} reaches {extent:.3}, past the badge radius {BADGE_RADIUS}: it would \
+                 come closer to the mark than the {BADGE_CLEARANCE}-unit clear space allows"
+            );
+        }
+    }
+
+    /// Nothing is drawn thinner than 1.5 px at 16 px.
+    ///
+    /// One canvas unit is half a pixel at 16 px. The previous design put a
+    /// glyph stroke at 2.4 units — 1.2 px — and `attention` and `failed` became
+    /// the same smear. Every feature below is measured against [`FEATURE_FLOOR`],
+    /// and because this drawing clears it there is only one profile: the same
+    /// geometry is used at every size.
+    #[test]
+    fn no_feature_falls_below_the_stroke_floor() {
+        let side = MARK_SPAN - KERF;
+        let features = [
+            ("kerf", KERF),
+            // The bar of a piece above the cut — the mark's thinnest limb.
+            ("mark arm", side * (0.5 - STEP_FRACTION)),
+            ("badge stroke", BADGE_STROKE),
+            ("badge diagonal stroke", BADGE_STROKE * DIAGONAL_WEIGHT),
+            // BADGE_CLEARANCE is deliberately absent: it is a gap rather than
+            // a stroke, and it is checked by measuring what it has to achieve
+            // — see `the_badge_never_touches_the_mark`.
+            ("idle disc", BADGE_RADIUS * IDLE_DISC * 2.0),
+            ("running ring hole", (ring_radius() - BADGE_STROKE / 2.0) * 2.0),
+            ("gap between the paused bars", BADGE_STROKE * PAUSE_OFFSET * 2.0 - BADGE_STROKE),
+        ];
+        for (what, units) in features {
+            assert!(
+                units >= FEATURE_FLOOR - 1e-4,
+                "{what} is {units:.2} units, which is {:.2} px at 16 px — under the \
+                 {:.1} px floor",
+                units / 2.0,
+                FEATURE_FLOOR / 2.0
             );
         }
     }

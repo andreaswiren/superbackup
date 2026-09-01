@@ -677,6 +677,7 @@ impl Runtime {
             ),
             version: superbackup_core::VERSION.to_string(),
             machine_label: config.machine.label.clone(),
+            machine_hostname: config.machine.hostname.clone(),
             machine_slug: config.machine.slug.clone(),
             unlocked,
             paused,

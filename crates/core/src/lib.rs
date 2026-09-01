@@ -14,6 +14,7 @@
 //!  crypto ── seal every secret `model` refers to
 //!    │
 //!  kopia  ── drive the kopia CLI, parse its JSON progress
+//!  s3     ── ask an object store what it holds, and whether these keys work
 //!  engine ── decide what to run, run it, throttle it, record it
 //!    │
 //!  ipc    ── expose all of the above to the tray, GUI and CLI
@@ -44,6 +45,7 @@ pub mod paths;
 pub mod platform;
 pub mod redact;
 pub mod remote;
+pub mod s3;
 pub mod secret;
 pub mod state;
 pub mod update;

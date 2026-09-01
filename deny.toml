@@ -39,8 +39,29 @@ ignore = [
     # process is already inside that trust boundary. There is no upgrade path:
     # quick-xml 0.31 is a semver break and zbus_xml 4 pins 0.30.
     #
-    # Revisit when accesskit updates its zbus stack. If superbackup ever parses
-    # XML from a network or from a user-supplied file, this stops being
+    # **superbackup now does parse XML from a network**: S3 answers
+    # `ListBuckets` and `ListObjectsV2` with it, and an S3 endpoint is a remote
+    # host that may be hostile or merely broken. The previous version of this
+    # note said that would end the exemption immediately, and it would have —
+    # had that XML gone anywhere near quick-xml. It does not.
+    #
+    # `crates/core/src/s3.rs::xml` parses those two shapes with a scanner
+    # written for them: iterative (so no input can overflow the stack), capped
+    # at 24 levels of nesting, 250k elements and 64 KB per text node, fed a
+    # body the transport already refused to read past 4 MB, and with no
+    # quadratic path and no unbounded allocation. It is exercised against
+    # truncated, unbalanced, deeply nested and adversarial input in that
+    # module's tests. A general-purpose parser was rejected deliberately: the
+    # only current quick-xml in the tree (0.41) is a *build* dependency of
+    # wayland-scanner on Linux and is not linked into the shipped binary, so
+    # adopting it would add a real runtime dependency on every platform in
+    # exchange for a much larger attack surface than 200 lines of bounded
+    # scanner for two fixed document shapes.
+    #
+    # So the reachability argument below is unchanged and remains true: the
+    # vulnerable 0.30 sees only AT-SPI introspection data. Revisit when
+    # accesskit updates its zbus stack. If any *other* XML from a network or a
+    # user-supplied file is ever routed through quick-xml, this stops being
     # acceptable immediately.
     { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS; Linux AT-SPI introspection only, no untrusted XML, no upgrade path" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS; same reachability as above" },

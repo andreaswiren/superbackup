@@ -51,6 +51,14 @@ use uuid::Uuid;
 ///   the user believes is a replica. Refusing to open the document is the only
 ///   safe way for an older build to behave, and refusing is exactly what the
 ///   version check makes it do.
+///
+/// Not every added field earns a bump, and the difference is what an older
+/// build would *do* with the field missing, not whether the field is new.
+/// [`ProviderKind::S3::admin_url`] is documentation: an older build that drops
+/// it loses a bookmark and behaves identically in every other respect, so it
+/// is a plain `#[serde(default)]` addition and the version stays at 2. The
+/// test is always "would an older build act wrongly?", and for a link nobody
+/// connects to the answer is no.
 pub const CONFIG_SCHEMA_VERSION: u32 = 2;
 
 /// How many `replicate_from` hops a chain may have.
@@ -639,18 +647,47 @@ pub enum ProviderKind {
         /// Request path-style addressing (`host/bucket/key`) rather than
         /// virtual-hosted style.
         ///
-        /// **Advisory only — it changes nothing today.** Kopia's S3 backend is
-        /// minio-go, which selects path-style automatically for endpoints that
-        /// need it, and `cli/storage_s3.go` exposes no flag to override that
-        /// choice. The field is kept because it is a real property of an
-        /// endpoint and a future backend may honour it, but nothing in the
-        /// interface may present it as a control the user can act on:
-        /// `KopiaDriver::unsupported_options()` reports it as inert so the
-        /// GUI can say so rather than implying an effect it does not have.
+        /// **Honoured by superbackup's own S3 client; still ignored by
+        /// kopia.** Kopia's S3 backend is minio-go, which selects path-style
+        /// automatically for endpoints that need it, and `cli/storage_s3.go`
+        /// exposes no flag to override that choice — so backups are unaffected
+        /// by this field and `KopiaDriver::unsupported_options()` still
+        /// reports it as inert for them.
+        ///
+        /// [`crate::s3::S3Endpoint::uses_path_style`] does honour it, for the
+        /// bucket and object listings this application makes itself. It
+        /// applies the same rule minio-go does — path style for everything
+        /// that is not `*.amazonaws.com`, and for any bucket name that cannot
+        /// be a DNS label — so the two agree about where an object lives even
+        /// though only one of them reads the flag. The interface must keep
+        /// saying so rather than implying the flag changes how a backup is
+        /// written.
         #[serde(default)]
         path_style: bool,
         #[serde(default)]
         flavour: S3Flavour,
+        /// Where a human goes to administer this account: StorJ's console,
+        /// the AWS console, a MinIO web UI.
+        ///
+        /// **Documentation only.** Nothing connects to it, nothing validates
+        /// that it resolves, and an empty value must never block saving a
+        /// provider or creating a destination. It exists because "which
+        /// console do I log into to rotate this key?" is a real question at
+        /// 2am and the answer is otherwise in the user's head.
+        ///
+        /// It belongs to the *provider* rather than to a destination because
+        /// it is an account-level fact: one StorJ account with three buckets
+        /// has one console. A destination reaches it through its provider,
+        /// which is the whole point of the provider/destination split.
+        ///
+        /// Not a secret, so it lives in `config.json` beside the endpoint —
+        /// but it can carry a tenant or account identifier, so it is kept out
+        /// of the plain-text key-export document, which is meant to be
+        /// printed. The published (remote) copy of the configuration is
+        /// sealed inside the vault, so it travels there with the same
+        /// protection as the endpoint itself.
+        #[serde(default)]
+        admin_url: Option<String>,
     },
 }
 
@@ -745,6 +782,46 @@ impl S3Flavour {
     pub fn wants_path_style(&self) -> bool {
         matches!(self, S3Flavour::MinIo)
     }
+    /// The console a user of this flavour most likely administers from.
+    ///
+    /// A *prefill*, never a value the user is stuck with: a self-hosted MinIO
+    /// or an S3-compatible provider nobody has heard of has no obvious
+    /// answer, and even StorJ users on a custom deployment must be able to
+    /// clear it. Only the two flavours with one unambiguous console get one.
+    pub fn default_admin_url(&self) -> Option<&'static str> {
+        match self {
+            S3Flavour::Storj => Some("https://storj.io/login"),
+            S3Flavour::AwsS3 => Some("https://console.aws.amazon.com/s3/"),
+            _ => None,
+        }
+    }
+}
+
+/// Check an administration-panel URL without connecting to it.
+///
+/// Deliberately minimal. This is a bookmark, so the only things worth
+/// refusing are the ones that could *do* something: a `javascript:` or `file:`
+/// URL that a click would execute or open locally. Everything else — a typo, a
+/// host that no longer exists, a redirect — is the user's own note to
+/// themselves and is none of our business. An empty value is always valid,
+/// because the field is optional and an optional field that can block a save
+/// is not optional.
+pub fn validate_admin_url(input: &str) -> Result<(), &'static str> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return Err("Enter a full web address, starting with https://.");
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return Err("Only http:// and https:// addresses are allowed here.");
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.trim().is_empty() {
+        return Err("Enter a full web address, starting with https://.");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1300,11 +1377,11 @@ impl ExclusionPreset {
             DotnetBuild => ".NET build output",
             JavaBuild => "Java / Gradle / Maven output",
             GoBuild => "Go build cache",
-            IdeMetadata => "IDE metadata",
-            OsJunk => "OS junk files",
+            IdeMetadata => "Editor scratch files",
+            OsJunk => "Recycle Bin and thumbnail files",
             VirtualMachineImages => "Virtual machine images",
             LogsAndTemp => "Logs and temporary files",
-            GitObjects => "Git object stores",
+            GitObjects => "Git packfiles",
         }
     }
 
@@ -1351,6 +1428,41 @@ impl ExclusionPreset {
             }
             LogsAndTemp => &["/**/*.log", "/**/tmp/", "/**/temp/", "/**/*.tmp"],
             GitObjects => &["/**/.git/objects/pack/", "/**/.git/lfs/"],
+        }
+    }
+
+    /// What this actually matches, in plain words.
+    ///
+    /// The patterns are shown too, but a glob list is not an answer to "what
+    /// will this delete from my backup" for most people. A preset called
+    /// "OS junk files" told the user nothing at all, and the honest response to
+    /// not knowing what a checkbox does is to leave it alone — which is how a
+    /// backup ends up carrying millions of cache files.
+    pub fn matches_description(&self) -> &'static str {
+        use ExclusionPreset::*;
+        match self {
+            NodeModules => "Installed npm packages, and the pnpm and Yarn download caches.",
+            NextCache => {
+                "Build caches written by Next.js, Turbo, Vite, Nuxt, SvelteKit, Astro, Angular,                  Parcel and webpack. Not your source, and not your build output."
+            }
+            RustTarget => "Compiled Rust artefacts under target/debug, target/release and target/tmp.",
+            PythonCaches => {
+                "Compiled .pyc files, __pycache__, pytest/mypy/ruff caches, and virtualenv                  directories named .venv or venv."
+            }
+            DotnetBuild => "Compiled output under bin/Debug, bin/Release and obj.",
+            JavaBuild => "The Gradle cache, Gradle build temporaries, and your local Maven repository.",
+            GoBuild => "The Go build cache and the downloaded module cache.",
+            IdeMetadata => {
+                "JetBrains shelved changes, Visual Studio's .vs folder, and .iml project files.                  Your editor settings and .vscode are NOT excluded."
+            }
+            OsJunk => {
+                "macOS .DS_Store, Windows Thumbs.db and desktop.ini, the Recycle Bin, and                  System Volume Information."
+            }
+            VirtualMachineImages => "Disk images: .vmdk, .vdi, .vhdx, .qcow2 and .iso files, wherever they are.",
+            LogsAndTemp => "Files ending .log or .tmp, and folders named tmp or temp.",
+            GitObjects => {
+                "Packed git objects under .git/objects/pack and Git LFS storage. Your working                  files and git history metadata are still backed up."
+            }
         }
     }
 
@@ -1647,6 +1759,7 @@ mod tests {
                 tls: true,
                 path_style: false,
                 flavour: S3Flavour::Storj,
+                admin_url: None,
             },
             notes: String::new(),
             created_at: Utc::now(),

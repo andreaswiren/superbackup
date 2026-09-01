@@ -24,11 +24,18 @@ pub struct State {
 }
 
 /// `UX_SPEC.md` §9.1. Endpoint is the remainder; last verified drops first.
-const PROVIDER_COLUMNS: [ColumnSpec; 4] = [
+///
+/// The trailing actions column is listed even though it is never dropped:
+/// `fit_columns` decides what fits by adding these widths up, and a column the
+/// builder draws but the budget does not know about is unaccounted overflow.
+/// This table happened to have enough slack to hide it; the activity table did
+/// not, and drew its card past the window edge at the minimum size.
+const PROVIDER_COLUMNS: [ColumnSpec; 5] = [
     ColumnSpec::keep("flavour", 36.0),
     ColumnSpec::keep("name", 190.0),
     ColumnSpec::keep("used_by", 120.0),
     ColumnSpec::droppable("verified", 104.0, 1),
+    ColumnSpec::keep("actions", 104.0),
 ];
 
 impl App {
@@ -69,7 +76,10 @@ impl App {
             .collect();
 
         let shown = viewmodel::fit_columns(
-            ui.available_width(),
+            // The table card insets its content, and this is measured before
+            // that frame is entered, so the budget has to lose both sides or
+            // the last column is pushed past the card edge.
+            ui.available_width() - widgets::TABLE_GUTTER,
             200.0,
             ui.spacing().item_spacing.x,
             &PROVIDER_COLUMNS,

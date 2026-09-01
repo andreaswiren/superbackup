@@ -533,6 +533,7 @@ mod tests {
             health,
             version: "0.1.0".into(),
             machine_label: "pc".into(),
+            machine_hostname: "pc".into(),
             machine_slug: "pc".into(),
             unlocked: true,
             paused: health == Health::Paused,

@@ -222,6 +222,7 @@ impl MockHandler {
             health: if paused { Health::Paused } else { Health::Idle },
             version: crate::VERSION.to_string(),
             machine_label: "mock".into(),
+            machine_hostname: "mock".into(),
             machine_slug: "mock".into(),
             unlocked,
             paused,
@@ -262,7 +263,13 @@ impl MockHandler {
     }
 
     fn probe() -> ProbeReply {
-        ProbeReply { reachable: true, writable: true, latency_ms: Some(1), detail: None }
+        ProbeReply {
+            reachable: true,
+            writable: true,
+            latency_ms: Some(1),
+            repository_present: Some(true),
+            detail: None,
+        }
     }
 
     fn service() -> ServiceReply {
@@ -316,6 +323,7 @@ impl Handler for MockHandler {
             target_arch: std::env::consts::ARCH.to_string(),
             kopia_version: Some("0.0.0-mock".into()),
             service_scope: false,
+            build: "0.0.0-mock+test".to_string(),
         })
     }
 
@@ -672,6 +680,45 @@ impl Handler for MockHandler {
     async fn test_provider(&self, _ctx: &RequestContext, _provider: String) -> Result<ProbeReply> {
         let _guard = self.enter("provider.test").await?;
         Ok(Self::probe())
+    }
+
+    async fn list_buckets(&self, _ctx: &RequestContext, _provider: String) -> Result<BucketsReply> {
+        let _guard = self.enter("provider.list_buckets").await?;
+        Ok(BucketsReply {
+            provider_id: Uuid::nil(),
+            buckets: ["dev-backups", "photos", "archive-2024"]
+                .into_iter()
+                .map(|name| BucketInfo { name: name.into(), created_at: Some(Utc::now()) })
+                .collect(),
+            listed: true,
+            credentials_ok: true,
+            detail: None,
+            latency_ms: Some(84),
+        })
+    }
+
+    async fn list_objects(
+        &self,
+        _ctx: &RequestContext,
+        _provider: String,
+        bucket: String,
+        prefix: String,
+        _max_keys: u32,
+    ) -> Result<ObjectsReply> {
+        let _guard = self.enter("provider.list_objects").await?;
+        Ok(ObjectsReply {
+            keys: vec![ObjectInfo {
+                key: format!("{prefix}kopia.repository"),
+                size: 661,
+                last_modified: Some(Utc::now()),
+            }],
+            bucket,
+            prefix,
+            truncated: false,
+            holds_repository: true,
+            listed: true,
+            detail: None,
+        })
     }
 
     async fn provider_used_by(
