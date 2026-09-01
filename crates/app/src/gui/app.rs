@@ -257,23 +257,34 @@ impl App {
             (Intent::TestDestination(id), Reply::Probe(probe)) => {
                 let name = self.data.destination_name(id);
                 self.screens.destinations.probe(*id, probe.clone());
-                if probe.reachable && probe.writable {
-                    // Reachable and writable is a pass even when there is no
-                    // repository in it yet: those are separate questions, and
-                    // reporting the second as a failure of the first is what
-                    // made a working bucket read as unreachable.
-                    match probe.detail.as_deref().filter(|d| !d.is_empty()) {
-                        Some(note) => self.toasts.info(format!("{name}: {note}")),
-                        None => self.toasts.success(copy::dest_verify_ok_toast(&name)),
+                // The destinations list renders this result itself, as a
+                // banner that stays put and can be read at leisure. Toasting
+                // the same sentence on top of it said everything twice —
+                // twice over, once per destination, in a stack that covered
+                // the list it was describing. The toast is for when the
+                // result is *not* already on screen: pressed from an editor,
+                // from the dashboard, or from the tray.
+                let shown_in_place = matches!(self.nav.current(), Route::Destinations);
+                if !shown_in_place {
+                    if probe.reachable && probe.writable {
+                        // Reachable and writable is a pass even when there is
+                        // no repository in it yet: those are separate
+                        // questions, and reporting the second as a failure of
+                        // the first is what made a working bucket read as
+                        // unreachable.
+                        match probe.detail.as_deref().filter(|d| !d.is_empty()) {
+                            Some(note) => self.toasts.info(format!("{name}: {note}")),
+                            None => self.toasts.success(copy::dest_verify_ok_toast(&name)),
+                        }
+                    } else {
+                        self.toasts.danger(
+                            name,
+                            probe
+                                .detail
+                                .clone()
+                                .unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.into()),
+                        );
                     }
-                } else {
-                    self.toasts.danger(
-                        name,
-                        probe
-                            .detail
-                            .clone()
-                            .unwrap_or_else(|| copy::dest::STATUS_UNREACHABLE.into()),
-                    );
                 }
                 self.ask(Intent::Destinations, Request::DestinationList {});
             }

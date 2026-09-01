@@ -63,6 +63,8 @@ pub enum Intent {
     /// The objects under one destination's prefix, keyed by the provider.
     ListObjects(uuid::Uuid),
     CreateRepository(uuid::Uuid),
+    /// A machine rename, carrying the new label so the toast can name it.
+    RenameMachine(String),
     Snapshots(uuid::Uuid),
     Browse(uuid::Uuid, String),
     Restore,

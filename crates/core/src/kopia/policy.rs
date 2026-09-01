@@ -265,12 +265,18 @@ impl KopiaDriver {
             cmd.flag("owner", owner);
             changed = true;
         }
+        // `maintenance set` declares these as *value* flags
+        // (`--enable-full=ENABLE-FULL`), not as kingpin `--[no-]` booleans, so
+        // they take `=true|false` where `--persist-credentials` and friends
+        // take `--no-` instead. Kopia genuinely uses both forms, and the two
+        // are not interchangeable in either direction. Verified against
+        // `kopia maintenance set --help` on 0.23.1.
         if let Some(v) = settings.enable_quick {
-            cmd.flag_bool("enable-quick", v);
+            cmd.flag("enable-quick", bool_enum(v));
             changed = true;
         }
         if let Some(v) = settings.enable_full {
-            cmd.flag_bool("enable-full", v);
+            cmd.flag("enable-full", bool_enum(v));
             changed = true;
         }
         if let Some(d) = settings.quick_interval {

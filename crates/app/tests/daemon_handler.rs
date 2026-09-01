@@ -318,6 +318,9 @@ async fn every_command_answers_or_refuses_cleanly() {
     updated.auto_lock_minutes = 45;
     run!("settings.update", Request::SettingsUpdate { settings: Box::new(updated) });
 
+    // -- machine ----------------------------------------------------------
+    run!("machine.rename", Request::MachineRename { label: "The Studio PC".into() });
+
     // -- remote -----------------------------------------------------------
     // No remote is configured, so all four must refuse with `Remote` rather
     // than hanging on a network call or panicking on a `None`.

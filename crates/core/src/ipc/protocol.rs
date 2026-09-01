@@ -2136,6 +2136,13 @@ protocol! {
                 settings: Box<Settings> = "The complete settings object, as returned by `settings.get`.",
             }
 
+        "machine.rename" MachineRename => rename_machine -> Ack(AckReply)
+            flags [mutating]
+            doc "Change this machine's display label. The destination folder name is NOT changed: it is fixed for the life of the install, because moving it would leave repositories where kopia can no longer find them."
+            params {
+                label: String = "The new display label. Trimmed; an empty or unchanged label is a no-op.",
+            }
+
         // ------------------------------------------------------- remote config
         "remote.pull" RemotePull => remote_pull -> RemoteStatus(RemoteStatusReply)
             flags [needs_unlock, elevated]

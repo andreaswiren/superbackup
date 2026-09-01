@@ -409,8 +409,18 @@ impl App {
 
         if sources.is_empty() {
             widgets::table_frame(ui, |ui| {
-                ui.set_min_height(160.0);
-                widgets::empty_state(ui, Icon::Folder, &copy::empty::SOURCES, None);
+                // Fixed height first; see the same construction in the wizard.
+                // Centring against `available_height` inside a growing layout
+                // measures the wrong box and lands the content near the bottom.
+                const BOX_H: f32 = 180.0;
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), BOX_H),
+                    Layout::top_down(Align::Center),
+                    |ui| {
+                        ui.set_min_height(BOX_H);
+                        widgets::empty_state(ui, Icon::Folder, &copy::empty::SOURCES, None);
+                    },
+                );
             });
             // The empty state no longer carries its own button, and this branch
             // returns before reaching the one below the populated list — so the

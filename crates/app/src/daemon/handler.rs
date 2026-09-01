@@ -70,6 +70,19 @@ const MAX_SNAPSHOTS: usize = 500;
 /// the key is precisely the coupling `dest.test` exists without.
 const KOPIA_FORMAT_BLOB: &str = "kopia.repository";
 
+/// The same blob as kopia's **filesystem** backend writes it.
+///
+/// `repo/blob/filesystem` appends a `.f` suffix to every blob id it stores, so
+/// on a local folder or a OneDrive folder the format blob is on disk as
+/// `kopia.repository.f`. Object stores have no such suffix, which is why the
+/// S3 path matches the bare name.
+///
+/// Looking only for the bare name meant a local repository that had just been
+/// created successfully still reported "reachable, but it has no backup
+/// repository in it yet" — sending the user to press "Create repository" on a
+/// repository that already existed.
+const KOPIA_FORMAT_BLOB_FS: &str = "kopia.repository.f";
+
 /// What one `ListBuckets` against a provider established.
 ///
 /// Deliberately not a `Result`: "the endpoint answered and refused to list"
@@ -1103,16 +1116,43 @@ impl Handler for DaemonHandler {
         let mut created = *destination;
         created.id = Uuid::new_v4();
         created.created_at = Utc::now();
-        // A generated passphrase needs a handle before anything can store one
-        // against it, and the handle has to name the destination that owns it.
+        // The passphrase, and only then the handle that names it.
+        //
+        // This used to mint the handle on its own, with a comment explaining
+        // that a generated passphrase "needs a handle before anything can
+        // store one against it" — and nothing ever did. Every repository
+        // destination was therefore written with a `passphrase_ref` pointing
+        // at a vault entry that did not exist, and every operation needing it
+        // failed with "the vault has no entry for repo-passphrase:…": creating
+        // the repository, verifying it, restoring from it. A reference that
+        // resolves to nothing is worse than no reference, because the rest of
+        // the application reads it as "this is set up".
+        //
+        // So the secret is generated and stored first, and the handle is
+        // written only once it points at something real.
         if created.kind.is_repository() && created.passphrase_ref.is_none() {
-            let derived = created
+            let source = created
                 .encryption
                 .as_ref()
                 .map(|e| e.passphrase_source)
                 .unwrap_or(superbackup_core::model::PassphraseSource::Generated);
-            if derived != superbackup_core::model::PassphraseSource::DerivedFromMaster {
-                created.passphrase_ref = Some(SecretRef::new("repo-passphrase", &created.id));
+            match source {
+                // Derived from the master key on demand; there is nothing to
+                // store and nothing to point at.
+                superbackup_core::model::PassphraseSource::DerivedFromMaster => {}
+                superbackup_core::model::PassphraseSource::Generated => {
+                    self.require_unlocked().await?;
+                    let passphrase = superbackup_core::crypto::generate_passphrase()?;
+                    let handle = SecretRef::new("repo-passphrase", &created.id);
+                    let mut store = self.runtime.store.lock().await;
+                    store.put_secret(handle.clone(), passphrase)?;
+                    drop(store);
+                    created.passphrase_ref = Some(handle);
+                }
+                // The user supplies this one. No handle is written until they
+                // have, because a handle is what tells the rest of the
+                // application the passphrase exists.
+                superbackup_core::model::PassphraseSource::UserSupplied => {}
             }
         }
         let id = created.id;
@@ -1261,9 +1301,12 @@ impl Handler for DaemonHandler {
         // question does not apply to it rather than being answered "no".
         let repository_present = if target.kind.is_repository() && reachable {
             Some(
-                tokio::task::spawn_blocking(move || path.join(KOPIA_FORMAT_BLOB).is_file())
-                    .await
-                    .unwrap_or(false),
+                tokio::task::spawn_blocking(move || {
+                    path.join(KOPIA_FORMAT_BLOB_FS).is_file()
+                        || path.join(KOPIA_FORMAT_BLOB).is_file()
+                })
+                .await
+                .unwrap_or(false),
             )
         } else {
             None
@@ -2327,6 +2370,40 @@ impl Handler for DaemonHandler {
         Ok(SettingsReply { settings: Box::new(self.config().await.settings) })
     }
 
+    /// Rename this machine, without moving its destination folder.
+    ///
+    /// The label and the slug are deliberately separate. The slug is the
+    /// folder name under every destination root, and renaming it would leave
+    /// repositories where kopia can no longer find them — so a rename changes
+    /// what people read and nothing on disk. The manifest written beside the
+    /// backups carries the new label, so someone browsing the drive still sees
+    /// the current name.
+    ///
+    /// Until this existed there was no way at all to rename a machine: the
+    /// Settings field rebuilt itself from the snapshot on every frame, so it
+    /// discarded each keystroke, and there was nothing for it to call anyway.
+    async fn rename_machine(&self, _ctx: &RequestContext, label: String) -> Result<AckReply> {
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            return Err(Error::Validation("a machine label cannot be empty".into()));
+        }
+        if label.chars().count() > 64 {
+            return Err(Error::Validation("a machine label is at most 64 characters".into()));
+        }
+
+        let mut event = None;
+        self.commit(|config| {
+            event = superbackup_core::platform::identity::rename(&mut config.machine, &label);
+            Ok(())
+        })
+        .await?;
+
+        if let Some(event) = event {
+            self.runtime.record_event(event);
+        }
+        Ok(AckReply {})
+    }
+
     async fn update_settings(
         &self,
         _ctx: &RequestContext,
@@ -2669,14 +2746,53 @@ impl DaemonHandler {
 }
 
 /// Turn a kopia failure into the crate's error type for an IPC reply.
+/// Map a driver failure onto the crate-wide error type.
+///
+/// For anything classified, the headline is the actionable sentence and
+/// kopia's own words would only get in the way. For anything *un*classified it
+/// is the reverse: `KopiaFailure::Unknown`'s headline is the literal string
+/// "kopia reported an error", which tells nobody anything — and this function
+/// used to pass exactly that and drop `detail` on the floor, so every
+/// unrecognised failure reached the user as "kopia exited with status 1: kopia
+/// reported an error." The one piece of information that would have explained
+/// it was captured, carried all the way here, and then discarded.
 fn kopia_to_error(e: superbackup_core::kopia::KopiaError) -> Error {
+    // Log the whole thing before narrowing it. The detail is already redacted
+    // by the capture, and a failure nobody can explain afterwards is how a
+    // bug report becomes unactionable.
+    if let Some(detail) = &e.detail {
+        tracing::warn!(
+            command = %e.command,
+            status = e.status.unwrap_or(-1),
+            failure = ?e.failure,
+            "kopia failed: {detail}"
+        );
+    } else {
+        tracing::warn!(
+            command = %e.command,
+            status = e.status.unwrap_or(-1),
+            failure = ?e.failure,
+            "kopia failed and printed nothing that could be captured"
+        );
+    }
+
+    let headline = match (&e.failure, &e.detail) {
+        // Unclassified: kopia's own text is the only real information there
+        // is, so it becomes the message rather than being hidden behind a
+        // sentence that says nothing.
+        (superbackup_core::kopia::KopiaFailure::Unknown, Some(detail)) => {
+            format!("{} {detail}", e.message)
+        }
+        _ => e.message.clone(),
+    };
+
     match e.failure.error_code() {
         ErrorCode::BadPassphrase => Error::BadPassphrase,
-        ErrorCode::RepoNotConnected => Error::RepoNotConnected(e.message),
-        ErrorCode::RepoExists => Error::RepoExists(e.message),
+        ErrorCode::RepoNotConnected => Error::RepoNotConnected(headline),
+        ErrorCode::RepoExists => Error::RepoExists(headline),
         ErrorCode::KopiaMissing => Error::KopiaMissing,
-        ErrorCode::JobCancelled => Error::JobCancelled(e.message),
-        _ => Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.message },
+        ErrorCode::JobCancelled => Error::JobCancelled(headline),
+        _ => Error::Kopia { status: e.status.unwrap_or(-1), stderr: headline },
     }
 }
 

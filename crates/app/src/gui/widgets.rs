@@ -1673,6 +1673,125 @@ pub fn passphrase_field(
 
 /// A numeric field. egui has no spinner and no input mask (L11), so this is a
 /// `DragValue` with the unit drawn beside it and the range clamped.
+/// A bandwidth slider marked off in 10 Mbit/s notches, 0 to 1000.
+///
+/// The stored unit is kB/s, because that is what kopia's
+/// `--upload-bytes-per-second` takes and what the number box has always shown.
+/// The slider works in Mbit/s because that is the unit an internet connection
+/// is sold in — nobody knows their line as 12500 kB/s.
+///
+/// **The number box stays authoritative.** Dragging snaps to a 10 Mbit notch,
+/// but a typed value is left exactly as typed: the slider moves to show it and
+/// does not round it. Otherwise typing 2000 kB/s would silently become 1875,
+/// which is a worse answer than the one the user gave.
+///
+/// Returns true when the drag changed the value.
+pub fn mbit_slider(ui: &mut Ui, id: impl std::hash::Hash, kbps: &mut u32) -> bool {
+    // Scope the interaction id, so the upload and download sliders keep their
+    // own drag and focus state rather than sharing whatever egui derives from
+    // position.
+    ui.push_id(id, |ui| mbit_slider_inner(ui, kbps)).inner
+}
+
+fn mbit_slider_inner(ui: &mut Ui, kbps: &mut u32) -> bool {
+    const MAX_MBIT: f32 = 1000.0;
+    const STEP_MBIT: f32 = 10.0;
+    // kB/s -> Mbit/s is *8/1000; a 10 Mbit notch is therefore 1250 kB/s.
+    const KBPS_PER_MBIT: f32 = 125.0;
+
+    let t = theme::tokens(ui.ctx());
+    let width = ui.available_width().min(560.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 46.0), Sense::click_and_drag());
+    let painter = ui.painter();
+
+    let track_y = rect.top() + 10.0;
+    let track = Rect::from_min_max(
+        Pos2::new(rect.left() + 8.0, track_y - 3.0),
+        Pos2::new(rect.right() - 8.0, track_y + 3.0),
+    );
+
+    let mbit = (*kbps as f32) * 8.0 / 1000.0;
+    let fraction = (mbit / MAX_MBIT).clamp(0.0, 1.0);
+
+    let mut changed = false;
+    if response.dragged() || response.clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let raw = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0) * MAX_MBIT;
+            // Snap to the nearest notch, and never to zero: a limit of zero
+            // would read as "no bandwidth" rather than "no limit", and the
+            // checkbox is what turns the limit off.
+            let snapped = (raw / STEP_MBIT).round() * STEP_MBIT;
+            let value = (snapped.max(STEP_MBIT) * KBPS_PER_MBIT).round() as u32;
+            if value != *kbps {
+                *kbps = value;
+                changed = true;
+            }
+        }
+    }
+    if response.has_focus() {
+        let step = |mult: f32| (STEP_MBIT * mult * KBPS_PER_MBIT).round() as i64;
+        let mut delta = 0i64;
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowUp) {
+                delta += step(1.0);
+            }
+            if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowDown) {
+                delta -= step(1.0);
+            }
+        });
+        if delta != 0 {
+            let next = (*kbps as i64 + delta)
+                .clamp((STEP_MBIT * KBPS_PER_MBIT) as i64, (MAX_MBIT * KBPS_PER_MBIT) as i64);
+            if next as u32 != *kbps {
+                *kbps = next as u32;
+                changed = true;
+            }
+        }
+    }
+
+    // Re-read: a drag may have moved it this frame.
+    let fraction =
+        if changed { ((*kbps as f32) * 8.0 / 1000.0 / MAX_MBIT).clamp(0.0, 1.0) } else { fraction };
+    let handle_x = track.left() + track.width() * fraction;
+
+    // Notches. Every 10 Mbit as a hairline, every 100 taller, so the step the
+    // slider actually moves in is visible rather than merely documented.
+    let notches = (MAX_MBIT / STEP_MBIT) as i32;
+    for i in 0..=notches {
+        let at = track.left() + track.width() * (i as f32 / notches as f32);
+        let major = i % 10 == 0;
+        let height = if major { 7.0 } else { 3.5 };
+        let colour = if major { t.border_strong } else { t.border_subtle };
+        painter.line_segment(
+            [Pos2::new(at, track.bottom() + 4.0), Pos2::new(at, track.bottom() + 4.0 + height)],
+            Stroke::new(1.0_f32, colour),
+        );
+    }
+
+    painter.rect_filled(track, CornerRadius::same(3), t.border_subtle);
+    painter.rect_filled(
+        Rect::from_min_max(track.left_top(), Pos2::new(handle_x, track.bottom())),
+        CornerRadius::same(3),
+        t.accent,
+    );
+    let handle = Pos2::new(handle_x, track_y);
+    painter.circle_filled(handle, 8.0, t.bg_raised);
+    painter.circle_stroke(handle, 8.0, Stroke::new(2.0_f32, t.accent));
+    if response.has_focus() {
+        focus_ring(ui, Rect::from_center_size(handle, Vec2::splat(24.0)), CornerRadius::same(12));
+    }
+
+    // End labels only. A number under every hundredth notch is noise when the
+    // exact value is already in the box above.
+    for (at, label) in [(0.0_f32, "0"), (0.25, "250"), (0.5, "500"), (0.75, "750"), (1.0, "1000")] {
+        let x = track.left() + track.width() * at;
+        let g = galley(ui, label, Type::MonoSmall, t.text_muted);
+        painter.galley(Pos2::new(x - g.size().x / 2.0, track.bottom() + 14.0), g, t.text_muted);
+    }
+
+    changed
+}
+
 pub fn number(
     ui: &mut Ui,
     value: &mut u32,

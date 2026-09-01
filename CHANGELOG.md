@@ -14,6 +14,12 @@ rather than mangling it.
 
 ### Added
 
+- **Bandwidth limits have a slider**, marked off in 10 Mbit/s notches from 0 to
+  1000, with upload and download on one shared label column so their boxes,
+  units and Mbit readouts line up. The number box stays authoritative: dragging
+  snaps to a notch, but a typed value is left exactly as typed rather than
+  rounded to the nearest one.
+
 - **Chained destinations have an interface.** A destination can now be filled
   by copying an existing repository from another destination instead of reading
   the job's folders a second time — back up to OneDrive, then copy that
@@ -131,6 +137,53 @@ rather than mangling it.
   the edge and read as clipped.
 
 ### Fixed
+
+- **Every kopia command was malformed.** Kopia's CLI is kingpin, which declares
+  booleans as `--[no-]flag` — they take no value, so `--flag=false` parses as
+  `--flag` plus a stray positional `false`. superbackup rendered the `=false`
+  form, with a comment asserting it was "kingpin's", and put
+  `--persist-credentials=false` on *every* invocation. So every real kopia
+  operation died with `expected command but got "false"`, which the classifier
+  could not recognise and reported as the useless "kopia reported an error".
+  Creating a repository, connecting to one, restoring — none of it could ever
+  have worked. Kopia genuinely uses both spellings (`maintenance set
+  --enable-full=true` is a value flag), and a test now pins the two apart.
+- **kopia's actual words were thrown away.** The driver captured stderr,
+  classified it, carried it to the daemon — and then the mapping to the wire
+  error passed the generic headline and dropped the detail. An unrecognised
+  failure now carries kopia's own text, and every kopia failure is logged in
+  full. Finding the bug above took one run once this was in place.
+- **A repository destination was created with a passphrase reference pointing
+  at nothing.** The handle was minted on the theory that something would store
+  a passphrase against it later; nothing did. Every operation that needed it
+  failed with "the vault has no entry for repo-passphrase:…" — verify, restore,
+  and repository creation alike. The passphrase is now generated and stored
+  first, and the handle written only once it resolves.
+- A local repository that had just been created still reported "no backup
+  repository here yet": kopia's filesystem backend suffixes blob names, so the
+  format blob is on disk as `kopia.repository.f`, and only the bare name was
+  looked for.
+- **This machine never learned its own name.** `Config::default` minted a
+  placeholder identity — label "this-pc", hostname "unknown" — and although
+  `platform::identity::detect` and `refresh` both existed and were tested,
+  nothing in the running application called either. A first run now detects the
+  real machine before the first save, so the destination folder is named after
+  it, and every start refreshes hostname, OS build and user. The slug is never
+  touched: it is the folder name under every destination root, and moving it
+  would leave repositories where kopia cannot find them.
+- **The machine label could not be typed into.** The field rebuilt itself from
+  the daemon's snapshot every frame, so each keystroke was discarded and the
+  box snapped back — and there was no command behind it to save to anyway.
+  There is now `machine.rename`, which changes the label and deliberately not
+  the folder name.
+- Verifying a destination reported the result twice: once as the banner the
+  destinations list already draws, and again as a toast on top of it, once per
+  destination. The toast is now only raised where the result is not already on
+  screen.
+- The empty state in the job wizard and job editor sat near the bottom of its
+  box. It centres itself within the height it is given, and inside a layout
+  that grows to fit, that height was the space left in the parent rather than
+  the box — so the centring padding inflated the box it was centring in.
 
 - **A fresh install did nothing at all.** The daemon refuses to start without a
   vault, and a vault needs a passphrase only a person can supply — so

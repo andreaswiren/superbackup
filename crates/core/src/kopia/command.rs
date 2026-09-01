@@ -322,10 +322,12 @@ impl KopiaCommand {
         self
     }
 
-    /// An application-level boolean, rendered as kingpin's `--flag=true|false`
-    /// so an explicit `false` overrides kopia's own default.
+    /// An application-level boolean.
+    ///
+    /// See [`KopiaCommand::flag_bool`] for why this is `--flag` / `--no-flag`
+    /// and emphatically not `--flag=false`.
     pub fn global_bool(&mut self, flag: &str, value: bool) -> &mut Self {
-        self.global_args.push(OsString::from(format!("--{flag}={value}")));
+        self.global_args.push(OsString::from(bool_flag(flag, value)));
         self
     }
 
@@ -362,8 +364,27 @@ impl KopiaCommand {
     }
 
     /// `--flag=true` / `--flag=false`.
+    /// A boolean flag, in the only form kopia actually accepts.
+    ///
+    /// Kopia's CLI is kingpin, which declares booleans as `--[no-]flag`. Such a
+    /// flag consumes **no value**: `--flag` sets it, `--no-flag` clears it, and
+    /// `--flag=false` is parsed as `--flag` followed by a separate positional
+    /// argument `false`.
+    ///
+    /// This used to emit exactly that, with a comment claiming `--flag=true|false`
+    /// was "kingpin's" form. It is not. Every invocation carried
+    /// `--persist-credentials=false` from `Driver::base`, so *every* kopia
+    /// command failed with
+    ///
+    /// ```text
+    /// kopia.exe: error: expected command but got "false", try --help
+    /// ```
+    ///
+    /// which the error classifier could not recognise, so it surfaced as the
+    /// useless "kopia reported an error". Verified against kopia 0.23.1:
+    /// `--persist-credentials=false` fails, `--no-persist-credentials` works.
     pub fn flag_bool(&mut self, flag: &str, value: bool) -> &mut Self {
-        self.args.push(OsString::from(format!("--{flag}={value}")));
+        self.args.push(OsString::from(bool_flag(flag, value)));
         self
     }
 
@@ -890,6 +911,15 @@ impl StderrCapture {
     }
 }
 
+/// `--flag` when true, `--no-flag` when false — kingpin's boolean form.
+fn bool_flag(flag: &str, value: bool) -> String {
+    if value {
+        format!("--{flag}")
+    } else {
+        format!("--no-{flag}")
+    }
+}
+
 /// Recognise kopia's non-fatal problem reports.
 ///
 /// `cli/cli_progress.go` prints ignored errors as
@@ -985,6 +1015,80 @@ pub(crate) fn harden_child(cmd: &mut Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Kopia uses **two** boolean spellings and they are not interchangeable.
+    ///
+    /// * `--[no-]flag` — takes no value. `--persist-credentials`,
+    ///   `--check-for-updates`, `--progress`, the `restore` overwrite flags.
+    ///   These are [`KopiaCommand::flag_bool`].
+    /// * `--flag=true|false` — a value flag that happens to accept booleans.
+    ///   `maintenance set --enable-full`, `policy set --one-file-system`.
+    ///   These go through [`KopiaCommand::flag`].
+    ///
+    /// Using the wrong one fails in both directions: `--persist-credentials=false`
+    /// leaves a stray `false` positional, and `--no-enable-full` is simply not
+    /// a flag `maintenance set` declares. Both were verified by hand against
+    /// kopia 0.23.1, which is the only way to know — kopia publishes no
+    /// machine-readable flag table.
+    #[test]
+    fn the_two_boolean_spellings_stay_distinct() {
+        // The no-value form.
+        let mut a = KopiaCommand::new("kopia");
+        a.flag_bool("progress", false);
+        assert_eq!(
+            a.argv().iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+            vec!["--no-progress"]
+        );
+
+        // The value form, which is `flag`, not `flag_bool`.
+        let mut b = KopiaCommand::new("kopia");
+        b.flag("enable-full", "false");
+        assert_eq!(
+            b.argv().iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+            vec!["--enable-full=false"]
+        );
+    }
+
+    /// Kopia's booleans are kingpin `--[no-]flag`, which take no value.
+    ///
+    /// Getting this wrong is not a cosmetic problem: `--flag=false` parses as
+    /// `--flag` plus a stray positional `false`, and because
+    /// `Driver::base` puts `--persist-credentials=false` on *every*
+    /// invocation, every kopia command failed with `expected command but got
+    /// "false"`. Verified by hand against kopia 0.23.1.
+    #[test]
+    fn booleans_use_the_no_prefix_and_never_an_equals_value() {
+        assert_eq!(bool_flag("persist-credentials", false), "--no-persist-credentials");
+        assert_eq!(bool_flag("persist-credentials", true), "--persist-credentials");
+        assert_eq!(bool_flag("check-for-updates", false), "--no-check-for-updates");
+    }
+
+    #[test]
+    fn no_rendered_argument_is_ever_a_bare_boolean_word() {
+        // The failure mode this guards is a stray `true`/`false` token, which
+        // kopia reads as a command name rather than as a flag value.
+        let mut c = KopiaCommand::new("kopia");
+        c.global_bool("persist-credentials", false)
+            .command("repository")
+            .command("create")
+            .flag_bool("check-for-updates", false)
+            .command("s3")
+            .flag("bucket", "backups");
+        let rendered: Vec<String> =
+            c.argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        for arg in &rendered {
+            assert!(
+                arg != "true" && arg != "false",
+                "a bare {arg:?} would be parsed as a command: {rendered:?}"
+            );
+            assert!(
+                !arg.ends_with("=false") && !arg.ends_with("=true"),
+                "kingpin booleans take no value, but got {arg:?}"
+            );
+        }
+        assert!(rendered.iter().any(|a| a == "--no-persist-credentials"), "{rendered:?}");
+        assert!(rendered.iter().any(|a| a == "--no-check-for-updates"), "{rendered:?}");
+    }
 
     fn cmd_with_secret() -> KopiaCommand {
         let mut c = KopiaCommand::new("kopia");

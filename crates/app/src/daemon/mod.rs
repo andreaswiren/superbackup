@@ -366,7 +366,8 @@ fn acquire_instance(paths: &Paths) -> Result<InstanceGuard> {
 /// existing repository.
 fn open_store(paths: &Paths) -> Result<Store> {
     match Store::open_for_repair(paths.clone()) {
-        Ok((store, report)) => {
+        Ok((mut store, report)) => {
+            refresh_machine_identity(&mut store);
             for issue in &report.warnings {
                 tracing::warn!("configuration warning: {issue}");
             }
@@ -380,6 +381,48 @@ fn open_store(paths: &Paths) -> Result<Store> {
             Ok(store)
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Bring the volatile facts about this machine up to date at every start:
+/// hostname, OS build, logged-in user.
+///
+/// `platform::identity::refresh` has always been able to do this and nothing
+/// ever called it, so an identity minted by `Config::default` kept its
+/// placeholder for the life of the install — reporting an unknown host and a
+/// destination folder called `this-pc-<id>`, which is precisely the opposite
+/// of the point of per-machine folders.
+///
+/// The `slug` is never touched here. It is the on-disk folder name under every
+/// destination root, and moving it would leave a repository where kopia can no
+/// longer find it. That is why a rename changes only the label.
+///
+/// Failure is not fatal: a machine that cannot name itself still backs up.
+fn refresh_machine_identity(store: &mut Store) {
+    let mut config = store.config().clone();
+    let before = config.machine.clone();
+    let mut events = superbackup_core::platform::identity::refresh(&mut config.machine);
+
+    // An identity that was never detected has a label nobody chose. Adopting
+    // the hostname is a correction, not an override — and it is guarded by
+    // `is_placeholder` so a machine the user *did* name keeps that name.
+    if before.is_placeholder() && !config.machine.hostname.trim().is_empty() {
+        let hostname = config.machine.hostname.clone();
+        if let Some(event) =
+            superbackup_core::platform::identity::rename(&mut config.machine, &hostname)
+        {
+            events.push(event);
+        }
+    }
+
+    if config.machine == before {
+        return;
+    }
+    for event in &events {
+        tracing::info!(kind = %event.kind, "{}", event.message);
+    }
+    if let Err(e) = store.set_config(config) {
+        tracing::warn!(error = %e, "this machine's details could not be brought up to date");
     }
 }
 

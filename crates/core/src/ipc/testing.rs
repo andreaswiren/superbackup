@@ -75,6 +75,8 @@ struct MockState {
     /// Secrets that were set. Values are *not* stored, only their handles —
     /// mirroring the real daemon, which has no way to give one back.
     secret_refs: Vec<SecretRef>,
+    /// The machine's display label, so a rename can be observed.
+    machine_label: Option<String>,
 }
 
 impl Default for MockHandler {
@@ -216,13 +218,19 @@ impl MockHandler {
     }
 
     fn snapshot(&self) -> StatusSnapshot {
-        let (unlocked, paused) =
-            self.state.lock().map(|s| (s.unlocked, s.paused.paused)).unwrap_or((false, false));
+        let (unlocked, paused, label) = self
+            .state
+            .lock()
+            .map(|s| (s.unlocked, s.paused.paused, s.machine_label.clone()))
+            .unwrap_or((false, false, None));
         StatusSnapshot {
             health: if paused { Health::Paused } else { Health::Idle },
             version: crate::VERSION.to_string(),
-            machine_label: "mock".into(),
+            // A rename shows up here, so a test can assert the label moved.
+            machine_label: label.unwrap_or_else(|| "mock".into()),
             machine_hostname: "mock".into(),
+            // Deliberately unchanged by a rename: the slug is the on-disk
+            // folder name and is fixed for the life of the install.
             machine_slug: "mock".into(),
             unlocked,
             paused,
@@ -930,6 +938,19 @@ impl Handler for MockHandler {
         let _guard = self.enter("settings.get").await?;
         let settings = self.state.lock().map(|s| s.settings.clone()).unwrap_or_default();
         Ok(SettingsReply { settings: Box::new(settings) })
+    }
+
+    async fn rename_machine(&self, _ctx: &RequestContext, label: String) -> Result<AckReply> {
+        let _guard = self.enter("machine.rename").await?;
+        if let Ok(mut s) = self.state.lock() {
+            let label = label.trim();
+            if !label.is_empty() {
+                // The label changes; the slug deliberately does not, which is
+                // the behaviour the real handler has to preserve.
+                s.machine_label = Some(label.to_string());
+            }
+        }
+        Ok(AckReply {})
     }
 
     async fn update_settings(

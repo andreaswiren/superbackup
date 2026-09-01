@@ -281,7 +281,7 @@ where
 /// many machines. Written to `<destination>/_superbackup/machines/<id>.json`
 /// so that a human (or another install) opening the destination can tell at a
 /// glance which folder belongs to which computer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MachineIdentity {
     /// Stable random v4 UUID generated on first run. Deliberately *not*
     /// derived from hardware serials, so it cannot be used to fingerprint the
@@ -298,6 +298,20 @@ pub struct MachineIdentity {
     /// under every destination root. Stable for the life of the install.
     pub slug: String,
     pub created_at: DateTime<Utc>,
+}
+
+impl MachineIdentity {
+    /// Is this the identity `Default` mints, rather than one detected from the
+    /// machine it is running on?
+    ///
+    /// Used to decide whether adopting the real hostname as the label is a
+    /// correction or would be overwriting a name the user chose. `"this-pc"`
+    /// and `"unknown"` are the two literals below and nothing else produces
+    /// them together: `detect` sets both from the host, and a user who renames
+    /// the machine changes `label` alone.
+    pub fn is_placeholder(&self) -> bool {
+        self.label == "this-pc" && self.hostname == "unknown"
+    }
 }
 
 impl Default for MachineIdentity {

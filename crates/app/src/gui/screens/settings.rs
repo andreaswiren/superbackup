@@ -37,6 +37,15 @@ pub struct State {
     /// Which destination the repository half of the check runs against.
     /// `None` means "version only", which needs no unlocked vault.
     pub kopia_probe_destination: Option<Uuid>,
+    /// The machine label being edited.
+    ///
+    /// This has to be held here rather than rebuilt from the snapshot each
+    /// frame. In an immediate-mode interface a local `let mut label =
+    /// data.machine_label()` is recreated before every pass, so the character
+    /// the user just typed is thrown away and the field snaps back — which is
+    /// exactly what it did. `None` means "not being edited"; the field then
+    /// shows what the daemon reports.
+    pub machine_label: Option<String>,
 }
 
 impl State {
@@ -139,8 +148,41 @@ impl App {
     fn settings_general(&mut self, ui: &mut Ui) {
         let t = theme::tokens(ui.ctx());
         let mut changed = false;
-        let mut label = self.data.machine_label().to_string();
-        widgets::Field::new().label(copy::set::MACHINE_LABEL).char_limit(64).show(ui, &mut label);
+        let current = self.data.machine_label().to_string();
+        // Start from what the daemon reports, then keep the user's edit until
+        // it is saved or abandoned.
+        let mut label =
+            self.screens.settings.machine_label.clone().unwrap_or_else(|| current.clone());
+        let response = widgets::Field::new()
+            .label(copy::set::MACHINE_LABEL)
+            .char_limit(64)
+            .show(ui, &mut label);
+        if response.changed() {
+            self.screens.settings.machine_label = Some(label.clone());
+        }
+
+        let trimmed = label.trim().to_string();
+        let dirty = self.screens.settings.machine_label.is_some() && trimmed != current;
+        if dirty {
+            ui.add_space(space::S);
+            ui.horizontal(|ui| {
+                let valid = !trimmed.is_empty();
+                let mut save = Button::primary(copy::action::SAVE_CHANGES).enabled(valid);
+                if !valid {
+                    save = save.disabled_because(copy::set::MACHINE_LABEL_EMPTY);
+                }
+                if save.show(ui).clicked() {
+                    self.ask(
+                        Intent::RenameMachine(trimmed.clone()),
+                        Request::MachineRename { label: trimmed.clone() },
+                    );
+                    self.screens.settings.machine_label = None;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    self.screens.settings.machine_label = None;
+                }
+            });
+        }
         ui.add_space(space::S);
         widgets::text(
             ui,
@@ -530,55 +572,20 @@ impl App {
         let t = theme::tokens(ui.ctx());
         let mut changed = false;
 
+        // Both rows share one label column, so the boxes, units and Mbit
+        // readouts line up in columns rather than each starting wherever its
+        // own label happened to end.
         let mut upload = self.data.settings.bandwidth.upload_kbps;
-        ui.horizontal(|ui| {
-            let mut on = upload.is_some();
-            if widgets::checkbox(ui, &mut on, copy::set::BW_UPLOAD, None, true).clicked() {
-                upload = if on { Some(2000) } else { None };
-                changed = true;
-            }
-            if let Some(value) = &mut upload {
-                ui.add_space(space::M);
-                let before = *value;
-                widgets::number(
-                    ui,
-                    value,
-                    1..=10_000_000,
-                    copy::set::BW_UNIT,
-                    true,
-                    copy::set::BW_UPLOAD,
-                );
-                if *value != before {
-                    changed = true;
-                }
-                ui.add_space(space::M);
-                widgets::text(ui, format::kbps_as_mbit(*value), Type::Small, t.text_muted);
-            }
-        });
+        if bandwidth_row(ui, "bw-up", copy::set::BW_UPLOAD, &mut upload) {
+            changed = true;
+        }
         self.data.settings.bandwidth.upload_kbps = upload;
 
-        ui.add_space(space::XL);
+        ui.add_space(space::L);
         let mut download = self.data.settings.bandwidth.download_kbps;
-        ui.horizontal(|ui| {
-            let mut on = download.is_some();
-            if widgets::checkbox(ui, &mut on, copy::set::BW_DOWNLOAD, None, true).clicked() {
-                download = if on { Some(2000) } else { None };
-                changed = true;
-            }
-            if let Some(value) = &mut download {
-                ui.add_space(space::M);
-                widgets::number(
-                    ui,
-                    value,
-                    1..=10_000_000,
-                    copy::set::BW_UNIT,
-                    true,
-                    copy::set::BW_DOWNLOAD,
-                );
-                ui.add_space(space::M);
-                widgets::text(ui, format::kbps_as_mbit(*value), Type::Small, t.text_muted);
-            }
-        });
+        if bandwidth_row(ui, "bw-down", copy::set::BW_DOWNLOAD, &mut download) {
+            changed = true;
+        }
         self.data.settings.bandwidth.download_kbps = download;
         ui.add_space(space::S);
         widgets::paragraph_at(ui, copy::set::BW_DOWNLOAD_BODY, Type::Small, t.text_muted, 560.0);
@@ -1603,4 +1610,57 @@ fn keychain_name() -> &'static str {
     } else {
         "the Secret Service"
     }
+}
+
+/// One bandwidth limit: checkbox, value, unit, Mbit readout, and a notched
+/// slider — laid out on a fixed label column so upload and download line up.
+///
+/// The number box and the slider edit the same value in different units. The
+/// box is authoritative: typing a value leaves it exactly as typed, and only a
+/// drag snaps to a 10 Mbit notch. Rounding what someone deliberately typed is
+/// the behaviour that makes a control feel like it is arguing.
+fn bandwidth_row(ui: &mut Ui, id: &str, label: &str, value: &mut Option<u32>) -> bool {
+    const LABEL_W: f32 = 150.0;
+    let t = theme::tokens(ui.ctx());
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        let mut on = value.is_some();
+        // The checkbox carries the label, and the pair is padded to a fixed
+        // width so everything after it starts at the same x on every row.
+        let before_x = ui.cursor().left();
+        if widgets::checkbox(ui, &mut on, label, None, true).clicked() {
+            *value = if on { Some(2000) } else { None };
+            changed = true;
+        }
+        let used = ui.cursor().left() - before_x;
+        if used < LABEL_W {
+            ui.add_space(LABEL_W - used);
+        }
+
+        if let Some(v) = value.as_mut() {
+            let before = *v;
+            widgets::number(ui, v, 1..=10_000_000, copy::set::BW_UNIT, true, label);
+            if *v != before {
+                changed = true;
+            }
+            ui.add_space(space::M);
+            widgets::text(ui, format::kbps_as_mbit(*v), Type::Small, t.text_muted);
+        } else {
+            widgets::text(ui, copy::set::BW_UNLIMITED, Type::Small, t.text_muted);
+        }
+    });
+
+    if let Some(v) = value.as_mut() {
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            ui.add_space(LABEL_W);
+            ui.vertical(|ui| {
+                if widgets::mbit_slider(ui, id, v) {
+                    changed = true;
+                }
+            });
+        });
+    }
+    changed
 }

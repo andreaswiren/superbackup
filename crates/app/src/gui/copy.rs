@@ -1501,6 +1501,7 @@ pub mod settings {
 
 pub mod set {
     pub const MACHINE_LABEL: &str = "Machine label";
+    pub const MACHINE_LABEL_EMPTY: &str = "A machine needs a name.";
     pub const MACHINE_SLUG_NOTE: &str =
         "The folder name is fixed for this install and does not change when you rename the machine.";
     pub const MACHINE_ID: &str = "Machine id";
@@ -1558,6 +1559,7 @@ pub mod set {
     pub const BW_UPLOAD: &str = "Upload limit";
     pub const BW_DOWNLOAD: &str = "Download limit";
     pub const BW_UNIT: &str = "kB/s";
+    pub const BW_UNLIMITED: &str = "No limit";
     pub const BW_DOWNLOAD_BODY: &str =
         "Downloads happen during restores and repository maintenance.";
     pub const BW_WINDOW: &str = "Use a different limit during part of the day";

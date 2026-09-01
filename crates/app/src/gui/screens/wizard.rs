@@ -389,8 +389,21 @@ fn step_sources(ui: &mut Ui, state: &mut WizardState) {
     let mut remove: Option<usize> = None;
     if state.draft.sources.is_empty() {
         widgets::table_frame(ui, |ui| {
-            ui.set_min_height(140.0);
-            widgets::empty_state(ui, Icon::Folder, &copy::empty::SOURCES, None);
+            // The empty state centres itself within the height it is *given*,
+            // and inside a layout that grows to fit, `available_height` is the
+            // space left in the parent rather than the height of this box. The
+            // centring padding then inflated the box and left the content
+            // sitting near its bottom edge. Allocating a fixed height first
+            // makes "the middle" a real, known place.
+            const BOX_H: f32 = 180.0;
+            ui.allocate_ui_with_layout(
+                Vec2::new(ui.available_width(), BOX_H),
+                Layout::top_down(Align::Center),
+                |ui| {
+                    ui.set_min_height(BOX_H);
+                    widgets::empty_state(ui, Icon::Folder, &copy::empty::SOURCES, None);
+                },
+            );
         });
     } else {
         for (index, source) in state.draft.sources.iter().enumerate() {

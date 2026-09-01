@@ -379,8 +379,8 @@ async fn creates_a_filesystem_repository_with_the_full_encryption_settings() {
     assert_eq!(inv.flag_value("--ecc-overhead-percent").as_deref(), Some("2"));
     assert!(inv.flag_value("--path").is_some(), "filesystem storage needs --path");
     assert!(inv.flag_value("--cache-directory").is_some());
-    assert_eq!(inv.flag_value("--check-for-updates").as_deref(), Some("false"));
-    assert_eq!(inv.flag_value("--persist-credentials").as_deref(), Some("false"));
+    assert_eq!(inv.bool_flag("--check-for-updates"), Some(false));
+    assert_eq!(inv.bool_flag("--persist-credentials"), Some(false));
     // The repository directory is created before kopia is asked to use it.
     assert!(s.root.join("repo").is_dir(), "the repository directory was not prepared");
 }
@@ -758,9 +758,9 @@ async fn restore_defaults_are_safe_and_the_flags_are_the_real_ones() {
 
     let inv = s.only();
     assert_eq!(inv.words(), vec!["restore", "k9f3a1b2/src/main.rs", &target.display().to_string()]);
-    assert_eq!(inv.flag_value("--overwrite-files").as_deref(), Some("false"));
-    assert_eq!(inv.flag_value("--overwrite-directories").as_deref(), Some("false"));
-    assert_eq!(inv.flag_value("--write-files-atomically").as_deref(), Some("true"));
+    assert_eq!(inv.bool_flag("--overwrite-files"), Some(false));
+    assert_eq!(inv.bool_flag("--overwrite-directories"), Some(false));
+    assert_eq!(inv.bool_flag("--write-files-atomically"), Some(true));
     assert!(!inv.has_flag("--delete-extra"), "a restore must never delete by default");
     assert!(inv.has_flag("--progress"));
 }
@@ -1270,7 +1270,7 @@ async fn sync_to_addresses_the_replica_with_its_own_storage_flags() {
     assert!(inv.has_flag("--config-file"));
     // Progress must be forced on: kopia suppresses `outputSyncProgress`
     // entirely when stdout is not a terminal, and it never is here.
-    assert_eq!(inv.flag_value("--progress").as_deref(), Some("true"));
+    assert_eq!(inv.bool_flag("--progress"), Some(true));
     assert_eq!(inv.flag_value("--parallel").as_deref(), Some("8"));
     // Deletions never propagate from the source to the replica.
     assert!(!inv.has_flag("--delete"), "sync-to must not delete by default");

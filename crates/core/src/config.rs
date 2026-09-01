@@ -1160,6 +1160,25 @@ impl Store {
         let vault = VaultFile::create_from(&paths, vault)?;
         let config_store = ConfigStore::new(paths.clone());
         let mut config = Config::default();
+        // Detect the real machine *before* the first save, because this is the
+        // only moment the destination folder name can still be chosen. Every
+        // later start is bound by "the slug is fixed for the life of the
+        // install", which is what stops a rename orphaning a repository.
+        //
+        // `Config::default()` mints a placeholder — label "this-pc", hostname
+        // "unknown" — and nothing used to replace it, so every install
+        // identified itself as `this-pc-<id>` and reported an unknown host.
+        // That defeats the point of per-machine folders: the name is supposed
+        // to say whose backup it is.
+        match crate::platform::identity::detect(&paths) {
+            Ok(identity) => config.machine = identity,
+            Err(e) => {
+                // A machine that cannot name itself still deserves a working
+                // backup. The placeholder is kept and `refresh` will try again
+                // on the next start.
+                tracing::warn!(error = %e, "could not detect this machine; using a placeholder");
+            }
+        }
         config_store.save_mut(&mut config)?;
         Ok(Store { config_store, config, vault, outcome: LoadOutcome::default() })
     }

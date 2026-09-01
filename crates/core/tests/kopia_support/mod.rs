@@ -367,6 +367,28 @@ impl Invocation {
     pub fn has_flag(&self, flag: &str) -> bool {
         self.args.iter().any(|a| a == flag || a.starts_with(&format!("{flag}=")))
     }
+    /// Read a kingpin boolean: `Some(true)` for `--flag`, `Some(false)` for
+    /// `--no-flag`, `None` when neither is present.
+    ///
+    /// These are deliberately *not* `flag_value`, because kopia's booleans
+    /// carry no value. Asserting `flag_value("--persist-credentials") ==
+    /// Some("false")` is asserting the `--flag=false` form, which kopia
+    /// rejects outright with `expected command but got "false"` — so the old
+    /// assertions were pinning the bug in place rather than catching it.
+    pub fn bool_flag(&self, flag: &str) -> Option<bool> {
+        let name = flag.trim_start_matches("--");
+        let yes = format!("--{name}");
+        let no = format!("--no-{name}");
+        self.args.iter().find_map(|a| {
+            if *a == yes {
+                Some(true)
+            } else if *a == no {
+                Some(false)
+            } else {
+                None
+            }
+        })
+    }
     pub fn flag_value(&self, flag: &str) -> Option<String> {
         let prefix = format!("{flag}=");
         self.args.iter().find_map(|a| a.strip_prefix(&prefix).map(|s| s.to_string()))
