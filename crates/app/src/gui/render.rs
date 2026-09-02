@@ -769,6 +769,11 @@ fn sample_key_export() -> superbackup_core::ipc::protocol::KeyExportReply {
                    can read every file in those backups. Treat it exactly as you would treat the\n\
                    backed-up files themselves: a locked drawer, a safe, or a password manager.\n"
             .into(),
+        json: "{
+  \"format\": \"superbackup.keys\",
+  \"version\": 1
+}"
+        .into(),
         destinations: 2,
         omitted: vec![
             "External drive mirror: a folder mirror holds plain copies and has no encryption key"

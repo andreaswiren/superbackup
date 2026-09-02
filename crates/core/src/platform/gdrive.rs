@@ -167,11 +167,14 @@ fn detect_raw() -> Vec<GoogleDriveAccount> {
 #[cfg(windows)]
 fn detect_windows_mounts() -> Vec<GoogleDriveAccount> {
     let mut found = Vec::new();
-    for letter in b'A'..=b'Z' {
-        let root = PathBuf::from(format!("{}:\\", letter as char));
-        if !root.is_dir() {
-            continue;
-        }
+    // Only drives that exist, and only the kinds a Drive mount can be.
+    //
+    // Walking `A:` to `Z:` and stat-ing each one froze the interface for
+    // several seconds: probing an empty floppy or optical drive blocks until
+    // the device times out, and `A:`/`B:` are the worst offenders. The
+    // bitmask says which letters exist without touching any of them, and the
+    // drive type rules out removable media before anything is opened.
+    for root in super::mounted_drive_roots() {
         let Some(label) = super::volume_label(&root) else { continue };
         if !label.eq_ignore_ascii_case("Google Drive") {
             continue;
@@ -336,6 +339,24 @@ fn detect_mode(path: &Path) -> DriveMode {
 
 #[cfg(test)]
 mod tests {
+
+    /// Detection runs on the interface thread when the destination editor
+    /// opens, so it has to be cheap.
+    ///
+    /// The first version walked `A:` to `Z:` and stat-ed every letter, which
+    /// froze the window for seconds: opening an empty floppy or optical drive
+    /// blocks until the device times out. The mounted-letters bitmask answers
+    /// which drives exist without touching any of them.
+    #[test]
+    fn detection_is_fast_enough_to_run_while_drawing_a_frame() {
+        let started = std::time::Instant::now();
+        let _ = detect();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(400),
+            "detection took {elapsed:?}, which is long enough for the user to see it"
+        );
+    }
     use super::*;
 
     #[test]

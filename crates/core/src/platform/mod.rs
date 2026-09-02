@@ -103,6 +103,17 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     }
 }
 
+/// Every drive letter that is actually mounted and is not removable media.
+///
+/// `GetLogicalDrives` answers "which letters exist" from a bitmask, touching
+/// no device — which matters because *opening* an empty optical or floppy
+/// drive blocks until it times out. Walking `A:` to `Z:` and stat-ing each one
+/// froze the window for seconds every time the destination editor opened.
+#[cfg(windows)]
+pub(crate) fn mounted_drive_roots() -> Vec<std::path::PathBuf> {
+    win32::mounted_drive_roots()
+}
+
 /// The volume label of the volume holding `root`, on Windows only.
 ///
 /// Google Drive for Desktop labels its mount "Google Drive", which is how

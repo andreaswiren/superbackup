@@ -342,6 +342,8 @@ pub struct ExportKeysState {
     /// The document, once the daemon has returned it. `Some` means this modal
     /// is holding secret material.
     pub document: Option<String>,
+    /// The same keys as JSON, for a machine to read back later.
+    pub json: Option<String>,
     pub destinations: u32,
     pub omitted: Vec<String>,
     pub suggested_file_name: String,
@@ -358,6 +360,7 @@ impl ExportKeysState {
         self.omitted = reply.omitted;
         self.suggested_file_name = reply.suggested_file_name;
         self.document = Some(reply.document);
+        self.json = (!reply.json.trim().is_empty()).then_some(reply.json);
         // The passphrase has done its job; there is no reason to keep it in a
         // `String` for the life of the dialog.
         self.passphrase.clear();
@@ -1649,6 +1652,7 @@ fn show_export_keys(
     let mut request = false;
     let mut save = false;
     let mut copy_text = false;
+    let mut save_json = false;
     let mut done = false;
 
     let (close, _) = widgets::modal(
@@ -1758,7 +1762,15 @@ fn show_export_keys(
                     {
                         save = true;
                     }
-                    if Button::secondary(copy::keys::EXPORT_COPY)
+                    if Button::secondary(copy::keys::EXPORT_SAVE_JSON)
+                        .icon(Icon::Download)
+                        .enabled(state.destinations > 0 && state.json.is_some())
+                        .show(ui)
+                        .clicked()
+                    {
+                        save_json = true;
+                    }
+                    if Button::ghost(copy::keys::EXPORT_COPY)
                         .enabled(state.destinations > 0)
                         .show(ui)
                         .clicked()
@@ -1797,6 +1809,27 @@ fn show_export_keys(
             app.toasts.warning(copy::keys::EXPORT_COPIED);
         }
     }
+    if save_json {
+        // Written with the same owner-only creation the text file gets: this
+        // document carries exactly the same keys and is exactly as sensitive.
+        if let Some(json) = state.json.clone() {
+            let name = state.suggested_file_name.replace(".txt", ".json");
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name(&name)
+                .add_filter("JSON", &["json"])
+                .save_file()
+            {
+                match superbackup_core::paths::write_atomic(&path, json.as_bytes()) {
+                    Ok(()) => {
+                        state.saved_to = Some(path.display().to_string());
+                        state.error = None;
+                    }
+                    Err(e) => state.error = Some(e.to_string()),
+                }
+            }
+        }
+    }
+
     if save {
         if let Some(document) = state.document.clone() {
             match rfd::FileDialog::new()

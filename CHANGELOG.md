@@ -14,6 +14,38 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.7] - 2026-09-02
+
+### Fixed
+
+- **Opening "New destination" froze the window.** The Google Drive detection
+  added earlier walked `A:` to `Z:` and stat-ed every letter, and opening an
+  empty floppy or optical drive blocks until the device times out. It now reads
+  the mounted-letters bitmask, which answers which drives exist without
+  touching any of them, and skips removable media. A test asserts detection
+  finishes in well under a frame.
+- **Buttons inside a table row did nothing visible.** Making rows clickable
+  meant a click on a button inside one landed on the row as well, so "Verify"
+  verified *and* navigated to the editor, and "Run now" on the dashboard ran
+  the job *and* opened it - in both cases the navigation is what you saw, so
+  the button looked broken. A control inside a row now wins.
+- **A job name sat above the rest of its row.** The cell wrapped its content in
+  a vertical layout, which lays out from the top and so opted out of the
+  table's own centring; with no description that left a single line high.
+- **`destination repository contains incompatible data` is explained.** It is
+  what `sync-to` says when the destination already holds a *different*
+  repository, which is the one failure that looks like a bug and is really a
+  statement about what a copy is: a copy is the same repository in a second
+  place, so it has to start empty. It now says so, and says what to do.
+
+### Added
+
+- **The encryption keys export as JSON as well as prose**, so they can be read
+  back one at a time rather than retyped. Same keys, same sensitivity; the
+  prose document is for a person and a safe, the JSON is for getting a machine
+  back. Each entry carries the destination id, so an import can match a key to
+  its destination even after a rename.
+
 ## [0.2.6] - 2026-09-02
 
 ### Fixed

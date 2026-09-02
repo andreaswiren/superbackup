@@ -940,8 +940,17 @@ impl App {
             );
         }
 
+        // The whole card opens the job — except where a control on it has just
+        // been used.
+        //
+        // This `interact` covers the card's full rectangle and runs after the
+        // buttons are drawn, so a click on "Run now" registered here as well:
+        // the job *did* start, and then the editor opened on top of it, which
+        // from the outside looked exactly like the button navigating instead
+        // of running. Anything already handled this frame wins.
+        let handled = run || enable || view_error || menu_action.is_some();
         let card = ui.interact(rect, egui::Id::new("job-card").with(job.id), Sense::click());
-        if card.clicked() {
+        if card.clicked() && !handled {
             open = true;
         }
         if card.hovered() {

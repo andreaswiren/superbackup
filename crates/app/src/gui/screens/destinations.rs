@@ -389,7 +389,11 @@ impl App {
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &announce)
                         });
-                        if response.clicked() {
+                        // A control inside the row wins. The row senses clicks so it
+                        // can open the item, but a click on a button inside it lands
+                        // here too — so pressing Verify both verified *and* navigated
+                        // away, and navigating is what the user saw.
+                        if response.clicked() && verify.is_none() && menu.is_none() {
                             open = Some(destination.id);
                         }
                     });

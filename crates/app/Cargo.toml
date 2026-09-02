@@ -13,7 +13,7 @@ name = "superbackup"
 path = "src/main.rs"
 
 [dependencies]
-superbackup-core = { path = "../core", version = "0.2.6" }
+superbackup-core = { path = "../core", version = "0.2.7" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

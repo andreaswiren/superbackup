@@ -43,6 +43,13 @@ pub enum KopiaFailure {
     RepositoryNotFound,
     /// `repository create` found data where it wanted an empty location.
     RepositoryExists,
+    /// `repository sync-to` found a *different* repository at the destination.
+    ///
+    /// A copy is the same repository in a second place, so `sync-to` refuses a
+    /// destination whose format blob has a different unique id. It is the one
+    /// failure that looks like a bug and is really a statement about what a
+    /// copy is.
+    ReplicaMismatch,
     /// The per-destination config file does not describe a connection yet.
     NotConnected,
     /// The object store rejected our credentials.
@@ -79,6 +86,9 @@ impl KopiaFailure {
             KopiaFailure::RepositoryExists => {
                 "That location already contains data, so a new repository cannot be created there."
             }
+            KopiaFailure::ReplicaMismatch => {
+                "This destination already holds a different repository, so it cannot be a copy of another one."
+            }
             KopiaFailure::NotConnected => "This destination is not connected to its repository.",
             KopiaFailure::StorageAuth => {
                 "The storage provider rejected the access key for this destination."
@@ -111,6 +121,9 @@ impl KopiaFailure {
             KopiaFailure::RepositoryNotFound => {
                 Some("Use \"Create repository\" on this destination, or point it at the folder or prefix that already holds one.")
             }
+            KopiaFailure::ReplicaMismatch => Some(
+                "A copy is the same repository in a second place, so it has to start empty or already be a copy of the same source. Point this destination at an empty folder or key prefix, or delete what is there, and run the job again.",
+            ),
             KopiaFailure::RepositoryExists => Some(
                 "Connect to the existing repository instead, or choose an empty folder or key prefix.",
             ),
@@ -150,6 +163,7 @@ impl KopiaFailure {
         match self {
             KopiaFailure::WrongPassword => ErrorCode::BadPassphrase,
             KopiaFailure::RepositoryExists => ErrorCode::RepoExists,
+            KopiaFailure::ReplicaMismatch => ErrorCode::RepoExists,
             KopiaFailure::NotConnected | KopiaFailure::RepositoryNotFound => {
                 ErrorCode::RepoNotConnected
             }
@@ -185,6 +199,10 @@ impl KopiaFailure {
 ///   likely to drift. They are matched last and failing to match is harmless.
 const PATTERNS: &[(&str, KopiaFailure)] = &[
     ("invalid repository password", KopiaFailure::WrongPassword),
+    // `repo/blob` when `sync-to` finds a format blob with a different unique
+    // id. Checked before the generic "existing data" patterns, because it is
+    // the more specific statement of the same situation.
+    ("destination repository contains incompatible data", KopiaFailure::ReplicaMismatch),
     ("found existing data in storage location", KopiaFailure::RepositoryExists),
     ("repository already initialized", KopiaFailure::RepositoryExists),
     ("repository is not connected", KopiaFailure::NotConnected),

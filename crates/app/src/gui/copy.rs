@@ -1909,7 +1909,8 @@ pub mod keys {
          they never appear on your screen.";
     pub const EXPORT_CONFIRM: &str = "Enter your master passphrase to continue";
     pub const EXPORT_SAVE: &str = "Choose a file and save";
-    pub const EXPORT_COPY: &str = "Copy as text instead";
+    pub const EXPORT_COPY: &str = "Copy";
+    pub const EXPORT_SAVE_JSON: &str = "Save as JSON";
     pub const EXPORT_COPIED: &str = "Copied. Your clipboard now holds your encryption keys.";
     pub const EXPORT_CANCELLED: &str = "Nothing was saved.";
     pub const EXPORT_OMITTED: &str = "Not included";

@@ -1208,6 +1208,9 @@ pub struct KeyExportReply {
     /// The daemon does not write it: it may be running as SYSTEM, and taking a
     /// path from a caller would make this an arbitrary-file-write primitive.
     pub document: String,
+    /// The same keys as structured data, for re-importing them one at a time.
+    #[serde(default)]
+    pub json: String,
     /// How many destinations the document describes.
     pub destinations: u32,
     /// Destinations that were skipped, and why — a folder mirror has no key,

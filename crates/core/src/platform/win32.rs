@@ -23,8 +23,8 @@ use windows::Win32::Foundation::{
     CloseHandle, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HANDLE,
 };
 use windows::Win32::Storage::FileSystem::{
-    GetDiskFreeSpaceExW, GetFileAttributesW, GetVolumeInformationW, SetFileAttributesW,
-    FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES,
+    GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW, GetLogicalDrives,
+    GetVolumeInformationW, SetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES,
 };
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW,
@@ -311,6 +311,40 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
         GetDiskFreeSpaceExW(PCWSTR(wpath.as_ptr()), Some(&mut available), Some(&mut total), None)
     };
     ok.ok().map(|()| (available, total))
+}
+
+/// Drive roots that exist and are not removable media.
+///
+/// Reads the mounted-letters bitmask rather than probing each letter: opening
+/// an empty optical or floppy drive blocks until the device times out, which
+/// is seconds of frozen interface per call.
+pub fn mounted_drive_roots() -> Vec<std::path::PathBuf> {
+    // `DRIVE_FIXED` and `DRIVE_REMOTE`. A Google Drive mount presents as a
+    // fixed volume; removable and CD-ROM are excluded because they are the
+    // slow ones and cannot be a Drive mount anyway.
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_REMOTE: u32 = 4;
+
+    // SAFETY: no arguments, returns a bitmask of mounted letters.
+    let mask = unsafe { GetLogicalDrives() };
+    if mask == 0 {
+        return Vec::new();
+    }
+    let mut roots = Vec::new();
+    for index in 0..26u32 {
+        if mask & (1 << index) == 0 {
+            continue;
+        }
+        let letter = (b'A' + index as u8) as char;
+        let root = format!("{letter}:\\");
+        let wide_root = wide(&root);
+        // SAFETY: `wide_root` is NUL-terminated and outlives the call.
+        let kind = unsafe { GetDriveTypeW(PCWSTR(wide_root.as_ptr())) };
+        if kind == DRIVE_FIXED || kind == DRIVE_REMOTE {
+            roots.push(std::path::PathBuf::from(root));
+        }
+    }
+    roots
 }
 
 /// The volume label and filesystem name for the volume holding `root`.

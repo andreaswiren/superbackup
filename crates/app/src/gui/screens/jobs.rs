@@ -328,8 +328,14 @@ impl App {
                                     response.on_hover_text(view.badge.clone());
                                 });
                                 row.col(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.spacing_mut().item_spacing.y = 0.0;
+                                    // `ui.vertical` lays out from the *top* of
+                                    // the cell, so it opts out of the table's
+                                    // `Align::Center` — with no description
+                                    // that left a single line sitting above
+                                    // every other column in the row. A lone
+                                    // name is drawn directly, and the cell
+                                    // centres it like everything else.
+                                    if job.description.is_empty() {
                                         widgets::elided(
                                             ui,
                                             &job.name,
@@ -338,7 +344,17 @@ impl App {
                                             170.0,
                                             false,
                                         );
-                                        if !job.description.is_empty() {
+                                    } else {
+                                        ui.vertical(|ui| {
+                                            ui.spacing_mut().item_spacing.y = 0.0;
+                                            widgets::elided(
+                                                ui,
+                                                &job.name,
+                                                Type::BodyStrong,
+                                                theme::alpha(t.text_primary, dim),
+                                                170.0,
+                                                false,
+                                            );
                                             widgets::elided(
                                                 ui,
                                                 &job.description,
@@ -347,8 +363,8 @@ impl App {
                                                 170.0,
                                                 false,
                                             );
-                                        }
-                                    });
+                                        });
+                                    }
                                 });
                                 if has("sources") {
                                     row.col(|ui| {
@@ -502,7 +518,11 @@ impl App {
                                 response.widget_info(|| {
                                     egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &cells)
                                 });
-                                if response.clicked() {
+                                // A control inside the row wins. The row senses clicks so it
+                                // can open the item, but a click on a button inside it lands
+                                // here too — so pressing Verify both verified *and* navigated
+                                // away, and navigating is what the user saw.
+                                if response.clicked() && run.is_none() && menu.is_none() {
                                     open = Some(job.id);
                                 }
                             });

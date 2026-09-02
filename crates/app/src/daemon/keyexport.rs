@@ -52,6 +52,13 @@ use superbackup_core::secret::Secret;
 /// The finished document plus the accounting the caller has to report.
 pub struct KeyExport {
     pub document: String,
+    /// The same keys as structured data, so they can be re-imported one at a
+    /// time rather than retyped out of prose.
+    ///
+    /// The prose document is for a human with a safe or a password manager;
+    /// this is for getting a machine back. Both carry exactly the same keys and
+    /// are exactly as sensitive as each other.
+    pub json: String,
     /// Destinations that carry a key and appear in the document.
     pub exported: u32,
     /// `"<name>: <reason>"` for every destination that does not, in
@@ -112,7 +119,67 @@ pub fn build(store: &Store, generated_at: DateTime<Utc>) -> KeyExport {
         if exported == 1 { "y" } else { "ies" }
     ));
 
-    KeyExport { document, exported, omitted }
+    let json = json_document(store, config, generated_at, &omitted);
+    KeyExport { document, json, exported, omitted }
+}
+
+/// One entry per repository, in a shape that can be read back.
+///
+/// Deliberately flat and self-describing: a `format` and a `version` so a
+/// reader can refuse a document it does not understand rather than
+/// misinterpret it, and the destination id so an import can match a key to the
+/// destination it belongs to without relying on a name the user may have
+/// changed since.
+fn json_document(
+    store: &Store,
+    config: &Config,
+    generated_at: DateTime<Utc>,
+    omitted: &[String],
+) -> String {
+    let mut repositories = Vec::new();
+    for destination in &config.destinations {
+        if !destination.kind.is_repository() {
+            continue;
+        }
+        let Ok(secret) = destination_passphrase(store, destination) else { continue };
+        let Some(key) = secret.expose_str().map(str::to_string) else { continue };
+        let encryption = destination.encryption.clone().unwrap_or_default();
+        let replica_of = config
+            .replication_root(destination)
+            .filter(|root| root.id != destination.id)
+            .map(|root| root.name.clone());
+        repositories.push(serde_json::json!({
+            "destination_id": destination.id.to_string(),
+            "name": destination.name,
+            "kind": destination.kind.label(),
+            "location": location(config, destination),
+            "key": key,
+            "key_source": describe_source(encryption.passphrase_source),
+            "encryption": {
+                "algorithm": encryption.algorithm.kopia_id(),
+                "hash": encryption.hash.kopia_id(),
+                "splitter": encryption.splitter.kopia_id(),
+            },
+            "replica_of": replica_of,
+            "connect": connect_command(config, destination),
+        }));
+    }
+
+    let document = serde_json::json!({
+        "format": "superbackup.keys",
+        "version": 1,
+        "generated_at": generated_at.to_rfc3339(),
+        "machine": {
+            "label": config.machine.label,
+            "id": config.machine.id.to_string(),
+            "folder": config.machine.slug,
+        },
+        "repositories": repositories,
+        "omitted": omitted,
+    });
+    // Pretty-printed: this is a file a person opens to check before trusting
+    // it with the only copy of a key.
+    serde_json::to_string_pretty(&document).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// The suggested file name. Not a path: the daemon never chooses where this
@@ -330,6 +397,70 @@ fn first_sentence(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// The JSON has to be machine-readable, or it is just a second copy of
+    /// prose. Every field an import needs is asserted by name.
+    #[test]
+    fn the_json_document_can_be_read_back() {
+        let store = store_with_keys(vec![repository("local", &abs("repos/local"))]);
+        let export = build(&store, Utc::now());
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&export.json).expect("the JSON export must parse");
+        assert_eq!(parsed["format"], "superbackup.keys");
+        assert_eq!(parsed["version"], 1);
+
+        let repos = parsed["repositories"].as_array().expect("an array of repositories");
+        assert_eq!(repos.len(), 1, "one repository in, one repository out");
+        let repo = &repos[0];
+        // The id, not just the name: an import has to match a key to its
+        // destination even after the user has renamed it.
+        assert!(repo["destination_id"].as_str().is_some_and(|s| !s.is_empty()));
+        assert_eq!(repo["name"], "local");
+        assert!(repo["key"].as_str().is_some_and(|k| !k.is_empty()), "the key must be present");
+        assert!(repo["location"].as_str().is_some_and(|l| !l.is_empty()));
+        assert!(repo["encryption"]["algorithm"].as_str().is_some());
+    }
+
+    /// A mirror has no key, and must not appear with an empty one — an import
+    /// reading that would store a blank passphrase against a real destination.
+    #[test]
+    fn a_mirror_is_absent_from_the_json_rather_than_keyless() {
+        let mut mirror = repository("plain", &abs("copies/plain"));
+        mirror.kind = superbackup_core::model::DestinationKind::LocalMirror {
+            path: std::path::PathBuf::from(abs("copies/plain")),
+        };
+        mirror.passphrase_ref = None;
+        let store = store_with(vec![mirror]);
+        let export = build(&store, Utc::now());
+
+        let parsed: serde_json::Value = serde_json::from_str(&export.json).expect("parses");
+        assert!(
+            parsed["repositories"].as_array().expect("array").is_empty(),
+            "a mirror has no key and must not be listed as though it had one"
+        );
+        assert!(
+            !parsed["omitted"].as_array().expect("array").is_empty(),
+            "and it must be accounted for rather than silently dropped"
+        );
+    }
+
+    /// Both documents describe the same thing, so they must agree on how many
+    /// repositories there are.
+    #[test]
+    fn the_two_documents_do_not_disagree() {
+        let store = store_with_keys(vec![
+            repository("a", &abs("repos/a")),
+            repository("b", &abs("repos/b")),
+        ]);
+        let export = build(&store, Utc::now());
+        let parsed: serde_json::Value = serde_json::from_str(&export.json).expect("parses");
+        assert_eq!(
+            parsed["repositories"].as_array().expect("array").len() as u32,
+            export.exported,
+            "the JSON and the prose must list the same repositories"
+        );
+    }
     use super::*;
     use superbackup_core::model::{EncryptionSettings, SecretRef};
     use uuid::Uuid;
@@ -346,6 +477,32 @@ mod tests {
         config.destinations = destinations;
         store.set_config(config).expect("store the configuration");
         store
+    }
+
+    /// [`store_with`], with a key actually stored for every repository.
+    ///
+    /// Separate rather than folded in, because several tests exist precisely
+    /// to check what happens to a destination whose key is *missing*.
+    fn store_with_keys(destinations: Vec<Destination>) -> Store {
+        let mut store = store_with(destinations.clone());
+        for destination in &destinations {
+            if let Some(handle) = &destination.passphrase_ref {
+                store
+                    .put_secret(handle.clone(), Secret::from_str("a-repository-passphrase"))
+                    .expect("store a key");
+            }
+        }
+        store
+    }
+
+    /// An absolute path on whichever platform the tests run on. `/repos/x` is
+    /// relative on Windows, and a destination path must be absolute.
+    fn abs(tail: &str) -> String {
+        if cfg!(windows) {
+            format!(r"C:\{}", tail.trim_start_matches('/').replace('/', r"\"))
+        } else {
+            format!("/{}", tail.trim_start_matches('/'))
+        }
     }
 
     fn repository(name: &str, path: &str) -> Destination {

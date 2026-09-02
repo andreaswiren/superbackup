@@ -874,6 +874,7 @@ impl Handler for MockHandler {
         let _guard = self.enter("vault.export_keys").await?;
         Ok(KeyExportReply {
             document: "SUPERBACKUP - REPOSITORY ENCRYPTION KEYS\r\n(mock)\r\n".to_string(),
+            json: "{}".to_string(),
             destinations: 0,
             omitted: Vec::new(),
             suggested_file_name: "superbackup-encryption-keys-mock.txt".to_string(),

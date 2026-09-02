@@ -2464,6 +2464,7 @@ impl Handler for DaemonHandler {
 
         Ok(KeyExportReply {
             document: export.document,
+            json: export.json,
             destinations: export.exported,
             omitted: export.omitted,
             suggested_file_name: file_name,
