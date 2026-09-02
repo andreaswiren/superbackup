@@ -374,12 +374,23 @@ impl DaemonHandler {
     fn service_reply(&self, detail: Option<String>) -> ServiceReply {
         let status = self.runtime.service_status();
         let autostart = platform::autostart::is_enabled().unwrap_or(false);
+        // Never fatal: a launcher entry that cannot be read must not stop the
+        // service page from telling the user about the service.
+        let (in_menu, menu_path) = match platform::autostart::AutostartSpec::current() {
+            Ok(spec) => (
+                platform::shortcut::status(&spec).is_installed(),
+                Some(platform::shortcut::location()),
+            ),
+            Err(_) => (false, None),
+        };
         ServiceReply {
             installed: status.installed,
             running: status.state == platform::ServiceState::Running,
             autostart,
             scope: if self.runtime.paths.service_scope { "system".into() } else { "user".into() },
             detail: detail.or(status.detail),
+            in_applications_menu: in_menu,
+            applications_menu_path: menu_path,
         }
     }
 
@@ -2734,6 +2745,35 @@ impl Handler for DaemonHandler {
             "The background service was removed. Your configuration and backups were not touched.",
         ));
         Ok(self.service_reply(None))
+    }
+
+    /// Add superbackup to this user's applications menu, or take it out.
+    ///
+    /// Deliberately its own switch rather than a side effect of autostart:
+    /// "be findable in the Start menu" and "run at every login" are different
+    /// decisions, and plenty of people want the first without the second.
+    async fn set_shortcut(&self, _ctx: &RequestContext, enabled: bool) -> Result<ServiceReply> {
+        let spec = platform::autostart::AutostartSpec::current()?;
+        let detail = if enabled {
+            let path = platform::shortcut::install(&spec)?;
+            self.runtime.record_event(Event::info(
+                "app.shortcut_added",
+                "superbackup was added to the applications menu.",
+            ));
+            Some(format!("Added to the applications menu: {}", path.display()))
+        } else {
+            let removed = platform::shortcut::remove()?;
+            self.runtime.record_event(Event::info(
+                "app.shortcut_removed",
+                "superbackup was removed from the applications menu.",
+            ));
+            Some(if removed {
+                "Removed from the applications menu.".to_string()
+            } else {
+                "It was not in the applications menu.".to_string()
+            })
+        };
+        Ok(self.service_reply(detail))
     }
 
     async fn set_autostart(&self, _ctx: &RequestContext, enabled: bool) -> Result<ServiceReply> {

@@ -49,5 +49,5 @@ tar = "0.4.46"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
 
 [target."cfg(windows)".dependencies]
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_Networking_NetworkListManager", "Win32_System_Com", "Win32_System_Power", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_Threading"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_Networking_NetworkListManager", "Win32_System_Com", "Win32_UI_Shell", "Win32_System_Power", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_Threading"] }
 windows-service = "0.8.1"

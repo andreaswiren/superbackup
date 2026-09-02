@@ -45,6 +45,7 @@ pub mod notify;
 pub mod onedrive;
 pub mod power;
 pub mod service;
+pub mod shortcut;
 pub mod single_instance;
 
 #[cfg(windows)]
@@ -56,6 +57,7 @@ pub use notify::{Notification, NotificationKind, Notifier, NotifyOutcome};
 pub use onedrive::{OneDriveAccount, OneDriveKind, SyncState, Validation, ValidationIssue};
 pub use power::{Metered, PowerSource, PowerStatus, WakeDetector};
 pub use service::{ServiceOptions, ServiceScope, ServiceState, ServiceStatus};
+pub use shortcut::ShortcutState;
 pub use single_instance::{InstanceGuard, LockOutcome};
 
 // ---------------------------------------------------------------------------

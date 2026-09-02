@@ -318,6 +318,12 @@ async fn every_command_answers_or_refuses_cleanly() {
     updated.auto_lock_minutes = 45;
     run!("settings.update", Request::SettingsUpdate { settings: Box::new(updated) });
 
+    // -- applications menu ------------------------------------------------
+    // Adding and then removing, so the test leaves the real Start menu (or
+    // launcher) exactly as it found it.
+    run!("app.set_shortcut", Request::AppSetShortcut { enabled: true });
+    run!("app.set_shortcut", Request::AppSetShortcut { enabled: false });
+
     // -- machine ----------------------------------------------------------
     run!("machine.rename", Request::MachineRename { label: "The Studio PC".into() });
 

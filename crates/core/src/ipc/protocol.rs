@@ -1226,6 +1226,16 @@ pub struct ServiceReply {
     /// `user` or `system`.
     pub scope: String,
     pub detail: Option<String>,
+    /// Whether superbackup is in the applications menu — the Start menu on
+    /// Windows, the launcher on Linux, `~/Applications` on macOS.
+    ///
+    /// A separate question from both autostart and the service: "be findable"
+    /// and "run at login" are decisions people make differently.
+    #[serde(default)]
+    pub in_applications_menu: bool,
+    /// Where that entry lives, for showing in Settings.
+    #[serde(default)]
+    pub applications_menu_path: Option<String>,
 }
 
 /// A subscription was opened. Stream items follow on the same `id` until the
@@ -2218,6 +2228,13 @@ protocol! {
             doc "Start the user-mode application at login, or stop doing so."
             params {
                 enabled: bool = "True to start at login.",
+            }
+
+        "app.set_shortcut" AppSetShortcut => set_shortcut -> Service(ServiceReply)
+            flags [mutating]
+            doc "Add superbackup to this user's applications menu, or remove it. The Start menu on Windows, the XDG launcher on Linux (GNOME, KDE, XFCE and LXQt all read the same entry), `~/Applications` on macOS. Always per-user: the all-users location needs administrator rights."
+            params {
+                enabled: bool = "True to add the entry, false to remove it.",
             }
     }
 

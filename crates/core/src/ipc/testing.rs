@@ -287,6 +287,8 @@ impl MockHandler {
             autostart: false,
             scope: "user".into(),
             detail: None,
+            in_applications_menu: false,
+            applications_menu_path: None,
         }
     }
 
@@ -1026,6 +1028,11 @@ impl Handler for MockHandler {
     async fn set_autostart(&self, _ctx: &RequestContext, enabled: bool) -> Result<ServiceReply> {
         let _guard = self.enter("service.set_autostart").await?;
         Ok(ServiceReply { autostart: enabled, ..Self::service() })
+    }
+
+    async fn set_shortcut(&self, _ctx: &RequestContext, enabled: bool) -> Result<ServiceReply> {
+        let _guard = self.enter("app.set_shortcut").await?;
+        Ok(ServiceReply { in_applications_menu: enabled, ..Self::service() })
     }
 
     fn event_stream(

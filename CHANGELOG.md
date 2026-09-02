@@ -14,6 +14,36 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.3] - 2026-09-02
+
+### Added
+
+- **superbackup can put itself in the applications menu.** The Start menu on
+  Windows (a real `.lnk`, written through the shell rather than hand-rolled),
+  an XDG desktop entry on Linux - one file, read by GNOME, KDE, XFCE and LXQt
+  alike - and a `~/Applications` link on macOS. Always under the user's own
+  profile: the all-users location needs administrator rights, and asking for
+  elevation to add a shortcut teaches people that elevation prompts are
+  routine. New command `app.set_shortcut`, and the entry's state and path are
+  reported alongside the service.
+- **First run asks.** The setup flow now offers the menu entry, starting at
+  login, and installing the background service - with a tooltip on the last
+  one explaining what it buys: without a service superbackup runs only while
+  you are signed in, so a machine at the login screen backs up nothing, while
+  a service runs from boot whether or not anyone has logged in. The tray icon
+  still appears and still manages everything either way. Being findable is
+  defaulted on; running at login and installing a service are not, because
+  those are impositions and have to be asked for.
+
+### Fixed
+
+- **The setup switches did nothing.** "Start superbackup when I sign in" and
+  "Install the background service" were rendered, stored, and then dropped:
+  nothing read either field, so a user who asked for both got neither - and no
+  error either, because nothing had been attempted. They are now applied, each
+  as its own request, so a refused elevation prompt for the service does not
+  silently cost the menu entry as well.
+
 ## [0.2.2] - 2026-09-02
 
 ### Changed

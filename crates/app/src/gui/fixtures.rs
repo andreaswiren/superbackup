@@ -538,6 +538,8 @@ pub fn seed(data: &mut Data) {
         autostart: true,
         scope: "user".into(),
         detail: None,
+        in_applications_menu: true,
+        applications_menu_path: Some("Start Menu/Programs/superbackup.lnk".into()),
     });
     data.version = Some(superbackup_core::ipc::protocol::VersionReply {
         version: superbackup_core::VERSION.to_string(),

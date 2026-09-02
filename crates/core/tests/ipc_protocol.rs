@@ -239,6 +239,7 @@ fn sample_requests() -> Vec<Request> {
         Request::SettingsGet {},
         Request::SettingsUpdate { settings: Box::new(Settings::default()) },
         Request::MachineRename { label: "The Studio PC".into() },
+        Request::AppSetShortcut { enabled: true },
         Request::ConfigExport {},
         Request::ConfigImport { document: "AAAA".into(), allow_rollback: false },
         // remote
@@ -390,6 +391,10 @@ fn sample_replies() -> Vec<Reply> {
             autostart: false,
             scope: "system".into(),
             detail: None,
+            in_applications_menu: true,
+            applications_menu_path: Some(
+                "/home/a/.local/share/applications/superbackup.desktop".into(),
+            ),
         }),
         Reply::Subscribed(SubscribedReply { subscription: RequestId(7), topics: Topic::all() }),
     ]

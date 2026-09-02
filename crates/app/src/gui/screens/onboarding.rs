@@ -9,13 +9,15 @@ use egui::{Align, Layout, Sense, Ui, Vec2};
 
 use crate::gui::app::App;
 use crate::gui::copy;
+use crate::gui::daemon::Intent;
 use crate::gui::icons::{self, Icon};
 use crate::gui::screens::wizard::Template;
 use crate::gui::theme::{self, radius, space, Type};
 use crate::gui::validation::{self, OnboardingStep};
 use crate::gui::widgets::{self, Button};
+use superbackup_core::ipc::protocol::Request;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Onboarding {
     pub step: OnboardingStep,
     pub passphrase: String,
@@ -26,6 +28,8 @@ pub struct Onboarding {
     pub template: Option<Template>,
     pub create_onedrive: bool,
     pub autostart: bool,
+    /// Add superbackup to the Start menu / applications launcher.
+    pub create_shortcut: bool,
     pub start_minimised: bool,
     pub install_service: bool,
     pub use_keychain: bool,
@@ -35,6 +39,33 @@ pub struct Onboarding {
     /// Set once the vault exists, so leaving and re-entering the step cannot
     /// try to create a second one over the top of the first.
     pub vault_created: bool,
+}
+
+impl Default for Onboarding {
+    fn default() -> Onboarding {
+        Onboarding {
+            // Being findable in the applications menu is the one choice with
+            // no downside: it costs a file under the user's own profile and
+            // makes the program possible to start a second time. Running at
+            // every login is a real imposition and is *not* defaulted on.
+            create_shortcut: true,
+            autostart: false,
+            start_minimised: true,
+            step: OnboardingStep::default(),
+            passphrase: String::new(),
+            confirm: String::new(),
+            revealed: false,
+            acknowledged: false,
+            weak_acknowledged: false,
+            template: None,
+            create_onedrive: false,
+            install_service: false,
+            use_keychain: false,
+            scan_done: false,
+            vault_error: None,
+            vault_created: false,
+        }
+    }
 }
 
 impl Onboarding {
@@ -193,6 +224,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         match state.step.next() {
             Some(next) => state.step = next,
             None => {
+                // Apply what was chosen on the "keep it running" step.
+                //
+                // Those switches were rendered, stored and then discarded:
+                // nothing read `autostart` or `install_service`, so a user who
+                // asked for both got neither and had no way to tell. They are
+                // applied here, each independently, so one failing does not
+                // silently drop the others.
+                apply_setup_choices(app, &state);
                 app.onboarding = None;
                 app.request_run_all();
                 return;
@@ -243,6 +282,30 @@ fn create_vault(app: &mut App, passphrase: &str) -> Result<(), String> {
     // later, which is why nothing here depends on its answer.
     app.unlock(passphrase.to_string());
     Ok(())
+}
+
+/// Carry out the choices made on the last step.
+///
+/// Each is a separate request, and deliberately so: the applications-menu
+/// entry, starting at login, and installing a service are three different
+/// mechanisms that fail for three different reasons. Bundling them would mean
+/// a refused elevation prompt for the service silently costing the user their
+/// Start-menu entry as well.
+///
+/// Nothing here blocks. The replies arrive as ordinary toasts, and the
+/// interface is usable while they land.
+fn apply_setup_choices(app: &mut App, state: &Onboarding) {
+    if state.create_shortcut {
+        app.ask(Intent::Fire, Request::AppSetShortcut { enabled: true });
+    }
+    if state.autostart {
+        app.ask(Intent::Fire, Request::ServiceSetAutostart { enabled: true });
+    }
+    if state.install_service {
+        // Elevation is prompted for by the daemon, and refusing it is a
+        // normal outcome rather than an error worth blocking setup over.
+        app.ask(Intent::Fire, Request::ServiceInstall {});
+    }
 }
 
 fn welcome(ui: &mut Ui) {
@@ -708,6 +771,23 @@ fn keep_running(ui: &mut Ui, state: &mut Onboarding) {
 
     widgets::card(ui, |ui| {
         ui.set_width(ui.available_width());
+        let mut shortcut = state.create_shortcut;
+        if widgets::toggle(
+            ui,
+            &mut shortcut,
+            copy::onboarding::SHORTCUT_TITLE,
+            Some(copy::onboarding::shortcut_body()),
+            true,
+        )
+        .clicked()
+        {
+            state.create_shortcut = shortcut;
+        }
+    });
+
+    ui.add_space(space::XL);
+    widgets::card(ui, |ui| {
+        ui.set_width(ui.available_width());
         let mut autostart = state.autostart;
         if widgets::toggle(
             ui,
@@ -754,6 +834,19 @@ fn keep_running(ui: &mut Ui, state: &mut Onboarding) {
             state.install_service = service;
             state.use_keychain = service;
         }
+        // Why a service is worth it, next to the switch rather than buried in
+        // documentation: this is the one decision on this screen whose
+        // consequences are not obvious from its name.
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            ui.add_space(28.0);
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+            Icon::Info.paint(ui.painter(), rect, t.text_muted);
+            ui.add_space(space::S);
+            let label =
+                widgets::text(ui, copy::onboarding::SERVICE_WHY, Type::Small, t.text_secondary);
+            response.union(label).on_hover_text(copy::onboarding::SERVICE_WHY_TOOLTIP);
+        });
         if state.install_service {
             ui.add_space(space::L);
             ui.horizontal(|ui| {
@@ -927,6 +1020,85 @@ mod tests {
             uuid::Uuid::new_v4().simple()
         ));
         superbackup_core::paths::Paths::rooted_at(&root, false)
+    }
+
+    /// The switches on the last step must actually do something.
+    ///
+    /// They were rendered, stored on the state, and then dropped on the floor:
+    /// nothing read `autostart` or `install_service`, so a user who asked for
+    /// both got neither — and no error either, because nothing had been tried.
+    /// This asserts the requests are issued, which is the part that was
+    /// missing; whether the daemon can carry them out is its own concern.
+    #[tokio::test]
+    async fn the_setup_choices_reach_the_daemon() {
+        let handler = std::sync::Arc::new(superbackup_core::ipc::testing::MockHandler::new());
+        let ctx = egui::Context::default();
+        let mut app = crate::gui::app::App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(handler.clone())),
+        );
+
+        let state = Onboarding {
+            create_shortcut: true,
+            autostart: true,
+            install_service: true,
+            ..Onboarding::default()
+        };
+        apply_setup_choices(&mut app, &state);
+
+        // The bridge is asynchronous, so give the requests a moment to land.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if handler.calls("app.set_shortcut") > 0
+                && handler.calls("service.set_autostart") > 0
+                && handler.calls("service.install") > 0
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        assert!(
+            handler.calls("app.set_shortcut") > 0,
+            "the applications-menu entry was not asked for"
+        );
+        assert!(handler.calls("service.set_autostart") > 0, "autostart was not asked for");
+        assert!(handler.calls("service.install") > 0, "the service was not asked for");
+    }
+
+    /// Nothing chosen means nothing done. A setup that silently installs a
+    /// service nobody asked for is worse than one that installs nothing.
+    #[tokio::test]
+    async fn declining_everything_asks_for_nothing() {
+        let handler = std::sync::Arc::new(superbackup_core::ipc::testing::MockHandler::new());
+        let ctx = egui::Context::default();
+        let mut app = crate::gui::app::App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(handler.clone())),
+        );
+
+        let state = Onboarding {
+            create_shortcut: false,
+            autostart: false,
+            install_service: false,
+            ..Onboarding::default()
+        };
+        apply_setup_choices(&mut app, &state);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        assert_eq!(handler.calls("app.set_shortcut"), 0);
+        assert_eq!(handler.calls("service.set_autostart"), 0);
+        assert_eq!(handler.calls("service.install"), 0);
+    }
+
+    /// Being findable is defaulted on; running at login and installing a
+    /// service are not. Those are impositions and have to be asked for.
+    #[test]
+    fn only_the_harmless_choice_is_on_by_default() {
+        let state = Onboarding::default();
+        assert!(state.create_shortcut, "a menu entry costs a file and makes the app findable");
+        assert!(!state.autostart, "running at every login must be chosen, not assumed");
+        assert!(!state.install_service, "a service must be chosen, not assumed");
     }
 
     /// The regression this whole flow shipped with: `begin_onboarding` was

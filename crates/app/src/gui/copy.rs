@@ -110,6 +110,23 @@ pub fn trigger(t: superbackup_core::state::Trigger) -> &'static str {
 // ---------------------------------------------------------------------------
 
 pub mod onboarding {
+    pub const SHORTCUT_TITLE: &str = "Add superbackup to my applications menu";
+
+    /// Named for the platform, because "applications menu" is not what a
+    /// Windows user calls the Start menu.
+    pub fn shortcut_body() -> &'static str {
+        if cfg!(windows) {
+            "Puts superbackup in the Start menu, so you can find it by searching and pin it to the taskbar."
+        } else if cfg!(target_os = "macos") {
+            "Puts superbackup in ~/Applications, so Launchpad and Spotlight can find it."
+        } else {
+            "Adds a launcher entry, so superbackup appears in the applications menu on GNOME, KDE, XFCE and LXQt."
+        }
+    }
+
+    pub const SERVICE_WHY: &str = "Why run it as a service?";
+    pub const SERVICE_WHY_TOOLTIP: &str = "Without a service, superbackup only runs while you are signed in — so a machine sitting at the login screen, or one you signed out of on Friday, backs up nothing until you sign in again. As a service it runs from boot, whether or not anyone has logged in, and a scheduled overnight backup happens on time. The tray icon still appears when you sign in and still manages everything; the service is what keeps the schedule running when you are not there.";
+
     pub const VAULT_NO_PATHS: &str =
         "This window does not know where to store the vault, so setup cannot be completed here. Run `superbackup init` in a terminal instead.";
     pub const VAULT_ALREADY: &str =
