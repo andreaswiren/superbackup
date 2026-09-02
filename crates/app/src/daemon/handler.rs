@@ -144,6 +144,42 @@ impl DaemonHandler {
     }
 
     /// Look up a destination and build a kopia driver for it.
+    /// The object id of a snapshot's root directory.
+    ///
+    /// Accepts either identifier: an object id is returned unchanged, so a
+    /// caller that already resolved one pays nothing, and a manifest id is
+    /// looked up. A snapshot that cannot be found is named in the error rather
+    /// than surfacing as one of kopia's content-id complaints.
+    async fn snapshot_root_object(
+        &self,
+        driver: &superbackup_core::kopia::KopiaDriver,
+        snapshot: &str,
+    ) -> Result<String> {
+        let snapshot = snapshot.trim();
+        if snapshot.is_empty() {
+            return Err(Error::Validation("no snapshot was named".into()));
+        }
+        if is_object_id(snapshot) {
+            return Ok(snapshot.to_string());
+        }
+        let manifests = driver.browse_roots(&RunContext::new()).await.map_err(kopia_to_error)?;
+        let found = manifests
+            .iter()
+            .find(|m| m.id == snapshot)
+            .ok_or_else(|| Error::Validation(format!("no snapshot with id {snapshot} is here")))?;
+        let root = found
+            .root_entry
+            .as_ref()
+            .map(|e| e.object_id.clone())
+            .filter(|o| !o.is_empty())
+            .ok_or_else(|| {
+                Error::Validation(format!(
+                    "snapshot {snapshot} records no root directory, so there is nothing to browse.                      A run that was interrupted before it finished can leave one like this."
+                ))
+            })?;
+        Ok(root)
+    }
+
     async fn driver_for(
         &self,
         needle: &str,
@@ -483,6 +519,18 @@ pub fn restore_options(conflict: ConflictPolicy) -> Result<RestoreOptions> {
 
 /// `snapshot.browse` addresses an entry as `<snapshot id>/<path inside it>`.
 /// Normalise the caller's path into that shape without letting it escape.
+/// Is this already a kopia object id, rather than a snapshot manifest id?
+///
+/// The two are easy to confuse and kopia accepts them in different places: a
+/// manifest id names a snapshot, an object id names the directory *inside* it,
+/// and `kopia show` takes only the second. A directory object id is `k`
+/// followed by 64 hex characters; a manifest id is 32 hex characters with no
+/// prefix, so the two cannot be mistaken for one another.
+fn is_object_id(candidate: &str) -> bool {
+    let Some(rest) = candidate.strip_prefix('k') else { return false };
+    rest.len() > 32 && rest.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 pub fn browse_target(snapshot: &str, path: &str) -> Result<String> {
     if snapshot.trim().is_empty() {
         return Err(Error::Validation("no snapshot was named".into()));
@@ -1992,8 +2040,25 @@ impl Handler for DaemonHandler {
         path: String,
     ) -> Result<ListingReply> {
         self.require_unlocked().await?;
-        let target = browse_target(&snapshot, &path)?;
+        // The path is checked first, before anything is opened. A `..` is
+        // refused on its own terms rather than depending on whether the
+        // destination resolves or the snapshot exists — otherwise a traversal
+        // attempt gets whatever error those happen to produce instead.
+        browse_target(&snapshot, &path)?;
         let (_, driver) = self.driver_for(&destination).await?;
+        // Browsing addresses a kopia **object**, not a snapshot manifest.
+        //
+        // `snapshot.list` reports a manifest id, and that is what every client
+        // holds and passes back — but `kopia show` wants the object id of the
+        // snapshot's root directory, and rejects a manifest id outright:
+        // `invalid content ID: "3e0f…" (17 vs 33)`. So the restore browser has
+        // never listed anything on any platform.
+        //
+        // Resolving here rather than changing the wire format keeps clients
+        // holding the one identifier they already know, and means a caller
+        // cannot get this wrong again by passing the obvious thing.
+        let root = self.snapshot_root_object(&driver, &snapshot).await?;
+        let target = browse_target(&root, &path)?;
         let entries =
             driver.list_directory(&target, &RunContext::new()).await.map_err(kopia_to_error)?;
         let truncated = entries.len() > MAX_LISTING_ENTRIES;
@@ -2029,8 +2094,16 @@ impl Handler for DaemonHandler {
             return Err(Error::Validation("the restore target must be an absolute path".into()));
         }
         let options = restore_options(conflict)?;
-        let source = browse_target(&snapshot, &path)?;
         let (dest, driver) = self.driver_for(&destination).await?;
+        // The same resolution browsing uses. `kopia restore` happens to accept
+        // a manifest id as well, but a *path inside* one has to be addressed
+        // from the root object — and having restore and browse disagree about
+        // what a snapshot id means is how the two drift apart.
+        // As in `browse_snapshot`: the path is checked before the snapshot is
+        // looked up.
+        browse_target(&snapshot, &path)?;
+        let root = self.snapshot_root_object(&driver, &snapshot).await?;
+        let source = browse_target(&root, &path)?;
 
         if dry_run {
             // kopia's restore has no dry run. Listing the entry is the closest
@@ -3117,6 +3190,24 @@ fn copy_buckets_visible(count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The restore browser addresses an *object*, and passing a manifest id
+    /// is what stopped it ever listing anything: kopia answered `invalid
+    /// content ID: "3e0f…" (17 vs 33)`. The two ids cannot be confused by
+    /// shape, so telling them apart is exact rather than a guess.
+    #[test]
+    fn a_manifest_id_is_never_mistaken_for_an_object_id() {
+        // What `snapshot.list` reports: 32 hex characters, no prefix.
+        assert!(!is_object_id("3e0f129d2f627d3bffdbc03aed2c95e1"));
+        // What `kopia show` wants: `k` and 64 hex characters.
+        assert!(is_object_id("k631816d2e632adec48a21d05dfbc873cf4e1e9ec27eae3643582504d78eae2a4"));
+        // Neither.
+        assert!(!is_object_id(""));
+        assert!(!is_object_id("k"));
+        assert!(!is_object_id("knot-hex-at-all-but-quite-long-indeed-really"));
+        // A manifest id that happens to begin with `k` is still too short.
+        assert!(!is_object_id("k3e0f129d2f627d3bffdbc03aed2c95"));
+    }
 
     #[test]
     fn browse_targets_are_built_without_letting_a_path_escape() {

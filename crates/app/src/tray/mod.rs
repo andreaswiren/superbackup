@@ -687,7 +687,8 @@ fn open_interface(runtime: &Arc<Runtime>, extra: &[&str]) {
         tracing::warn!("could not find this program's own path to open the interface");
         return;
     };
-    let mut command = std::process::Command::new(exe);
+    let exe_display = exe.display().to_string();
+    let mut command = std::process::Command::new(&exe);
     command.arg("gui");
     // The window must reach the same configuration this daemon is serving,
     // which is not the default one when `--home` was used.
@@ -697,19 +698,36 @@ fn open_interface(runtime: &Arc<Runtime>, extra: &[&str]) {
     for arg in extra {
         command.arg(arg);
     }
+    // The child inherits nothing.
+    //
+    // This process detached its console at startup (`detach_console`), which
+    // leaves its own standard handles dangling. `Command` inherits them by
+    // default, so `CreateProcess` was handed dead handles and refused —
+    // "Begäran stöds inte (os error 50)" in the log, and from the user's side
+    // a tray icon that did absolutely nothing when clicked. The GUI has a
+    // window of its own and no use for a console, so it is given none.
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::null());
+
     #[cfg(windows)]
     {
         // This binary is a console application (so that its CLI works in a
         // terminal at all), which means Windows allocates a console for any
         // child launched from a process that has none — a black window that
         // appears and vanishes each time the tray opens Settings or Activity.
-        // The GUI has a window of its own and never needs a console.
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
     if let Err(e) = command.spawn() {
-        tracing::warn!(error = %e, "could not open the interface");
+        // Name what failed: the previous message said only "could not open
+        // the interface", which is true of every possible cause.
+        tracing::warn!(
+            error = %e,
+            executable = %exe_display,
+            "could not open the interface"
+        );
     }
 }
 

@@ -14,6 +14,29 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.4] - 2026-09-02
+
+### Fixed
+
+- **Clicking the tray icon did nothing.** The click was received and the
+  interface was launched - and the launch failed every time, because the tray
+  process detaches its console at startup, which leaves its own standard
+  handles dangling, and `Command` hands those to `CreateProcess` by default.
+  The log said "could not open the interface (os error 50)"; the user saw
+  nothing at all. The child now inherits no handles, since a window has no use
+  for a console. Reproduced in isolation - a process that allocates a console,
+  frees it, then spawns with inherited stdio fails, and with null stdio
+  succeeds.
+- **The restore browser could never list anything.** `snapshot.list` reports a
+  snapshot's *manifest* id, and that is what every client held and passed back
+  - but `kopia show`, which is what browsing runs, addresses the *object* id of
+  the snapshot's root directory and rejects a manifest id outright: `invalid
+  content ID: "3e0f..." (17 vs 33)`. The daemon now resolves one to the other,
+  so callers keep passing the id they know, and restoring a path inside a
+  snapshot addresses the same object browsing does rather than the two
+  disagreeing. The path is still validated before anything is opened, so a
+  `..` is refused on its own terms.
+
 ## [0.2.3] - 2026-09-02
 
 ### Added
