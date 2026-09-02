@@ -120,6 +120,7 @@ fn running(job_id: Uuid, name: &str) -> JobRun {
             snapshot_id: None,
             error: None,
             warnings: vec![],
+            notes: Vec::new(),
             replicated_from: None,
             skipped_reason: None,
         }],

@@ -366,6 +366,10 @@ pub struct SnapshotOutcome {
     /// Non-fatal problems: unreadable files, skipped paths, ignored errors.
     /// A non-empty list turns the destination into `SucceededWithWarnings`.
     pub warnings: Vec<String>,
+    /// Worth saying, but not a problem — what the job's exclusions kept out,
+    /// above all. Deliberately *not* `warnings`: the configuration doing what
+    /// it was told must never colour a run amber.
+    pub notes: Vec<String>,
 }
 
 /// Replicate one destination's repository into another destination.

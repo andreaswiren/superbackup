@@ -14,6 +14,22 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.9] - 2026-09-03
+
+### Fixed
+
+- **Your own exclusions were reported as warnings.** A job that excluded
+  `node_modules` said so through an amber "Warnings" badge on every single run,
+  for the crime of honouring the rules you wrote - and buried the real warnings,
+  unreadable files and genuine errors, in the same list. Exclusions are now a
+  *note* rather than a warning: a run that excluded things and hit no problems
+  is green, and the counts are shown on the run as information. Nothing is
+  hidden - what the rules kept out is stated, it simply stops pretending to be
+  a fault.
+
+  This also answers the "let me suppress these warnings" ask by removing the
+  warning: there is nothing left to suppress.
+
 ## [0.2.8] - 2026-09-03
 
 ### Fixed

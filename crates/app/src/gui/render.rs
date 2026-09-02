@@ -710,6 +710,7 @@ fn sample_preview_run() -> superbackup_core::state::JobRun {
             occurred_at: chrono::Utc::now(),
         }),
         warnings: vec![],
+        notes: Vec::new(),
         replicated_from: None,
         skipped_reason: None,
     };

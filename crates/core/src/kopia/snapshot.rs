@@ -47,6 +47,10 @@ pub struct SnapshotOutcome {
     /// [`crate::state::DestinationRun::warnings`], from the manifest and from
     /// kopia's stderr.
     pub warnings: Vec<String>,
+    /// Things worth saying that are not problems — what the ignore rules kept
+    /// out, above all. Kept apart from `warnings` so the configuration working
+    /// as written cannot colour a run amber.
+    pub notes: Vec<String>,
     /// Bytes that did not have to be sent because kopia already had them.
     pub deduplicated_bytes: u64,
     /// True when kopia produced a checkpoint rather than a complete snapshot,
@@ -208,6 +212,7 @@ impl KopiaDriver {
 
         let mut progress = out.progress;
         let mut warnings = out.warnings;
+        let mut notes: Vec<String> = Vec::new();
         let mut deduplicated = 0;
         let mut incomplete = false;
 
@@ -232,6 +237,14 @@ impl KopiaDriver {
             deduplicated = m.deduplicated_bytes(progress.bytes_uploaded);
             incomplete = !m.is_complete();
             warnings.extend(m.warnings());
+            if let Some(excluded) = m.exclusions() {
+                notes.push(format!(
+                    "{} files and {} folders were left out by this job's exclusions ({}).",
+                    excluded.files,
+                    excluded.directories,
+                    bytesize::ByteSize(excluded.bytes)
+                ));
+            }
         } else if !out.stdout.trim().is_empty() {
             warnings.push(
                 "kopia did not report a machine-readable snapshot summary; the backup completed \
@@ -242,9 +255,12 @@ impl KopiaDriver {
 
         warnings.sort();
         warnings.dedup();
+        notes.sort();
+        notes.dedup();
 
         Ok(SnapshotOutcome {
             snapshot_id: manifest.as_ref().map(|m| m.id.clone()).filter(|s| !s.is_empty()),
+            notes,
             manifest,
             progress,
             warnings,

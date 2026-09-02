@@ -250,6 +250,7 @@ impl BackupExecutor for MockExecutor {
                         snapshot_id: Some(format!("mock-{}", Uuid::new_v4().simple())),
                         progress,
                         warnings,
+                        notes: Vec::new(),
                     })
                 }
                 MockBehaviour::Fail(error) => Err(error),

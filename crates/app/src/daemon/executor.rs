@@ -364,6 +364,7 @@ impl KopiaExecutor {
         let mut total = Progress::default();
         let mut snapshot_id = None;
         let mut warnings: Vec<String> = Vec::new();
+        let mut notes: Vec<String> = Vec::new();
 
         for source in &request.sources {
             // Checked between sources as well as inside the driver, so a
@@ -430,6 +431,7 @@ impl KopiaExecutor {
                 Ok(outcome) => {
                     accumulate(&mut total, &outcome.progress);
                     warnings.extend(outcome.warnings);
+                    notes.extend(outcome.notes);
                     if outcome.incomplete {
                         warnings.push(format!(
                             "The snapshot of {} was checkpointed rather than completed.",
@@ -450,10 +452,15 @@ impl KopiaExecutor {
 
         warnings.sort();
         warnings.dedup();
+        notes.sort();
+        notes.dedup();
         total.current_path = None;
         total.estimated_seconds_remaining = Some(0);
         request.progress.finish(total.clone());
-        Ok(SnapshotOutcome { snapshot_id, progress: total, warnings })
+        // Kopia reports what the ignore rules kept out; it is carried as a
+        // note rather than a warning, because it is the configuration
+        // working rather than a problem.
+        Ok(SnapshotOutcome { snapshot_id, progress: total, warnings, notes })
     }
 
     /// The kopia call behind `replicate`: `repository sync-to`.
@@ -911,7 +918,7 @@ async fn dry_run_estimate(
         }
     }
     request.progress.finish(progress.clone());
-    Ok(SnapshotOutcome { snapshot_id: None, progress, warnings })
+    Ok(SnapshotOutcome { snapshot_id: None, progress, warnings, notes: Vec::new() })
 }
 
 /// A [`KopiaExecutor`] that reports what it would do without writing.

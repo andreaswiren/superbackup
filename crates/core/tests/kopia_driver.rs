@@ -677,10 +677,17 @@ async fn snapshot_create_streams_progress_and_parses_the_final_manifest() {
         "{:?}",
         outcome.warnings
     );
+    // Exclusions are a note, never a warning: they are the job's own rules
+    // working, and counting them as warnings turned every healthy run amber.
     assert!(
-        outcome.warnings.iter().any(|w| w.contains("40311")),
-        "excluded counts belong in the warnings: {:?}",
+        !outcome.warnings.iter().any(|w| w.contains("excluded")),
+        "an exclusion is not a warning: {:?}",
         outcome.warnings
+    );
+    assert!(
+        outcome.notes.iter().any(|n| n.contains("40311")),
+        "but the counts must still be reported: {:?}",
+        outcome.notes
     );
 }
 

@@ -248,7 +248,13 @@ impl MirrorEngine {
             return Err(cancelled_error(&request.cancel));
         }
         let progress = acc.finish();
-        Ok(SnapshotOutcome { snapshot_id: None, progress, warnings: acc.into_warnings() })
+        Ok(SnapshotOutcome {
+            snapshot_id: None,
+            progress,
+            warnings: acc.into_warnings(),
+            // A plain folder copy honours no ignore rules of its own.
+            notes: Vec::new(),
+        })
     }
 
     /// Copy one source tree into one target folder.

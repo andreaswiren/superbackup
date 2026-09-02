@@ -652,6 +652,9 @@ impl Runner {
                     snapshot_id: None,
                     progress: outcome.progress,
                     warnings: outcome.warnings,
+                    // A replica copies blobs; it reads no files and so
+                    // excludes none.
+                    notes: Vec::new(),
                 });
             }
             if destination.kind.is_repository() {
@@ -1014,6 +1017,7 @@ fn new_destination_run(planned: &PlannedDestination) -> DestinationRun {
         snapshot_id: None,
         error: None,
         warnings: Vec::new(),
+        notes: Vec::new(),
         replicated_from: planned.origin.clone(),
         skipped_reason: None,
     }

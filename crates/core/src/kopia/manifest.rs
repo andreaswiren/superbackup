@@ -176,6 +176,18 @@ pub struct DirEntry {
     pub summary: Option<DirectorySummary>,
 }
 
+/// What the ignore rules kept out of a snapshot.
+///
+/// A statement about configuration, not about health: a job that excludes
+/// `node_modules` excludes it on every run, and that is the point of writing
+/// the rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Exclusions {
+    pub files: u64,
+    pub directories: u64,
+    pub bytes: u64,
+}
+
 /// `snapshot.DirManifest` — the raw contents of a directory object, which is
 /// what `kopia show <object-id>` prints.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -263,6 +275,23 @@ impl SnapshotManifest {
         self.stats.as_ref().map(|s| s.total_size.saturating_sub(uploaded)).unwrap_or(0)
     }
 
+    /// What the ignore rules kept out, as counts.
+    ///
+    /// Separate from [`SnapshotManifest::warnings`] on purpose: this is the
+    /// configuration working, and belongs in the run's detail rather than
+    /// beside its problems. `None` when nothing was excluded.
+    pub fn exclusions(&self) -> Option<Exclusions> {
+        let stats = self.stats.as_ref()?;
+        if stats.excluded_file_count == 0 && stats.excluded_dir_count == 0 {
+            return None;
+        }
+        Some(Exclusions {
+            files: stats.excluded_file_count,
+            directories: stats.excluded_dir_count,
+            bytes: stats.excluded_total_size,
+        })
+    }
+
     /// Human-readable warnings for [`crate::state::DestinationRun::warnings`].
     ///
     /// Deliberately capped and deliberately specific: "37 files could not be
@@ -293,14 +322,16 @@ impl SnapshotManifest {
                     "failed with unrecoverable errors",
                 ));
             }
-            if stats.excluded_file_count > 0 {
-                out.push(format!(
-                    "{} file(s) and {} directory(ies) were excluded by the ignore rules ({} bytes).",
-                    stats.excluded_file_count,
-                    stats.excluded_dir_count,
-                    stats.excluded_total_size
-                ));
-            }
+            // Exclusions are deliberately *not* warnings.
+            //
+            // They are the user's own rules doing exactly what they were
+            // written to do. Reporting them here put an amber "Warnings" badge
+            // on a job that had worked perfectly, every single run, for the
+            // crime of honouring its own configuration — and buried the real
+            // warnings, unreadable files and genuine errors, in the same list.
+            // The counts are still available on the run through
+            // [`SnapshotManifest::exclusions`], which is where an interface
+            // should show them.
         }
 
         if let Some(summary) = self.root_entry.as_ref().and_then(|e| e.summary.as_ref()) {
@@ -469,9 +500,35 @@ mod tests {
         let m: SnapshotManifest = serde_json::from_str(CREATE_JSON).expect("manifest parses");
         let w = m.warnings();
         assert!(w.iter().any(|s| s.contains("4 files")), "{w:?}");
-        assert!(w.iter().any(|s| s.contains("40311")), "{w:?}");
         assert!(w.iter().any(|s| s.contains("index.lock")), "{w:?}");
         assert!(w.len() < 20);
+    }
+
+    /// An exclusion is the configuration working, not a problem with the run.
+    ///
+    /// Counting them as warnings put an amber badge on a job that had done
+    /// exactly what it was told, on every single run, and buried the real
+    /// warnings — unreadable files, genuine errors — in the same list.
+    #[test]
+    fn exclusions_are_reported_separately_from_warnings() {
+        let m: SnapshotManifest = serde_json::from_str(CREATE_JSON).expect("manifest parses");
+
+        let excluded = m.exclusions().expect("this fixture excludes something");
+        assert!(excluded.files > 0, "the counts must still be available: {excluded:?}");
+
+        let w = m.warnings();
+        assert!(!w.iter().any(|s| s.contains("excluded")), "an exclusion is not a warning: {w:?}");
+        // The genuine problems are untouched.
+        assert!(w.iter().any(|s| s.contains("could not be read")), "{w:?}");
+    }
+
+    #[test]
+    fn a_snapshot_that_excluded_nothing_reports_no_exclusions() {
+        let m = SnapshotManifest {
+            stats: Some(SnapshotStats::default()),
+            ..serde_json::from_str(CREATE_JSON).expect("manifest parses")
+        };
+        assert!(m.exclusions().is_none(), "nothing excluded is not an empty report");
     }
 
     #[test]

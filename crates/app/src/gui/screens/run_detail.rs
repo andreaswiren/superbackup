@@ -220,6 +220,14 @@ impl App {
             // says why, and the copy silently is not there. The reason is
             // deliberately not styled as an error — a destination skipped
             // because the one it copies from failed is not itself broken.
+            // What the job's exclusions kept out. Informational: the rules did
+            // what they were written to do, and a run that honoured them is a
+            // healthy run, not a warning.
+            for note in &destination.notes {
+                widgets::banner(ui, widgets::BannerKind::Info, note, None, |_| {});
+                ui.add_space(space::M);
+            }
+
             if let Some(reason) = &destination.skipped_reason {
                 widgets::banner(ui, widgets::BannerKind::Info, reason, None, |_| {});
                 ui.add_space(space::L);

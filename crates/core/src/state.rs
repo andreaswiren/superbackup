@@ -165,6 +165,15 @@ pub struct DestinationRun {
     /// Non-fatal problems: unreadable files, skipped paths.
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Things worth reporting that are not problems — what this job's
+    /// exclusions left out, above all.
+    ///
+    /// Separate from `warnings` because the two mean opposite things: a
+    /// warning says something went wrong, a note says the configuration did
+    /// what it was written to do. Counting exclusions as warnings put an amber
+    /// badge on jobs that had worked perfectly on every run.
+    #[serde(default)]
+    pub notes: Vec<String>,
     /// Set when this destination was filled by **replicating** another
     /// destination's repository rather than by backing up the job's sources.
     ///
@@ -542,6 +551,7 @@ mod tests {
             snapshot_id: None,
             error: None,
             warnings: vec![],
+            notes: vec![],
             replicated_from: None,
             skipped_reason: None,
         }

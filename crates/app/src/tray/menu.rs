@@ -584,6 +584,7 @@ mod tests {
                 snapshot_id: None,
                 error: None,
                 warnings: vec![],
+                notes: Vec::new(),
                 replicated_from: None,
                 skipped_reason: None,
             }],

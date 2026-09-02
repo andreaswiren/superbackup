@@ -253,6 +253,7 @@ fn destination_run(
         snapshot_id: status.is_terminal().then(|| "k9f2ab7c31de4f0a8c2b".to_string()),
         error: None,
         warnings: vec![],
+        notes: Vec::new(),
         replicated_from: None,
         skipped_reason: None,
     }
