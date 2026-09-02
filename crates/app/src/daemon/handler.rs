@@ -526,6 +526,23 @@ pub fn restore_options(conflict: ConflictPolicy) -> Result<RestoreOptions> {
 /// and `kopia show` takes only the second. A directory object id is `k`
 /// followed by 64 hex characters; a manifest id is 32 hex characters with no
 /// prefix, so the two cannot be mistaken for one another.
+/// Would opening this file *run* it?
+///
+/// A preview opens the copy with whatever the system associates with it, which
+/// for an executable or a script means executing it. Restoring a file from a
+/// backup is not consent to run it, so these are shown rather than launched.
+/// The list is deliberately broad: being wrong in the cautious direction costs
+/// a click, and being wrong the other way runs a program.
+fn looks_executable(name: &str) -> bool {
+    const RUNNABLE: [&str; 20] = [
+        "exe", "com", "scr", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh",
+        "msi", "msp", "cpl", "lnk", "pif", "reg", "sh",
+    ];
+    name.rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .is_some_and(|ext| RUNNABLE.contains(&ext.as_str()))
+}
+
 fn is_object_id(candidate: &str) -> bool {
     let Some(rest) = candidate.strip_prefix('k') else { return false };
     rest.len() > 32 && rest.chars().all(|c| c.is_ascii_hexdigit())
@@ -1255,13 +1272,27 @@ impl Handler for DaemonHandler {
                     Error::Validation(format!("no destination with id {}", stored.id))
                 })?;
             let created_at = slot.created_at;
-            // The passphrase handle is not the client's to change: repointing
+            // The passphrase handle is not the client's to *repoint*: aiming
             // it at another destination's secret would open the wrong
             // repository, or silently orphan this one's key.
-            let passphrase_ref = slot.passphrase_ref.clone();
+            //
+            // Clearing it is different, and is the one change a client may
+            // legitimately make: a destination that becomes a copy of another
+            // has no key of its own — it opens with its source's — and the
+            // configuration is invalid while it still carries one. Preserving
+            // the handle unconditionally made "copy this from that" impossible
+            // to save at all: the editor dropped the handle, this put it back,
+            // and validation then rejected the result.
+            let becoming_a_replica = stored.replicate_from.is_some();
+            let passphrase_ref =
+                if becoming_a_replica { None } else { slot.passphrase_ref.clone() };
             *slot = stored;
             slot.created_at = created_at;
             slot.passphrase_ref = passphrase_ref;
+            if becoming_a_replica {
+                // Same reasoning: the settings are the source's too.
+                slot.encryption = None;
+            }
             Ok(())
         })
         .await?;
@@ -2076,6 +2107,74 @@ impl Handler for DaemonHandler {
                 })
                 .collect(),
             truncated,
+        })
+    }
+
+    /// Restore one file somewhere private so it can be looked at.
+    ///
+    /// The point is answering "is this the version I want?" without restoring
+    /// over anything. The copy lands in superbackup's own cache, never at the
+    /// file's original path, so a preview can never be mistaken for a restore
+    /// and cannot overwrite the live file it came from.
+    ///
+    /// The cache directory is wiped per preview rather than accumulating:
+    /// these are copies of the user's own documents and there is no reason for
+    /// them to pile up on disk after they have been read.
+    async fn preview_file(
+        &self,
+        _ctx: &RequestContext,
+        destination: String,
+        snapshot: String,
+        path: String,
+    ) -> Result<PreviewReply> {
+        self.require_unlocked().await?;
+        // Same validation as browsing, and first: a `..` is refused before
+        // anything is opened.
+        browse_target(&snapshot, &path)?;
+        let name = path
+            .rsplit(['/', '\\'])
+            .find(|s| !s.is_empty())
+            .ok_or_else(|| Error::Validation("no file was named".into()))?
+            .to_string();
+
+        let root = self.runtime.paths.cache_dir.join("preview");
+        // Start clean, so what is opened is unambiguously what was just asked
+        // for rather than something left from a previous look.
+        let _ = tokio::fs::remove_dir_all(&root).await;
+        tokio::fs::create_dir_all(&root)
+            .await
+            .map_err(|e| Error::io(format!("creating {}", root.display()), e))?;
+        superbackup_core::paths::harden_dir(&root)?;
+
+        let (_, driver) = self.driver_for(&destination).await?;
+        let object = self.snapshot_root_object(&driver, &snapshot).await?;
+        let source = browse_target(&object, &path)?;
+
+        let options = superbackup_core::kopia::RestoreOptions {
+            overwrite_files: true,
+            write_files_atomically: true,
+            // A preview is a copy to read, not a restoration of ownership.
+            // Carrying the original's permissions into a cache directory would
+            // only make the copy harder to open.
+            skip_permissions: true,
+            skip_owners: true,
+            ..Default::default()
+        };
+        driver
+            .restore(&source, &root, &options, &RunContext::new())
+            .await
+            .map_err(kopia_to_error)?;
+
+        let landed = root.join(&name);
+        let size_bytes = tokio::fs::metadata(&landed).await.map(|m| m.len()).unwrap_or(0);
+        self.runtime.record_event(Event::info(
+            "snapshot.previewed",
+            format!("A copy of {name} was restored for inspection."),
+        ));
+        Ok(PreviewReply {
+            path: landed.display().to_string(),
+            size_bytes,
+            executable: looks_executable(&name),
         })
     }
 

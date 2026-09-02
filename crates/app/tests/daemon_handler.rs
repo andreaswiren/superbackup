@@ -318,6 +318,18 @@ async fn every_command_answers_or_refuses_cleanly() {
     updated.auto_lock_minutes = 45;
     run!("settings.update", Request::SettingsUpdate { settings: Box::new(updated) });
 
+    // -- preview ------------------------------------------------------------
+    // No repository exists in this harness, so this asserts the command
+    // refuses cleanly rather than panicking.
+    run!(
+        "snapshot.preview",
+        Request::SnapshotPreview {
+            destination: mirror_id.to_string(),
+            snapshot: "kdeadbeef".into(),
+            path: "notes.txt".into(),
+        }
+    );
+
     // -- applications menu ------------------------------------------------
     // Adding and then removing, so the test leaves the real Start menu (or
     // launcher) exactly as it found it.

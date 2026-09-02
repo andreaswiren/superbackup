@@ -18,12 +18,14 @@ use superbackup_core::model::Destination;
 
 use crate::gui::app::App;
 use crate::gui::copy;
+use crate::gui::daemon::Intent;
 use crate::gui::data::{Action, Gate};
 use crate::gui::format;
 use crate::gui::icons::Icon;
 use crate::gui::modals::{self, Modal, RestoreOptionsState};
 use crate::gui::theme::{self, radius, size, space, Type};
 use crate::gui::widgets::{self, Button};
+use superbackup_core::ipc::protocol::Request;
 
 #[derive(Default)]
 pub struct State {
@@ -230,6 +232,10 @@ impl App {
             ui.vertical(|ui| {
                 if self.screens.restore.selected_snapshot.is_some() {
                     self.restore_browser(ui);
+                    // Below the browser, not inside it: what is queued is a
+                    // property of the whole restore, not of the directory that
+                    // happens to be open.
+                    self.restore_queue(ui);
                 } else {
                     self.restore_snapshots(ui);
                 }
@@ -590,6 +596,90 @@ impl App {
         }
     }
 
+    /// Everything currently marked for restore, wherever it was marked.
+    ///
+    /// The selection accumulates across directories, and until this existed
+    /// the only place it was ever shown in full was the confirmation dialog —
+    /// after the choosing was over. Ticking three files in one folder,
+    /// wandering into another, and ticking three more left six things queued
+    /// and no way to see, let alone correct, what they were.
+    fn restore_queue(&mut self, ui: &mut Ui) {
+        let t = theme::tokens(ui.ctx());
+        let selection = self.screens.restore.selection.clone();
+        if selection.is_empty() {
+            return;
+        }
+
+        ui.add_space(space::L);
+        widgets::divider(ui);
+        ui.add_space(space::L);
+
+        let mut remove: Option<String> = None;
+        let mut clear = false;
+        ui.horizontal(|ui| {
+            widgets::text(
+                ui,
+                copy::restore_queue_title(selection.len()),
+                Type::BodyStrong,
+                t.text_primary,
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if Button::ghost(copy::restore::QUEUE_CLEAR).compact().show(ui).clicked() {
+                    clear = true;
+                }
+            });
+        });
+        ui.add_space(space::S);
+
+        widgets::table_frame(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(160.0).id_salt("restore-queue").show(
+                ui,
+                |ui| {
+                    for path in &selection {
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(size::TABLE_ROW_H_COMPACT);
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                            Icon::FileText.paint(ui.painter(), rect, t.text_muted);
+                            ui.add_space(space::M);
+                            // Elided from the left: the tail of a path is what
+                            // tells two selections apart.
+                            let width = ui.available_width() - 40.0;
+                            widgets::elided(
+                                ui,
+                                path,
+                                Type::MonoSmall,
+                                t.text_secondary,
+                                width.max(80.0),
+                                true,
+                            )
+                            .on_hover_text(path.clone());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if widgets::icon_button_compact(
+                                    ui,
+                                    Icon::X,
+                                    copy::restore::QUEUE_REMOVE,
+                                    true,
+                                )
+                                .clicked()
+                                {
+                                    remove = Some(path.clone());
+                                }
+                            });
+                        });
+                    }
+                },
+            );
+        });
+
+        if let Some(path) = remove {
+            self.screens.restore.selection.retain(|p| *p != path);
+        }
+        if clear {
+            self.screens.restore.selection.clear();
+        }
+    }
+
     fn restore_browser(&mut self, ui: &mut Ui) {
         let t = theme::tokens(ui.ctx());
         let (Some(destination), Some(snapshot)) = (
@@ -721,6 +811,7 @@ impl App {
             .any(|e| self.screens.restore.selection.contains(&entry_path(&listing.path, &e.name)));
 
         let mut toggle: Option<String> = None;
+        let mut preview: Option<String> = None;
         let mut enter: Option<String> = None;
         let mut select_all = false;
 
@@ -837,8 +928,14 @@ impl App {
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &announce)
                         });
-                        if response.double_clicked() && entry.kind == EntryKind::Directory {
-                            enter = Some(path.clone());
+                        if response.double_clicked() {
+                            match entry.kind {
+                                EntryKind::Directory => enter = Some(path.clone()),
+                                // Open a copy to look at. Answering "is this
+                                // the version I want?" should not require
+                                // restoring it over the live file first.
+                                _ => preview = Some(path.clone()),
+                            }
                         }
                     });
                 });
@@ -851,6 +948,17 @@ impl App {
                 "This directory was too large to list in full.",
                 Type::Small,
                 t.warning.tint_text,
+            );
+        }
+
+        if let Some(path) = preview {
+            self.ask(
+                Intent::PreviewFile(path.clone()),
+                Request::SnapshotPreview {
+                    destination: destination.to_string(),
+                    snapshot: snapshot.clone(),
+                    path,
+                },
             );
         }
 

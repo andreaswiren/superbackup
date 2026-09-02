@@ -530,7 +530,7 @@ fn a_destination_is_created_and_its_repository_with_it() {
     assert_eq!(harness.handler.calls("dest.repo_create"), 1);
 
     let listed = run(&harness, &["destination", "list"]);
-    assert!(listed.stdout.contains("Local repository"));
+    assert!(listed.stdout.contains("Repository in a local folder"));
     assert!(listed.stderr.contains("destination test"), "say where the fresh answer lives");
 }
 

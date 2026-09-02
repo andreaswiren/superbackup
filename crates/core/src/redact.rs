@@ -254,6 +254,21 @@ fn key_names_a_credential(key: &str) -> bool {
     if key.is_empty() {
         return false;
     }
+    // A `*_ref` key names a *handle*, not a value.
+    //
+    // `SecretRef` is the identifier a secret is stored under — deliberately
+    // not secret, and logged on purpose so an operator can tell which entry is
+    // missing. Redacting it cost more than it protected: a validation message
+    // reading `destinations[storj-s3].passphrase_ref: <the explanation>` had
+    // its explanation replaced by `[redacted]`, so the user was told there was
+    // a problem and not what it was.
+    //
+    // Narrow on purpose: only the `_ref`/`-ref` suffix, and only on the key.
+    // Anything holding an actual secret is named for the secret.
+    let lowered = key.to_ascii_lowercase();
+    if lowered.ends_with("_ref") || lowered.ends_with("-ref") {
+        return false;
+    }
     // Substring rather than suffix matching, because real credential variables
     // carry suffixes: `AWS_ACCESS_KEY_ID` ends in `_ID`, not in `access_key`.
     // This does mean an innocent key containing "token" is masked too. That is
@@ -349,6 +364,38 @@ pub fn scrub_home(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A handle is not a secret, and redacting it destroyed the explanation.
+    ///
+    /// `passphrase_ref` names *where* a secret is stored, never the secret.
+    /// Scrubbing it turned a validation message into
+    /// `destinations[storj-s3].passphrase_ref: [redacted]` — the user was told
+    /// there was a problem and not what it was.
+    #[test]
+    fn a_handle_reference_is_not_redacted() {
+        let message = "destinations[storj-s3].passphrase_ref: it is replicated from \"onedrive\",                        so it cannot have its own passphrase";
+        let scrubbed = scrub(message);
+        assert!(scrubbed.contains("replicated from"), "the explanation must survive: {scrubbed}");
+        assert!(!scrubbed.contains("[redacted]"), "{scrubbed}");
+    }
+
+    /// The narrowing must not reach anything that holds a real secret.
+    #[test]
+    fn narrowing_the_ref_suffix_does_not_unmask_real_secrets() {
+        for line in [
+            "passphrase: correct-horse-battery-staple",
+            "secret_key: AKIAIOSFODNN7EXAMPLE",
+            "password=hunter2",
+            "authorization: Bearer abc.def.ghi",
+            "api_key: sk-live-0123456789",
+        ] {
+            let scrubbed = scrub(line);
+            assert!(
+                scrubbed.contains("[redacted]"),
+                "a real credential must still be masked: {line} -> {scrubbed}"
+            );
+        }
+    }
     use super::*;
 
     #[test]

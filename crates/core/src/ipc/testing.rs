@@ -1030,6 +1030,21 @@ impl Handler for MockHandler {
         Ok(ServiceReply { autostart: enabled, ..Self::service() })
     }
 
+    async fn preview_file(
+        &self,
+        _ctx: &RequestContext,
+        _destination: String,
+        _snapshot: String,
+        path: String,
+    ) -> Result<PreviewReply> {
+        let _guard = self.enter("snapshot.preview").await?;
+        Ok(PreviewReply {
+            path: format!("/tmp/superbackup-preview/{path}"),
+            size_bytes: 11,
+            executable: false,
+        })
+    }
+
     async fn set_shortcut(&self, _ctx: &RequestContext, enabled: bool) -> Result<ServiceReply> {
         let _guard = self.enter("app.set_shortcut").await?;
         Ok(ServiceReply { in_applications_menu: enabled, ..Self::service() })

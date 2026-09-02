@@ -804,6 +804,18 @@ pub struct JobReply {
     pub job: Box<Job>,
 }
 
+/// One file, restored somewhere private so it can be looked at.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewReply {
+    /// Where the copy landed. Absolute, inside superbackup's own cache.
+    pub path: String,
+    pub size_bytes: u64,
+    /// True when the file type is one that would *run* if it were opened —
+    /// an executable, a script, a shortcut. The caller is expected to show
+    /// such a file rather than launch it.
+    pub executable: bool,
+}
+
 /// A sealed configuration document, ready to be written to a file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigDocumentReply {
@@ -1319,6 +1331,8 @@ replies! {
         "One job."
     "runs" Runs(RunsReply)
         "A list of job runs, newest first."
+    "preview" Preview(PreviewReply)
+        "One file restored for inspection, and where it was put."
     "config_document" ConfigDocument(ConfigDocumentReply)
         "The sealed configuration, encoded for writing to a file."
     "started" Started(StartedReply)
@@ -2228,6 +2242,15 @@ protocol! {
             doc "Start the user-mode application at login, or stop doing so."
             params {
                 enabled: bool = "True to start at login.",
+            }
+
+        "snapshot.preview" SnapshotPreview => preview_file -> Preview(PreviewReply)
+            flags [needs_unlock]
+            doc "Restore one file from a snapshot into a private cache and return where it landed, so it can be opened for inspection. The copy is read-only and is never written back over anything."
+            params {
+                destination: String = "Destination name or id.",
+                snapshot: String = "Snapshot id, as reported by `snapshot.list`.",
+                path: String = "Path of the file inside the snapshot.",
             }
 
         "app.set_shortcut" AppSetShortcut => set_shortcut -> Service(ServiceReply)

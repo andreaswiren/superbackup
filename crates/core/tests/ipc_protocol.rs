@@ -240,6 +240,11 @@ fn sample_requests() -> Vec<Request> {
         Request::SettingsUpdate { settings: Box::new(Settings::default()) },
         Request::MachineRename { label: "The Studio PC".into() },
         Request::AppSetShortcut { enabled: true },
+        Request::SnapshotPreview {
+            destination: "d".into(),
+            snapshot: "k1".into(),
+            path: "a/b.txt".into(),
+        },
         Request::ConfigExport {},
         Request::ConfigImport { document: "AAAA".into(), allow_rollback: false },
         // remote

@@ -61,11 +61,19 @@ pub enum BackupReason {
     RemotePull,
     /// Explicitly requested by the user.
     Manual,
+    /// Before an ordinary change: a secret stored, removed or rotated.
+    ///
+    /// This is the common case by far, and it was the one case that took no
+    /// backup at all — so the interface promised "a copy is written here
+    /// before every change to the vault" over a directory that stayed empty
+    /// no matter how many changes were made.
+    Change,
 }
 
 impl BackupReason {
     fn tag(&self) -> &'static str {
         match self {
+            BackupReason::Change => "change",
             BackupReason::Rekey => "rekey",
             BackupReason::RemotePull => "pull",
             BackupReason::Manual => "manual",
@@ -167,6 +175,22 @@ impl VaultFile {
             return Ok(());
         }
         let sealed = self.vault.prepare_seal()?;
+        // Keep the previous file before replacing it.
+        //
+        // Every other mutating path did this and the ordinary one did not,
+        // which is the path that runs whenever a secret is stored — so the
+        // backups directory stayed empty through a hundred real changes, and
+        // the one thing they exist for (getting a vault back after a bad
+        // change) was unavailable exactly when it was needed. Bounded by
+        // `BACKUP_KEEP`, and skipped entirely when nothing changed.
+        //
+        // A failure here is not a reason to refuse the write: losing the
+        // ability to undo is worse than the change not happening, but not by
+        // enough to justify failing to store a repository key the user is
+        // waiting on. It is reported and the save continues.
+        if let Err(e) = self.backup(BackupReason::Change) {
+            tracing::warn!(error = %e, "the vault could not be backed up before this change");
+        }
         paths::write_atomic(&self.path, sealed.bytes())?;
         self.vault.commit_seal(sealed);
         Ok(())
@@ -350,6 +374,57 @@ impl VaultFile {
 
 #[cfg(test)]
 mod tests {
+
+    /// The ordinary path has to keep a copy, because it is the path that runs.
+    ///
+    /// Rekey and remote-pull both backed up; `save` did not — and `save` is
+    /// what every stored secret goes through. So the backups directory the
+    /// interface describes as "written before every change" stayed empty
+    /// through every change that actually happened.
+    #[test]
+    fn an_ordinary_change_leaves_a_copy_behind() {
+        let dir = std::env::temp_dir().join(format!("sb-vault-backup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let paths = crate::paths::Paths::rooted_at(&dir, false);
+        paths.ensure().expect("home");
+
+        let secret = crate::secret::Secret::from_string("correct horse battery staple".into());
+        let mut file = VaultFile::create(&paths, &secret).expect("a new vault");
+        assert_eq!(count_backups(&paths), 0, "creating a vault backs up nothing; there was none");
+
+        file.vault_mut()
+            .put(crate::model::SecretRef::new("repo-passphrase", &uuid::Uuid::new_v4()), secret)
+            .expect("store");
+        file.save().expect("save");
+
+        assert_eq!(
+            count_backups(&paths),
+            1,
+            "storing a secret must leave the previous vault behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saving_nothing_writes_no_backup() {
+        // A save with no changes must not churn the directory, or the ten
+        // kept copies would all be identical and useless.
+        let dir = std::env::temp_dir().join(format!("sb-vault-nochange-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let paths = crate::paths::Paths::rooted_at(&dir, false);
+        paths.ensure().expect("home");
+        let secret = crate::secret::Secret::from_string("correct horse battery staple".into());
+        let mut file = VaultFile::create(&paths, &secret).expect("a new vault");
+
+        file.save().expect("save");
+        file.save().expect("save");
+        assert_eq!(count_backups(&paths), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn count_backups(paths: &crate::paths::Paths) -> usize {
+        std::fs::read_dir(paths.vault_backup_dir()).map(|d| d.flatten().count()).unwrap_or(0)
+    }
     use super::*;
     use crate::crypto::kdf::KdfParams;
     use crate::model::SecretRef;
@@ -425,10 +500,15 @@ mod tests {
             .expect("rotate");
         assert!(rekey.repositories().is_empty());
 
+        // One backup *from the rotation*, identified by its `.rekey` tag —
+        // not a total count, because an ordinary save now leaves one behind
+        // too and any earlier change legitimately adds to the directory.
         let backups = file.list_backups().expect("list");
-        assert_eq!(backups.len(), 1, "exactly one backup for one rotation");
+        let rekeys: Vec<_> =
+            backups.iter().filter(|p| p.to_string_lossy().ends_with(".rekey")).collect();
+        assert_eq!(rekeys.len(), 1, "exactly one backup for one rotation: {backups:?}");
         assert_eq!(
-            std::fs::read(&backups[0]).expect("read backup"),
+            std::fs::read(rekeys[0]).expect("read backup"),
             before,
             "the backup must be the pre-rotation bytes"
         );

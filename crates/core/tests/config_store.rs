@@ -562,11 +562,17 @@ fn gc_never_touches_handles_it_does_not_understand() {
     assert!(report.orphans.is_empty(), "conservative GC must leave these alone: {report:?}");
     assert_eq!(report.unrecognised.len(), 2);
 
+    // Measured across the call, not from an empty directory: storing the two
+    // handles above is an ordinary change and now leaves its own copies
+    // behind, as every change does. What must not happen is the *GC* adding
+    // one when it collected nothing.
+    let before = store.vault_file().list_backups().expect("backups").len();
     let done = store.collect_garbage().expect("gc");
     assert!(done.is_empty());
     assert_eq!(store.vault().list_refs().expect("refs").len(), 5);
-    assert!(
-        store.vault_file().list_backups().expect("backups").is_empty(),
+    assert_eq!(
+        store.vault_file().list_backups().expect("backups").len(),
+        before,
         "a no-op GC must not take a backup"
     );
 }

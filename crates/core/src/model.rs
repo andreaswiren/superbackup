@@ -961,10 +961,17 @@ pub enum DestinationKind {
 impl DestinationKind {
     pub fn label(&self) -> &'static str {
         match self {
-            DestinationKind::LocalRepository { .. } => "Local repository",
-            DestinationKind::OneDrive { .. } => "OneDrive repository",
-            DestinationKind::S3 { .. } => "S3 bucket",
-            DestinationKind::LocalMirror { .. } => "Folder mirror",
+            // Named for what the destination *is*, never for where it sits.
+            // `S3 bucket` was the odd one out: a bucket is somewhere a
+            // repository can be put — and holds one per key prefix, which is
+            // how several machines share a single bucket — so naming the place
+            // made an S3 destination read as a container while the others read
+            // as contents.
+            DestinationKind::LocalRepository { .. } => "Repository in a local folder",
+            DestinationKind::OneDrive { .. } => "Repository in OneDrive",
+            DestinationKind::S3 { .. } => "Repository in an S3 bucket",
+            // The one destination that deliberately is not a repository.
+            DestinationKind::LocalMirror { .. } => "Folder mirror (no repository)",
         }
     }
     /// Mirror destinations are plain copies; everything else is a Kopia repo.

@@ -80,11 +80,24 @@ pub mod badge {
 /// The four destination kinds. These mirror `DestinationKind::label()`; the
 /// interface reads the model where it has one to hand, and these where it is
 /// naming a kind that does not exist yet.
+/// What a destination *is*, never where it happens to sit.
+///
+/// Three of these used to be named for the thing and one for the place: `S3
+/// bucket` alongside `OneDrive repository`. A bucket is not a destination — it
+/// is somewhere a repository can be put, and one bucket holds a repository per
+/// key prefix, which is exactly how several machines share one. Naming the
+/// place made an S3 destination read as a container while the others read as
+/// contents, and left no word at all for "the repository inside it".
+///
+/// `Folder mirror` stays a mirror on purpose. It is the one destination that
+/// is deliberately *not* a repository: a plain readable copy with no kopia, no
+/// history and no encryption. That distinction is why "destination" remains
+/// the umbrella term rather than being renamed to "repository" outright.
 pub mod kind {
-    pub const LOCAL_REPOSITORY: &str = "Local repository";
-    pub const ONEDRIVE: &str = "OneDrive repository";
-    pub const S3: &str = "S3 bucket";
-    pub const MIRROR: &str = "Folder mirror";
+    pub const LOCAL_REPOSITORY: &str = "Repository in a local folder";
+    pub const ONEDRIVE: &str = "Repository in OneDrive";
+    pub const S3: &str = "Repository in an S3 bucket";
+    pub const MIRROR: &str = "Folder mirror (no repository)";
 }
 
 /// `Trigger` as a word. The core has no `title()` for triggers, so the mapping
@@ -1416,6 +1429,10 @@ pub fn run_stopped_toast(job: &str) -> String {
 
 pub mod restore {
     pub const BROWSE_HINT: &str = "Browse this snapshot";
+    pub const QUEUE_CLEAR: &str = "Clear all";
+    pub const QUEUE_REMOVE: &str = "Remove from the restore";
+    pub const PREVIEW_NOT_OPENED: &str = "Shown, not opened";
+    pub const PREVIEW_FAILED: &str = "That copy could not be opened";
     pub const NO_SNAPSHOTS: &str = "No snapshots here yet";
     pub const NOT_LOOKED: &str = "Select to see its snapshots";
     pub const TITLE: &str = "Restore";
@@ -2279,6 +2296,21 @@ pub fn dest_repo_create_body(kind: &str) -> String {
 pub fn toast_creating_repository(name: &str) -> String {
     format!("Setting up the repository in {name}…")
 }
+pub fn restore_queue_title(n: usize) -> String {
+    if n == 1 {
+        "1 item will be restored".to_string()
+    } else {
+        format!("{n} items will be restored")
+    }
+}
+pub fn restore_preview_opened(name: &str) -> String {
+    format!("Opened a copy of {name}. It is a copy in a temporary folder, not the original.")
+}
+pub fn restore_preview_runnable(name: &str) -> String {
+    format!(
+        "{name} is a program or a script, so superbackup restored it and opened the folder rather than running it."
+    )
+}
 pub fn toast_created(name: &str) -> String {
     format!("{name} created")
 }
@@ -2439,7 +2471,7 @@ mod tests {
     /// the next line's indentation removed by the compiler — but if the
     /// backslash is ever lost, the indentation survives as literal spaces and
     /// the sentence renders with a hole in the middle of it: "every repository
-    /// key.          Anyone who has both". This shipped 54 times before anyone
+    /// key. Anyone who has both". This shipped 54 times before anyone
     /// noticed, because it compiles, passes every other test, and only shows
     /// up to someone reading the screen.
     ///

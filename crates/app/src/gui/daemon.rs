@@ -63,6 +63,8 @@ pub enum Intent {
     /// The objects under one destination's prefix, keyed by the provider.
     ListObjects(uuid::Uuid),
     CreateRepository(uuid::Uuid),
+    /// One file being restored to a cache so it can be opened and read.
+    PreviewFile(String),
     /// A machine rename, carrying the new label so the toast can name it.
     RenameMachine(String),
     /// A newly added repository destination, which is offered a repository

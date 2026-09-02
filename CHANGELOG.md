@@ -14,6 +14,53 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.6] - 2026-09-02
+
+### Fixed
+
+- **The vault was never backed up before an ordinary change.** Rotation and
+  remote-pull both took a copy first; `save` did not - and `save` is the path
+  every stored secret goes through. So the directory the interface describes as
+  "written before every change to the vault" stayed empty through every change
+  that actually happened, and the one thing those copies exist for was missing
+  exactly when it would have been needed.
+- **A destination could never be turned into a copy of another.** A replica has
+  no key of its own, so the configuration is invalid while it carries a
+  passphrase handle - but the update path preserved that handle
+  unconditionally, so the editor cleared it, the daemon put it back, and
+  validation then rejected the result. Clearing is now allowed, which is the
+  one change to a handle a client may legitimately make; repointing one at
+  another destination's secret still is not.
+- **The explanation of that error was redacted away.** `passphrase_ref` names
+  *where* a secret is stored and never the secret, but "passphrase" is a
+  redaction hint, so the message came out as
+  `destinations[storj-s3].passphrase_ref: [redacted]` - the user was told there
+  was a problem and not what it was. A `*_ref` key is a handle and is no longer
+  masked; every key naming an actual credential still is, with a test pinning
+  both directions.
+
+### Added
+
+- **Double-click a file in the restore browser** to restore a copy into a
+  private cache and open it with whatever the system associates with it, so
+  "is this the version I want?" can be answered without restoring over
+  anything. Programs and scripts are shown in their folder rather than
+  launched: restoring something from a backup is not consent to run it.
+- **A restore queue below the browser**, listing everything marked wherever it
+  was marked, with per-item removal and a clear-all. The selection accumulates
+  across directories and used to be visible in full only in the confirmation
+  dialog, after the choosing was over.
+
+### Changed
+
+- **Every destination kind is named for what it is, not where it sits.** Three
+  read `... repository` and the fourth read `S3 bucket`, so an S3 destination
+  looked like a container while the others looked like contents. A bucket is
+  somewhere a repository is put, and holds one per key prefix - which is how
+  several machines share one. `Folder mirror (no repository)` stays a mirror on
+  purpose: it is the one destination that deliberately is not a repository, and
+  that is why "destination" remains the umbrella word.
+
 ## [0.2.5] - 2026-09-02
 
 ### Fixed

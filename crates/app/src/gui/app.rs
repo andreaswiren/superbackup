@@ -262,6 +262,22 @@ impl App {
                 }
                 self.ask(Intent::Status, Request::Status {});
             }
+            (Intent::PreviewFile(name), Reply::Preview(reply)) => {
+                // Opening a file hands it to whatever the system associates
+                // with it — which for an executable or a script means running
+                // it. Restoring something from a backup is not consent to run
+                // it, so those are shown in their folder instead.
+                let path = std::path::PathBuf::from(&reply.path);
+                if reply.executable {
+                    let shown = path.parent().map(|p| p.to_path_buf()).unwrap_or(path);
+                    let _ = open::that_detached(&shown);
+                    self.toasts.warning(copy::restore_preview_runnable(name));
+                } else if let Err(e) = open::that_detached(&path) {
+                    self.toasts.warning(format!("{}: {name}: {e}", copy::restore::PREVIEW_FAILED));
+                } else {
+                    self.toasts.info(copy::restore_preview_opened(name));
+                }
+            }
             (Intent::SaveJob(name), Reply::Job(_)) => {
                 self.toasts.success(copy::toast_saved(name));
                 self.ask(Intent::Jobs, Request::JobList { include_disabled: true });

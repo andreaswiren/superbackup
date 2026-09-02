@@ -321,9 +321,15 @@ fn rotation_on_disk_backs_up_first_and_the_backup_still_opens() {
     let live = std::fs::read(file.path()).expect("read live");
     assert!(Vault::unlock(&live, &pass("new")).is_ok());
 
+    // The rotation's own backup, found by its tag rather than by assuming it
+    // is the only one: an ordinary change leaves a copy too, so the directory
+    // legitimately holds more than one.
     let backups = file.list_backups().expect("backups");
-    assert_eq!(backups.len(), 1);
-    let backup = std::fs::read(&backups[0]).expect("read backup");
+    let rekey_backup = backups
+        .iter()
+        .find(|p| p.to_string_lossy().ends_with(".rekey"))
+        .unwrap_or_else(|| panic!("no rotation backup among {backups:?}"));
+    let backup = std::fs::read(rekey_backup).expect("read backup");
     let recovered = Vault::unlock(&backup, &pass("old")).expect("the backup must still open");
     assert_eq!(
         recovered.get(&SecretRef("s3.access:1".into())).expect("get").expect("present").expose(),
