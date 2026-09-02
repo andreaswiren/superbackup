@@ -14,6 +14,36 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.2] - 2026-09-02
+
+### Changed
+
+- **A locked vault now locks the window.** It used to be announced in four
+  places at once - a banner on the dashboard, a pill in the status strip,
+  per-screen empty states, and a modal raised by the next action that needed a
+  key - while the user could still walk through Jobs, Destinations and Storage
+  providers. That is both nagging and backwards: repeating a message four times
+  teaches people to dismiss it, and showing the configuration while the keys are
+  locked protects the keys and publishes the map to them. There is now one lock
+  screen, with one unlock control, and the only thing readable without a
+  passphrase is the five most recent runs and how each ended - Completed,
+  Completed with warnings, Error, Missed scheduled run. That is the one question
+  worth answering while locked, and answering it needs nothing secret.
+
+### Fixed
+
+- **Scheduled runs piled up for ever against a locked vault.** A run is
+  announced as active the moment it is queued, and the skip that follows carried
+  no run id - so nothing could retire it. Every scheduler tick left another
+  "Queued" card behind: seven of them, started an hour apart, sitting in
+  "Running now" and unable to finish because none had started. The skip now
+  names the run it retires, and a missed scheduled run is recorded in history as
+  one instead of being dropped.
+- A sentence in the new lock screen rendered with a gap in the middle of it -
+  the same broken string continuation swept earlier. A test now scans `copy.rs`
+  for runs of spaces mid-sentence, so the whole class fails the build rather
+  than reaching a screen. Verified by injecting one.
+
 ## [0.2.1] - 2026-09-02
 
 ### Fixed

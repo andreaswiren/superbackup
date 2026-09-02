@@ -12,6 +12,7 @@ pub mod destination_editor;
 pub mod destinations;
 pub mod job_editor;
 pub mod jobs;
+pub mod locked;
 pub mod onboarding;
 pub mod preview;
 pub mod provider_editor;
@@ -32,6 +33,7 @@ pub struct Screens {
     pub provider_editor: provider_editor::State,
     pub activity: activity::State,
     pub restore: restore::State,
+    pub locked: locked::State,
     pub settings: settings::State,
     pub preview: preview::State,
     pub run_detail: run_detail::State,

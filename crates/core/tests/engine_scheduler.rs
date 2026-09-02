@@ -142,6 +142,45 @@ async fn a_paused_engine_skips_scheduled_runs_with_a_reason() {
     assert_eq!(h.executor.calls().len(), 0, "nothing may reach the driver while paused");
 }
 
+/// A skipped run has to be able to retire the queued run it belongs to.
+///
+/// `RunQueued` announces a run as active the moment it enters the queue, so
+/// something must retire it when it turns out never to start. The skip event
+/// carried no run id, so nothing could — and every scheduler tick against a
+/// locked vault left a permanent "Queued" card behind. Seven of them, started
+/// an hour apart, were sitting in one user's "Running now" list.
+#[tokio::test]
+async fn a_skip_names_the_queued_run_it_retires() {
+    let destination = test_repository("local", "/repos/local");
+    let job = job_with("nightly", &destination, Schedule::Interval { minutes: 1 });
+    let job_id = job.id;
+    let mut config = config_with(vec![job], vec![destination]);
+    config.settings.pause = PauseState { paused: true, until: None, reason: None };
+
+    let h = build(config, PersistedState::default());
+    let mut events = h.handle.subscribe();
+    h.clock.wait_for_sleeps(1).await;
+    h.clock.advance_minutes(2);
+
+    let queued = wait_for(&mut events, "the run being queued", |e| match e {
+        EngineEvent::RunQueued { run_id, job_id: id, .. } if *id == job_id => Some(*run_id),
+        _ => None,
+    })
+    .await;
+
+    let skipped = wait_for(&mut events, "a skip", |e| match e {
+        EngineEvent::RunSkipped { run_id, job_id: id, .. } if *id == job_id => Some(*run_id),
+        _ => None,
+    })
+    .await;
+
+    assert_eq!(
+        skipped,
+        Some(queued),
+        "the skip must name the run it is retiring, or the queued run leaks for ever"
+    );
+}
+
 #[tokio::test]
 async fn a_locked_vault_skips_scheduled_runs() {
     let destination = test_repository("local", "/repos/local");

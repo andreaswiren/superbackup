@@ -241,11 +241,17 @@ impl App {
             (Intent::Unlock, Reply::Unlocked(r)) if r.unlocked => {
                 self.toasts.success(copy::vault::UNLOCKED_TOAST);
                 self.modal = None;
+                // The passphrase must not outlive the unlock that used it.
+                self.screens.locked.clear();
                 self.perform_pending();
                 self.ask(Intent::Status, Request::Status {});
+                // Everything behind the lock screen is stale by however long
+                // the vault was shut.
+                self.refresh();
             }
             (Intent::Lock, Reply::Unlocked(_)) => {
                 self.toasts.info(copy::vault::LOCKED_TOAST);
+                self.screens.locked.clear();
                 self.ask(Intent::Status, Request::Status {});
             }
             (Intent::RunJob(name), Reply::Started(started)) => {
@@ -464,7 +470,11 @@ impl App {
             // The banner and the disabled controls already say this.
             E::Locked | E::DaemonUnreachable | E::Ipc | E::KopiaMissing => {}
             E::BadPassphrase => {
-                if let Some(Modal::Unlock(state)) = &mut self.modal {
+                // The lock screen owns the unlock now, so it owns the refusal.
+                // A toast would scroll away from the field that caused it.
+                if !self.data.unlocked() && self.modal.is_none() {
+                    self.screens.locked.fail(copy::err::BAD_PASSPHRASE.to_string());
+                } else if let Some(Modal::Unlock(state)) = &mut self.modal {
                     state.fail();
                 } else if let Some(Modal::ExportKeys(state)) = &mut self.modal {
                     state.fail(copy::err::BAD_PASSPHRASE.to_string());
@@ -840,6 +850,21 @@ impl App {
 
         if self.onboarding.is_some() {
             self.show_onboarding(ctx);
+            self.schedule_repaint(ctx);
+            return;
+        }
+
+        // A locked vault is a state of the window, not a warning inside it.
+        //
+        // Before this, locked was announced in four places at once — a banner,
+        // a status pill, per-screen empty states and a modal — while the user
+        // could still browse Jobs, Destinations and Storage providers. That is
+        // both nagging and backwards: it repeats itself until the message
+        // stops registering, and it protects the keys while showing the map to
+        // them. `loading` is excluded so the lock screen cannot flash before
+        // the first status reply says whether the vault is even locked.
+        if !self.data.loading && self.data.link_up && !self.data.unlocked() {
+            self.show_locked(ctx);
             self.schedule_repaint(ctx);
             return;
         }

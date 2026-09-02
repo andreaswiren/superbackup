@@ -266,6 +266,17 @@ pub fn strength_label(level: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub mod vault {
+    pub const LOCKED_TITLE: &str = "Locked";
+    pub const LOCKED_BODY: &str =
+        "Enter your master passphrase to use superbackup. Scheduled backups do not run while it is locked.";
+    pub const LOCKED_RECENT: &str = "Recent backups";
+    pub const LOCKED_RECENT_NONE: &str = "Nothing has run yet.";
+    pub const RUN_COMPLETED: &str = "Completed";
+    pub const RUN_WARNINGS: &str = "Completed with warnings";
+    pub const RUN_ERROR: &str = "Error";
+    pub const RUN_MISSED: &str = "Missed scheduled run";
+    pub const RUN_STOPPED: &str = "Stopped";
+    pub const RUN_UNFINISHED: &str = "Did not finish";
     pub const UNLOCKED: &str = "Unlocked";
     pub const LOCKED: &str = "Locked";
     pub const LOCKED_SUB: &str = "Schedules are blocked";
@@ -852,7 +863,7 @@ pub fn job_unsaved_body(tabs: &str) -> String {
 pub mod dest {
     pub const GDRIVE_TITLE: &str = "Google Drive";
     pub const GDRIVE_BODY: &str =
-        "Google Drive for Desktop keeps a folder on this machine in sync with your Drive, so a          repository written there uses your own Google storage. Choose one to fill in the path          below.";
+        "Google Drive for Desktop keeps a folder on this machine in sync with your Drive, so a repository written there uses your own Google storage. Choose one to fill in the path below.";
     pub const GDRIVE_USE: &str = "Use this";
 
     pub const KIND_BUCKET: &str = "bucket";
@@ -2400,6 +2411,57 @@ pub fn toast_provider_unreachable(name: &str, detail: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// No user-facing string may contain a run of spaces mid-sentence.
+    ///
+    /// A multi-line literal continued with a trailing `\` has its newline and
+    /// the next line's indentation removed by the compiler — but if the
+    /// backslash is ever lost, the indentation survives as literal spaces and
+    /// the sentence renders with a hole in the middle of it: "every repository
+    /// key.          Anyone who has both". This shipped 54 times before anyone
+    /// noticed, because it compiles, passes every other test, and only shows
+    /// up to someone reading the screen.
+    ///
+    /// Scanning the source rather than the values is deliberate: it catches
+    /// the constants, the `format!` templates, and anything added later,
+    /// without every new string having to remember to opt in.
+    #[test]
+    fn no_copy_string_has_a_gap_in_the_middle_of_a_sentence() {
+        let source = include_str!("copy.rs");
+        let mut offenders: Vec<String> = Vec::new();
+
+        for (n, line) in source.lines().enumerate() {
+            let trimmed = line.trim_start();
+            // Comments and doc comments wrap freely and are not rendered.
+            if trimmed.starts_with("//") || !line.contains('"') {
+                continue;
+            }
+            // This test's own explanatory text quotes the failure it is about.
+            if trimmed.starts_with("assert") || line.contains("offenders") {
+                continue;
+            }
+            let bytes: Vec<char> = line.chars().collect();
+            for i in 0..bytes.len().saturating_sub(3) {
+                let before = bytes[i];
+                if !(before.is_ascii_lowercase() || before == ',' || before == '.' || before == ')')
+                {
+                    continue;
+                }
+                let run = bytes[i + 1..].iter().take_while(|c| **c == ' ').count();
+                if run >= 3 && bytes.get(i + 1 + run).is_some_and(|c| c.is_ascii_alphabetic()) {
+                    offenders.push(format!("copy.rs:{}: {}", n + 1, line.trim()));
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "these strings render with a gap in the middle of a sentence:\n{}",
+            offenders.join("\n")
+        );
+    }
+
     use super::*;
 
     #[test]

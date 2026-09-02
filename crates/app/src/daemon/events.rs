@@ -212,7 +212,25 @@ async fn handle(runtime: &Arc<Runtime>, event: EngineEvent) {
             runtime.publish_status().await;
         }
 
-        EngineEvent::RunSkipped { job_id, job_name, reason } => {
+        EngineEvent::RunSkipped { run_id, job_id, job_name, reason } => {
+            // Retire the run `RunQueued` announced. Without this the queued
+            // entry stayed in "Running now" for ever: the dashboard showed
+            // seven "Development · Queued" cards started hours apart, one per
+            // scheduler tick since the vault was locked, none of which could
+            // ever finish because none had started.
+            if let Some(run_id) = run_id {
+                if let Some(mut run) = runtime.clear_active(&run_id) {
+                    // Recorded rather than discarded: "it did not run and I do
+                    // not know why" is the failure that makes people stop
+                    // trusting a backup tool, and a scheduled run that was
+                    // missed is exactly what a user scanning history is
+                    // looking for.
+                    run.status = RunStatus::Skipped;
+                    run.finished_at = Some(chrono::Utc::now());
+                    runtime.persisted.lock().await.record(run);
+                    super::save_state(runtime).await;
+                }
+            }
             // The scheduler drains blocked runs rather than queueing them, so
             // the daemon has to remember this one itself if the vault is the
             // reason. See `Runtime::blocked_by_lock`.

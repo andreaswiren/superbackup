@@ -127,7 +127,11 @@ pub enum EngineEvent {
     /// A run reached a terminal state and has been recorded.
     RunFinished { run: JobRun },
     /// A scheduled run did not start, and why.
-    RunSkipped { job_id: Uuid, job_name: String, reason: SkipReason },
+    /// A run did not happen. `run_id` is `Some` when the run had already been
+    /// queued — and it must be, because the queued run was announced as active
+    /// and something has to retire it. A skip refused at `enqueue` never got
+    /// an id and carries `None`.
+    RunSkipped { run_id: Option<Uuid>, job_id: Uuid, job_name: String, reason: SkipReason },
     /// The scheduler recomputed when it will next wake.
     NextRunChanged { job_id: Uuid, next_run: Option<chrono::DateTime<chrono::Utc>> },
     /// An activity-log line.

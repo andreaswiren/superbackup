@@ -561,6 +561,41 @@ pub fn gallery() -> Vec<Shot> {
             },
         },
         Shot {
+            // The whole window when the vault is locked: one unlock control,
+            // and the one question worth answering without a passphrase.
+            name: "39-locked",
+            size: [1100.0, 820.0],
+            dark: false,
+            refine: None,
+            setup: |app| {
+                if let Some(s) = &mut app.data.snapshot {
+                    s.unlocked = false;
+                    s.active_runs.clear();
+                }
+                app.data.loading = false;
+                app.data.link_up = true;
+            },
+        },
+        Shot {
+            name: "39b-locked-dark",
+            size: [1100.0, 820.0],
+            dark: true,
+            refine: None,
+            setup: |app| {
+                if let Some(s) = &mut app.data.snapshot {
+                    s.unlocked = false;
+                    s.active_runs.clear();
+                }
+                app.data.loading = false;
+                app.data.link_up = true;
+                // Three attempts is where the "no recovery" line appears; it
+                // is the state most worth looking at, because it is the one
+                // where someone is in trouble.
+                app.screens.locked.attempts = 3;
+                app.screens.locked.error = Some("That passphrase did not open the vault.".into());
+            },
+        },
+        Shot {
             name: "32-daemon-unreachable",
             size: [1100.0, 720.0],
             dark: true,

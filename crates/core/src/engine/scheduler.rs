@@ -591,7 +591,8 @@ impl Scheduler {
             return Err(Error::JobNotFound(job_id.to_string()));
         };
         if self.active.contains_key(&job_id) || self.queue.iter().any(|p| p.job_id == job_id) {
-            self.emit_skip(job, SkipReason::AlreadyRunning);
+            // Refused before a run id existed, so there is nothing to retire.
+            self.emit_skip_for(None, job, SkipReason::AlreadyRunning);
             return Err(Error::JobRunning(job.name.clone()));
         }
         let run_id = Uuid::new_v4();
@@ -622,7 +623,10 @@ impl Scheduler {
                 now,
             );
             match skip {
-                Some(reason) => self.emit_skip(&job, reason),
+                // The queued run's id travels with the skip. Without it the
+                // daemon cannot retire the active entry `RunQueued` created,
+                // and every locked-vault tick left one behind for ever.
+                Some(reason) => self.emit_skip_for(Some(pending.run_id), &job, reason),
                 None => self.start(pending, job, destinations),
             }
         }
@@ -667,8 +671,9 @@ impl Scheduler {
         });
     }
 
-    fn emit_skip(&self, job: &Job, reason: SkipReason) {
+    fn emit_skip_for(&self, run_id: Option<Uuid>, job: &Job, reason: SkipReason) {
         let _ = self.events.send(EngineEvent::RunSkipped {
+            run_id,
             job_id: job.id,
             job_name: job.name.clone(),
             reason,
