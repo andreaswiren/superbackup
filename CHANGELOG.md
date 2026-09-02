@@ -14,6 +14,43 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.5] - 2026-09-02
+
+### Fixed
+
+- **No table row in the application was clickable.** egui tables sense hover
+  unless told otherwise, and not one of them said otherwise - so
+  `row.response().clicked()` was false on every row of every table, and every
+  list that opens something by being clicked did nothing at all. Activity runs
+  and events, Destinations, Jobs, Storage providers, the snapshot list and the
+  restore file browser were all inert. Six screens, one line each.
+- **Restore said "Loading..." for ever.** A destination with no *known*
+  snapshots showed the loading label whether or not anything had ever been
+  asked - so every unselected destination sat there loading permanently, and a
+  destination that genuinely holds nothing looked identical to one still
+  working. The three states are now told apart.
+
+### Added
+
+- **A folder button on each snapshot row** that opens the browser, and a
+  **Repository column** showing where the snapshot physically lives. The row
+  stays clickable, but a row that opens something with no affordance on it is
+  a row nobody clicks.
+- The **bandwidth slider now appears everywhere a limit is set** - the job
+  editor and the destination editor had their own plain number boxes, and only
+  Settings got the slider when it was added.
+
+### Changed
+
+- **Chained destinations are no longer a decision on every destination.** The
+  choice was a mandatory two-way radio on a screen where almost nobody needs
+  it. It is now a single opt-in, and appears only when there is something to
+  copy from or the destination is already a copy. The relationship itself
+  still lives on the destination rather than the job, because a replica *is*
+  the same repository as its source permanently - `sync-to` copies the format
+  blob - and two jobs cannot hold different opinions about that without one of
+  them creating a separately-keyed repository where the other expects a copy.
+
 ## [0.2.4] - 2026-09-02
 
 ### Fixed

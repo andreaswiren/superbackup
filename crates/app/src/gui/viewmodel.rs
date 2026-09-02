@@ -1088,6 +1088,20 @@ pub fn destination_progress_line(progress: &superbackup_core::state::Progress) -
     parts.join(" · ")
 }
 
+/// Where a destination physically is, as one line.
+///
+/// The same shape the CLI prints, so a path read on screen and a path read in
+/// a terminal are the same string and can be compared by eye.
+pub fn destination_location(destination: &Destination) -> String {
+    use superbackup_core::model::DestinationKind as K;
+    match &destination.kind {
+        K::LocalRepository { path } | K::OneDrive { path, .. } | K::LocalMirror { path } => {
+            path.display().to_string()
+        }
+        K::S3 { bucket, prefix, .. } => format!("s3://{bucket}/{prefix}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

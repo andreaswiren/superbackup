@@ -638,6 +638,7 @@ pub mod col {
     pub const NEXT_RUN: &str = "Next run";
     pub const UPLOADED: &str = "Uploaded";
     pub const LOCATION: &str = "Location";
+    pub const REPOSITORY: &str = "Repository";
     pub const USED_BY: &str = "Used by";
     pub const SIZE: &str = "Size";
     pub const LAST_VERIFIED: &str = "Last verified";
@@ -1414,6 +1415,9 @@ pub fn run_stopped_toast(job: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub mod restore {
+    pub const BROWSE_HINT: &str = "Browse this snapshot";
+    pub const NO_SNAPSHOTS: &str = "No snapshots here yet";
+    pub const NOT_LOOKED: &str = "Select to see its snapshots";
     pub const TITLE: &str = "Restore";
     pub const SOURCES: &str = "Restore from";
     pub const MIRRORS_GROUP: &str = "Folder mirrors";

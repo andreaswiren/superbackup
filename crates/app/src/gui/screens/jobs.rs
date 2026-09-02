@@ -215,6 +215,11 @@ impl App {
                     let sorted = |key: SortKey| (state.sort == key).then_some(state.descending);
                     let mut builder = TableBuilder::new(ui)
                         .id_salt(("jobs", heading))
+                        // Rows are clickable, and a table senses `hover` unless it is
+                        // told otherwise — so `row.response().clicked()` was false on
+                        // every row of every table in the application, and every list
+                        // that opens something by being clicked did nothing at all.
+                        .sense(egui::Sense::click())
                         .striped(false)
                         .cell_layout(Layout::left_to_right(Align::Center));
                     for spec in JOB_COLUMNS.iter().filter(|c| has(c.key)) {

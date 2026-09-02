@@ -1673,6 +1673,59 @@ pub fn passphrase_field(
 
 /// A numeric field. egui has no spinner and no input mask (L11), so this is a
 /// `DragValue` with the unit drawn beside it and the range clamped.
+/// One bandwidth limit: checkbox, value, unit, Mbit readout, and a notched
+/// slider — laid out on a fixed label column so upload and download line up.
+///
+/// The number box and the slider edit the same value in different units. The
+/// box is authoritative: typing a value leaves it exactly as typed, and only a
+/// drag snaps to a 10 Mbit notch. Rounding what someone deliberately typed is
+/// the behaviour that makes a control feel like it is arguing.
+pub fn bandwidth_control(ui: &mut Ui, id: &str, label: &str, value: &mut Option<u32>) -> bool {
+    const LABEL_W: f32 = 150.0;
+    let t = theme::tokens(ui.ctx());
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        let mut on = value.is_some();
+        // The checkbox carries the label, and the pair is padded to a fixed
+        // width so everything after it starts at the same x on every row.
+        let before_x = ui.cursor().left();
+        if checkbox(ui, &mut on, label, None, true).clicked() {
+            *value = if on { Some(2000) } else { None };
+            changed = true;
+        }
+        let used = ui.cursor().left() - before_x;
+        if used < LABEL_W {
+            ui.add_space(LABEL_W - used);
+        }
+
+        if let Some(v) = value.as_mut() {
+            let before = *v;
+            number(ui, v, 1..=10_000_000, super::copy::set::BW_UNIT, true, label);
+            if *v != before {
+                changed = true;
+            }
+            ui.add_space(space::M);
+            text(ui, super::format::kbps_as_mbit(*v), Type::Small, t.text_muted);
+        } else {
+            text(ui, super::copy::set::BW_UNLIMITED, Type::Small, t.text_muted);
+        }
+    });
+
+    if let Some(v) = value.as_mut() {
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            ui.add_space(LABEL_W);
+            ui.vertical(|ui| {
+                if mbit_slider(ui, id, v) {
+                    changed = true;
+                }
+            });
+        });
+    }
+    changed
+}
+
 /// A filled line graph of recent transfer rates.
 ///
 /// Answers the question a single "89 MB/s" cannot: *is it still moving?* A

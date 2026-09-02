@@ -279,6 +279,14 @@ impl App {
                     .map(|s| s.len())
                     .unwrap_or(0);
                 let name = widgets::galley(ui, &destination.name, Type::BodyStrong, t.text_primary);
+                // Three states, not one. A destination nobody has opened has
+                // not been asked about, and saying "Loading…" about it is a
+                // lie that never resolves — which is exactly what every
+                // unselected destination did, for ever. A destination that
+                // genuinely holds nothing gets its own answer too, rather than
+                // looking like one that is still working.
+                let asked = self.screens.restore.snapshots.contains_key(&destination.id);
+                let in_flight = self.screens.restore.loading_snapshots == Some(destination.id);
                 let sub_text = if snapshots > 0 {
                     let newest = self
                         .screens
@@ -289,8 +297,12 @@ impl App {
                         .map(|s| copy::restore_newest(&format::relative_past(s.created_at, now)))
                         .unwrap_or_default();
                     format!("{} · {}", copy::restore_snapshot_count(snapshots), newest)
-                } else {
+                } else if in_flight {
                     copy::state::LOADING.to_string()
+                } else if asked {
+                    copy::restore::NO_SNAPSHOTS.to_string()
+                } else {
+                    copy::restore::NOT_LOOKED.to_string()
                 };
                 let sub = widgets::galley(ui, sub_text, Type::Small, t.text_muted);
                 let name_h = name.size().y;
@@ -416,24 +428,47 @@ impl App {
         ui.add_space(space::L);
 
         let mut open: Option<String> = None;
+        let repository_path = self
+            .data
+            .destination(&destination)
+            .map(crate::gui::viewmodel::destination_location)
+            .unwrap_or_default();
         widgets::table_frame(ui, |ui| {
             let gap = ui.spacing().item_spacing.x;
-            let source_width =
-                (ui.available_width() - 150.0 - 90.0 - 90.0 - 120.0 - gap * 5.0).max(140.0);
+            // The repository path shares what is left with the source, because
+            // both are paths and either can be long. The browse button is
+            // fixed: an affordance that changes width is one people stop
+            // aiming at.
+            const BROWSE_W: f32 = 44.0;
+            let flexible =
+                (ui.available_width() - 150.0 - 90.0 - 90.0 - 120.0 - BROWSE_W - gap * 7.0)
+                    .max(220.0);
+            let source_width = (flexible * 0.45).max(120.0);
+            let repo_width = (flexible - source_width).max(100.0);
             egui_extras::TableBuilder::new(ui)
                 .id_salt("restore-snapshots")
+                // Rows are clickable, and a table senses `hover` unless it is
+                // told otherwise — so `row.response().clicked()` was false on
+                // every row of every table in the application, and every list
+                // that opens something by being clicked did nothing at all.
+                .sense(egui::Sense::click())
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(150.0))
                 .column(egui_extras::Column::exact(source_width))
+                .column(egui_extras::Column::exact(repo_width))
                 .column(egui_extras::Column::exact(90.0))
                 .column(egui_extras::Column::exact(90.0))
                 .column(egui_extras::Column::exact(120.0))
+                .column(egui_extras::Column::exact(BROWSE_W))
                 .header(size::TABLE_HEADER_H, |mut header| {
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::WHEN, Some(true));
                     });
                     header.col(|ui| {
                         widgets::table_header(ui, "Source", None);
+                    });
+                    header.col(|ui| {
+                        widgets::table_header(ui, copy::col::REPOSITORY, None);
                     });
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::FILES, None);
@@ -444,6 +479,7 @@ impl App {
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::ID, None);
                     });
+                    header.col(|_ui| {});
                 })
                 .body(|body| {
                     // Virtualised: thousands of snapshots cost the same as ten.
@@ -481,6 +517,24 @@ impl App {
                             );
                         });
                         row.col(|ui| {
+                            // Where this snapshot physically lives. Constant
+                            // for one destination, but it is the answer to
+                            // "where is my backup actually stored" and the
+                            // rows are where people look for it.
+                            let width = ui.available_width();
+                            widgets::elided(
+                                ui,
+                                &repository_path,
+                                Type::MonoSmall,
+                                t.text_muted,
+                                width,
+                                // Elide from the left: the tail of a path is
+                                // what distinguishes it.
+                                true,
+                            )
+                            .on_hover_text(repository_path.clone());
+                        });
+                        row.col(|ui| {
                             widgets::numeric_cell(
                                 ui,
                                 &snapshot
@@ -506,6 +560,21 @@ impl App {
                                 t.text_muted,
                             )
                             .on_hover_text(snapshot.id.clone());
+                        });
+                        row.col(|ui| {
+                            // A visible way in. The whole row is clickable
+                            // too, but a row that opens something with no
+                            // affordance on it is a row nobody clicks.
+                            if widgets::icon_button_compact(
+                                ui,
+                                Icon::FolderOpen,
+                                copy::restore::BROWSE_HINT,
+                                true,
+                            )
+                            .clicked()
+                            {
+                                open = Some(snapshot.id.clone());
+                            }
                         });
                         if row.response().clicked() {
                             open = Some(snapshot.id.clone());
@@ -660,6 +729,11 @@ impl App {
             let name_width = (ui.available_width() - 32.0 - 90.0 - 130.0 - gap * 4.0).max(180.0);
             egui_extras::TableBuilder::new(ui)
                 .id_salt("restore-listing")
+                // Rows are clickable, and a table senses `hover` unless it is
+                // told otherwise — so `row.response().clicked()` was false on
+                // every row of every table in the application, and every list
+                // that opens something by being clicked did nothing at all.
+                .sense(egui::Sense::click())
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(32.0))
                 .column(egui_extras::Column::exact(name_width))

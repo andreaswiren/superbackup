@@ -208,6 +208,11 @@ impl App {
             let destinations_width = (ui.available_width() - fixed - gap * 4.0).max(140.0);
             let mut builder = egui_extras::TableBuilder::new(ui)
                 .id_salt("activity-runs")
+                // Rows are clickable, and a table senses `hover` unless it is
+                // told otherwise — so `row.response().clicked()` was false on
+                // every row of every table in the application, and every list
+                // that opens something by being clicked did nothing at all.
+                .sense(egui::Sense::click())
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(32.0))
                 .column(egui_extras::Column::exact(120.0))
@@ -436,6 +441,11 @@ impl App {
         widgets::table_frame(ui, |ui| {
             egui_extras::TableBuilder::new(ui)
                 .id_salt("activity-events")
+                // Rows are clickable, and a table senses `hover` unless it is
+                // told otherwise — so `row.response().clicked()` was false on
+                // every row of every table in the application, and every list
+                // that opens something by being clicked did nothing at all.
+                .sense(egui::Sense::click())
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(egui_extras::Column::exact(28.0))
                 .column(egui_extras::Column::exact(130.0))

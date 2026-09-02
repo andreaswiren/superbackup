@@ -1179,37 +1179,23 @@ impl App {
 
         widgets::form_group(ui, copy::chain::TITLE, None);
 
+        // One opt-in, not a pair of alternatives. "From the job's folders" is
+        // what a destination does; it does not need to be chosen.
         let mut choose: Option<Option<Uuid>> = None;
-        if widgets::radio(
+        let mut is_copy = current.is_some();
+        if widgets::toggle(
             ui,
-            current.is_none(),
-            copy::chain::FROM_SOURCES,
-            Some(copy::chain::FROM_SOURCES_HELP),
-            true,
-        )
-        .clicked()
-        {
-            choose = Some(None);
-        }
-        ui.add_space(space::S);
-        // Offered even with no candidates, so the feature is discoverable —
-        // selecting it then explains what is missing instead of the option
-        // simply not being there.
-        let picked = widgets::radio(
-            ui,
-            current.is_some(),
+            &mut is_copy,
             copy::chain::FROM_DESTINATION,
             Some(copy::chain::FROM_DESTINATION_HELP),
             !candidates.is_empty(),
-        );
-        if picked.clicked() && current.is_none() {
-            choose = Some(candidates.first().map(|(id, _)| *id));
+        )
+        .clicked()
+        {
+            choose = Some(if is_copy { candidates.first().map(|(id, _)| *id) } else { None });
         }
 
-        if candidates.is_empty() {
-            ui.add_space(space::S);
-            widgets::paragraph_at(ui, copy::chain::PICK_EMPTY, Type::Small, t.text_muted, 28.0);
-        } else if current.is_some() {
+        if current.is_some() {
             ui.add_space(space::M);
             ui.horizontal(|ui| {
                 ui.add_space(28.0);
