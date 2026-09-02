@@ -195,6 +195,19 @@ jobs:
   draft:
     name: draft the release
     needs: [preflight, build]
+    # Publish what built, rather than nothing.
+    #
+    # `needs` alone means one platform's failure cancels the release for all
+    # of them, so a clippy lint on macOS held back a Windows build that had
+    # already compiled, tested and packaged cleanly. The stated priority is
+    # Windows first, Linux second, macOS third; a release missing the third
+    # should say so, not fail to exist.
+    #
+    # Preflight stays absolute: it checks the tag against the manifest and the
+    # changelog, and a release that disagrees with its own version number is
+    # worse than no release. The collect step refuses to publish without a
+    # Windows artefact, so this cannot quietly ship an empty one.
+    if: always() && needs.preflight.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -210,6 +223,25 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           find incoming -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
+
+          # Windows is the priority platform. A release without it is not a
+          # release, however many others built.
+          if ! ls dist/*windows* >/dev/null 2>&1; then
+            echo "::error::no Windows artefact was produced; refusing to publish"
+            exit 1
+          fi
+
+          # Say plainly which platforms made it, so a missing one shows in the
+          # log rather than only by counting files on the release page.
+          echo "Publishing these artefacts:"
+          ls -1 dist
+          for target in windows linux darwin; do
+            if ls dist/*"$target"* >/dev/null 2>&1; then
+              echo "  $target: present"
+            else
+              echo "::warning::$target produced no artefact and is missing here"
+            fi
+          done
           cd dist
           sha256sum ./* > SHA256SUMS
           cat SHA256SUMS

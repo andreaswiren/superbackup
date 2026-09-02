@@ -50,6 +50,10 @@ pub const SUGGESTED_FOLDER: &str = "Superbackup";
 /// Drive for Desktop puts the user's own files under this name inside the
 /// mount. The mount root itself also holds "Shared drives" and "Other
 /// computers", neither of which is a sane backup target.
+///
+/// Only the platforms with an official client look for it; Google ships none
+/// for Linux.
+#[cfg(any(windows, target_os = "macos"))]
 const MY_DRIVE: &str = "My Drive";
 
 /// How Drive for Desktop is presenting the files.

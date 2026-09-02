@@ -318,10 +318,13 @@ fn escape_desktop(value: &str) -> String {
 fn read_target(path: &Path) -> Result<Option<PathBuf>> {
     let text = std::fs::read_to_string(path)
         .ctx(format!("reading the desktop entry {}", path.display()))?;
+    // `parse_desktop_exec` returns the whole argument vector; the executable
+    // is the first of them.
     Ok(text
         .lines()
         .find_map(|l| l.strip_prefix("Exec="))
-        .map(|exec| PathBuf::from(super::autostart::parse_desktop_exec(exec))))
+        .and_then(|exec| super::autostart::parse_desktop_exec(exec).into_iter().next())
+        .map(PathBuf::from))
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +370,10 @@ fn read_target(path: &Path) -> Result<Option<PathBuf>> {
 }
 
 /// Shown in the Start menu tooltip and the desktop entry's `Comment`.
+///
+/// macOS has nowhere to put it: the entry there is a symlink to the bundle,
+/// and the bundle carries its own description.
+#[cfg(not(target_os = "macos"))]
 const DESCRIPTION: &str = "Back up your folders to local disks, OneDrive and S3";
 
 #[cfg(test)]

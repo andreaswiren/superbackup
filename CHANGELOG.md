@@ -14,6 +14,25 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.2.8] - 2026-09-03
+
+### Fixed
+
+- **No release had ever been published, and CI had never been green.** The
+  Windows build succeeds and always has; the release job required *every*
+  platform, so a clippy lint on macOS silently withheld a Windows artefact that
+  had already compiled, tested and packaged. The release now publishes what
+  built - and refuses outright if the Windows artefact is missing, because
+  Windows is the priority platform and a release without it is not a release.
+  Which platforms are present is stated in the job log rather than left to be
+  inferred from the file list.
+- **`shortcut.rs` did not compile on Linux at all.** Reading a desktop entry
+  passed the whole argument vector where a path was wanted. Two constants were
+  also dead on the platforms that do not use them, which fails a `-D warnings`
+  clippy run. Both were introduced with the applications-menu work and were
+  invisible here, because the only platform built locally is the one they
+  happened to work on.
+
 ## [0.2.7] - 2026-09-02
 
 ### Fixed
