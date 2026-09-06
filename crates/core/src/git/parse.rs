@@ -7,6 +7,7 @@
 //! and which is localised.
 
 use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 
 /// The record separator asked for in `git log --format`.
 ///
@@ -15,6 +16,10 @@ use chrono::{DateTime, TimeZone, Utc};
 /// in either. US (0x1f) is the conventional choice and git emits it verbatim
 /// through `%x1f`.
 pub const FIELD_SEP: char = '\u{1f}';
+
+/// Git writes CRLF on Windows when `core.autocrlf` says to, and the trailing
+/// carriage return is not part of any value.
+const CR: char = '\r';
 
 /// `git log -1` in the format [`LOG_FORMAT`] asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,6 +295,278 @@ fn clean_repo_path(path: &str) -> String {
     path.trim_matches('/').trim_end_matches(".git").trim_matches('/').to_string()
 }
 
+/// One branch in a repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Branch {
+    pub name: String,
+    /// Whether this is the branch currently checked out here.
+    pub current: bool,
+    /// `origin/main`, when the branch tracks something.
+    pub upstream: Option<String>,
+    /// Commits ahead of and behind that upstream, as of the last fetch.
+    pub ahead: u32,
+    pub behind: u32,
+    pub last_commit: Option<DateTime<Utc>>,
+    pub subject: String,
+    /// A branch checked out in another worktree cannot be checked out here,
+    /// and git marks it. Worth showing rather than leaving the user to wonder
+    /// why a checkout was refused.
+    pub checked_out_elsewhere: bool,
+}
+
+/// The `--format` for [`parse_branches`]. Field order matters; see the parser.
+pub const BRANCH_FORMAT: &str = "--format=%(HEAD)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track)%1f%(committerdate:unix)%1f%(worktreepath)%1f%(contents:subject)";
+
+/// Parse `git branch --list --format=…` in [`BRANCH_FORMAT`].
+///
+/// `%(upstream:track)` renders as `[ahead 3, behind 1]`, `[gone]`, or empty.
+/// It is parsed rather than trusted as a label because a screen that shows
+/// `[ahead 3, behind 1]` verbatim is showing git's UI, not its own.
+pub fn parse_branches(output: &str) -> Vec<Branch> {
+    let mut branches = Vec::new();
+    for raw in output.lines() {
+        let line = raw.trim_end_matches(CR);
+        if line.trim().is_empty() {
+            continue;
+        }
+        let f: Vec<&str> = line.split(FIELD_SEP).collect();
+        if f.len() < 7 {
+            continue;
+        }
+        let name = f[1].trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let (ahead, behind) = parse_track(f[3]);
+        branches.push(Branch {
+            // `%(HEAD)` is `*` for the checked-out branch and a space
+            // otherwise, so it cannot be tested for emptiness.
+            current: f[0].trim() == "*",
+            name,
+            upstream: Some(f[2].trim()).filter(|u| !u.is_empty()).map(str::to_string),
+            ahead,
+            behind,
+            last_commit: f[4]
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .and_then(|t| Utc.timestamp_opt(t, 0).single()),
+            // A worktree path is only set when *another* worktree holds this
+            // branch; the current one reports empty.
+            checked_out_elsewhere: !f[5].trim().is_empty() && f[0].trim() != "*",
+            subject: f[6].trim().to_string(),
+        });
+    }
+    branches
+}
+
+/// `[ahead 3, behind 1]` -> `(3, 1)`.
+fn parse_track(track: &str) -> (u32, u32) {
+    let mut ahead = 0;
+    let mut behind = 0;
+    let cleaned = track.trim().trim_start_matches('[').trim_end_matches(']');
+    for part in cleaned.split(',') {
+        let part = part.trim();
+        if let Some(n) = part.strip_prefix("ahead ") {
+            ahead = n.trim().parse().unwrap_or(0);
+        } else if let Some(n) = part.strip_prefix("behind ") {
+            behind = n.trim().parse().unwrap_or(0);
+        }
+    }
+    (ahead, behind)
+}
+
+/// One linked working tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Worktree {
+    pub path: String,
+    pub head: Option<String>,
+    /// The branch checked out there, or `None` on a detached HEAD.
+    pub branch: Option<String>,
+    /// The repository's own directory, as opposed to a linked one.
+    pub main: bool,
+    pub locked: bool,
+    pub prunable: bool,
+}
+
+/// Parse `git worktree list --porcelain`.
+///
+/// Records are separated by blank lines; each is `key value` or a bare key:
+///
+/// ```text
+/// worktree /home/a/project
+/// HEAD 8f2a…
+/// branch refs/heads/main
+///
+/// worktree /home/a/project-hotfix
+/// HEAD 1c4b…
+/// detached
+/// locked
+/// ```
+///
+/// The first record is always the main working tree.
+pub fn parse_worktrees(output: &str) -> Vec<Worktree> {
+    let mut out: Vec<Worktree> = Vec::new();
+    let mut current: Option<Worktree> = None;
+
+    for raw in output.lines() {
+        let line = raw.trim_end_matches(CR);
+        if line.trim().is_empty() {
+            if let Some(w) = current.take() {
+                out.push(w);
+            }
+            continue;
+        }
+        let (key, value) = match line.split_once(' ') {
+            Some((k, v)) => (k, v.trim()),
+            None => (line, ""),
+        };
+        match key {
+            "worktree" => {
+                if let Some(w) = current.take() {
+                    out.push(w);
+                }
+                current = Some(Worktree {
+                    path: value.to_string(),
+                    head: None,
+                    branch: None,
+                    main: out.is_empty(),
+                    locked: false,
+                    prunable: false,
+                });
+            }
+            "HEAD" => {
+                if let Some(w) = current.as_mut() {
+                    w.head = Some(value.to_string());
+                }
+            }
+            "branch" => {
+                if let Some(w) = current.as_mut() {
+                    w.branch =
+                        Some(value.trim_start_matches("refs/heads/").to_string());
+                }
+            }
+            "locked" => {
+                if let Some(w) = current.as_mut() {
+                    w.locked = true;
+                }
+            }
+            "prunable" => {
+                if let Some(w) = current.as_mut() {
+                    w.prunable = true;
+                }
+            }
+            // `detached` and `bare` need no field: a detached worktree is one
+            // with no branch, which is already how it is represented.
+            _ => {}
+        }
+    }
+    if let Some(w) = current.take() {
+        out.push(w);
+    }
+    out
+}
+
+/// How a remote is authenticated, worked out from its URL and the environment.
+///
+/// # What this can and cannot know
+///
+/// It reports the *mechanism*, never the secret. An SSH key's path is not
+/// secret — it is in the user's `~/.ssh/config` and in every `ssh -v` line —
+/// and knowing which key a repository uses is exactly the thing that is hard
+/// to find out when a push starts failing. The key's contents, a token's
+/// value, and a stored password are never read, never displayed and never
+/// asked for.
+///
+/// It is also honest about being a deduction. Git resolves credentials through
+/// a helper chain we do not run, so for an HTTPS remote the truthful answer is
+/// "whichever credential helper is configured", named, rather than a guess at
+/// what that helper will hand over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMethod {
+    /// An SSH remote, using a key. The path is the key ssh would offer, when
+    /// one can be identified.
+    SshKey {
+        /// `~/.ssh/id_ed25519`, or whatever `core.sshCommand`/`~/.ssh/config`
+        /// selects. `None` when it cannot be determined without running ssh.
+        key_path: Option<String>,
+        /// The identity in the URL, usually `git`.
+        user: Option<String>,
+    },
+    /// An HTTPS remote. Git will ask this helper for the credential.
+    CredentialHelper { helper: String },
+    /// An HTTPS remote with no helper configured, so git would prompt — which
+    /// is exactly what fails silently under a non-interactive scan.
+    NoneConfigured,
+    /// The remote is a path on this machine; nothing authenticates.
+    Local,
+    /// No remote at all.
+    None,
+}
+
+impl AuthMethod {
+    /// A short label for a table cell.
+    pub fn label(&self) -> String {
+        match self {
+            Self::SshKey { key_path: Some(path), .. } => {
+                let file = std::path::Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone());
+                format!("SSH · {file}")
+            }
+            Self::SshKey { key_path: None, .. } => "SSH".to_string(),
+            Self::CredentialHelper { helper } => format!("HTTPS · {helper}"),
+            Self::NoneConfigured => "HTTPS · no helper".to_string(),
+            Self::Local => "Local path".to_string(),
+            Self::None => "—".to_string(),
+        }
+    }
+
+    /// The longer explanation, for a tooltip.
+    pub fn detail(&self) -> String {
+        match self {
+            Self::SshKey { key_path: Some(path), user } => format!(
+                "Connects over SSH as {}, offering the key at {path}. Superbackup never reads \
+                 the key itself.",
+                user.clone().unwrap_or_else(|| "git".into())
+            ),
+            Self::SshKey { key_path: None, user } => format!(
+                "Connects over SSH as {}. Which key ssh offers depends on your ~/.ssh/config \
+                 and your agent, so it cannot be named from here.",
+                user.clone().unwrap_or_else(|| "git".into())
+            ),
+            Self::CredentialHelper { helper } => format!(
+                "Connects over HTTPS. Git asks the `{helper}` credential helper for the token or \
+                 password each time; superbackup never sees it."
+            ),
+            Self::NoneConfigured => {
+                "Connects over HTTPS with no credential helper configured, so git would ask for \
+                 a password. Nothing here can answer that, which is why a private repository on \
+                 this remote fails rather than prompting."
+                    .to_string()
+            }
+            Self::Local => "The remote is a folder on this machine, so nothing authenticates."
+                .to_string(),
+            Self::None => "This repository has no remote.".to_string(),
+        }
+    }
+}
+
+/// The page a person would open for a remote, when one can be constructed.
+///
+/// Only for hosts whose web layout is known. A self-hosted Gitea and a
+/// self-hosted GitLab differ, and inventing a URL that 404s is worse than
+/// offering none — so an unknown host gets the `https://host/path` form, which
+/// is right for every forge this recognises and is at worst a landing page.
+pub fn web_url(location: &RemoteLocation) -> Option<String> {
+    if location.path.is_empty() {
+        return None;
+    }
+    Some(format!("https://{}/{}", location.host, location.path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,6 +588,88 @@ u UU N... 100644 100644 100644 100644 3333 4444 5555 conflict.rs
 ? also-untracked.rs
 ! ignored.rs
 ";
+
+    /// Captured from a real repository, plus the cases one repository cannot
+    /// show at once: a branch with no upstream, one whose upstream is gone,
+    /// and one checked out in another worktree.
+    #[test]
+    fn branches_carry_their_tracking_state_rather_than_gits_label() {
+        let sep = FIELD_SEP;
+        let row = |fields: [&str; 7]| fields.join(&sep.to_string());
+        let out = [
+            row(["*", "main", "origin/main", "", "1788726097", "C:/w/superbackup", "a subject"]),
+            row([" ", "feature/git", "origin/feature/git", "[ahead 3, behind 1]", "1788000000", "", "wip"]),
+            row([" ", "local-only", "", "", "1787000000", "", "not pushed anywhere"]),
+            row([" ", "hotfix", "origin/hotfix", "[gone]", "1786000000", "C:/work/hotfix", "upstream deleted"]),
+        ]
+        .join("\n");
+
+        let branches = parse_branches(&out);
+        assert_eq!(branches.len(), 4);
+
+        let main = &branches[0];
+        assert!(main.current, "the asterisk marks the checked-out branch");
+        assert_eq!(main.name, "main");
+        assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((main.ahead, main.behind), (0, 0));
+        assert_eq!(main.subject, "a subject");
+        assert!(main.last_commit.is_some());
+        // git sets a worktree path for the current branch too, so this must
+        // not be read as "checked out somewhere else".
+        assert!(!main.checked_out_elsewhere);
+
+        let feature = &branches[1];
+        assert!(!feature.current);
+        assert_eq!((feature.ahead, feature.behind), (3, 1), "parsed, not shown verbatim");
+
+        let local = &branches[2];
+        assert_eq!(local.upstream, None, "never pushed");
+        assert_eq!((local.ahead, local.behind), (0, 0));
+
+        let hotfix = &branches[3];
+        assert!(hotfix.checked_out_elsewhere, "another worktree holds it");
+        // `[gone]` is a tracking state with no numbers in it.
+        assert_eq!((hotfix.ahead, hotfix.behind), (0, 0));
+    }
+
+    /// Records separated by blank lines, the first being the main tree. A
+    /// detached worktree has no `branch` line at all, and `locked` is a bare
+    /// key with no value.
+    #[test]
+    fn worktrees_are_read_from_gits_porcelain_records() {
+        let out = "worktree C:/w/superbackup\n\
+                   HEAD 4df47dd8a2fb0b449d07719d7b674bd00071114a\n\
+                   branch refs/heads/main\n\
+                   \n\
+                   worktree C:/work/hotfix\n\
+                   HEAD 1c4b0000000000000000000000000000000000aa\n\
+                   branch refs/heads/hotfix\n\
+                   locked\n\
+                   \n\
+                   worktree C:/work/spike\n\
+                   HEAD 99ff0000000000000000000000000000000000bb\n\
+                   detached\n\
+                   prunable gitdir file points to a location that is gone\n";
+        let trees = parse_worktrees(out);
+        assert_eq!(trees.len(), 3);
+
+        assert!(trees[0].main, "the first record is the repository itself");
+        assert_eq!(trees[0].branch.as_deref(), Some("main"), "refs/heads/ is stripped");
+        assert!(!trees[0].locked);
+
+        assert!(!trees[1].main);
+        assert!(trees[1].locked);
+        assert_eq!(trees[1].path, "C:/work/hotfix");
+
+        assert_eq!(trees[2].branch, None, "a detached worktree is on no branch");
+        assert!(trees[2].prunable);
+
+        // A repository with one tree still reports that one, and the trailing
+        // record is not lost for want of a blank line after it.
+        let single = parse_worktrees("worktree /w/p\nHEAD abc\nbranch refs/heads/main\n");
+        assert_eq!(single.len(), 1);
+        assert!(single[0].main);
+    }
 
     #[test]
     fn a_file_can_be_staged_and_unstaged_at_once() {

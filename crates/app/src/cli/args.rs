@@ -701,6 +701,16 @@ pub enum GitCommand {
     /// Push the current branch. THIS SENDS CODE OFF THIS MACHINE.
     Push(GitPathArgs),
 
+    /// Everything known about one repository: branches, working trees,
+    /// remotes, and how each one authenticates.
+    Show(GitPathArgs),
+
+    /// Mark a repository as somebody else's code, or unmark it.
+    ///
+    /// For a clone you read and will never commit to. It stays backed up; it
+    /// just stops being counted among the folders holding work you could lose.
+    External(GitExternalArgs),
+
     /// Let git read a folder owned by another account.
     ///
     /// Adds it to git's `safe.directory`, which turns off a security check for
@@ -750,6 +760,17 @@ pub struct GitPathArgs {
     /// The repository's root folder. Must be inside a folder a job backs up.
     #[arg(value_name = "PATH")]
     pub path: String,
+}
+
+#[derive(Debug, Args)]
+pub struct GitExternalArgs {
+    /// The repository root folder. Must be inside a folder a job backs up.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// Treat it as your own work again.
+    #[arg(long)]
+    pub off: bool,
 }
 
 #[derive(Debug, Args)]

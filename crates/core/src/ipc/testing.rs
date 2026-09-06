@@ -1095,6 +1095,16 @@ impl Handler for MockHandler {
         Ok(Self::git_did("push", &path))
     }
 
+    async fn git_set_external(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        _external: bool,
+    ) -> Result<GitActionReply> {
+        let _guard = self.enter("git.set_external").await?;
+        Ok(Self::git_did("set_external", &path))
+    }
+
     async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let _guard = self.enter("git.trust").await?;
         Ok(Self::git_did("trust", &path))

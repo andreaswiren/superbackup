@@ -352,7 +352,8 @@ async fn every_command_answers_or_refuses_cleanly() {
         }
     );
     run!("git.push", Request::GitPush { path: outside.clone() });
-    run!("git.trust", Request::GitTrust { path: outside });
+    run!("git.trust", Request::GitTrust { path: outside.clone() });
+    run!("git.set_external", Request::GitSetExternal { path: outside, external: true });
 
     // -- clearing a destination -------------------------------------------
     // The confirmation is deliberately wrong. This command erases every
@@ -1027,6 +1028,7 @@ async fn git_actions_only_reach_folders_a_job_backs_up() {
         },
         Request::GitPush { path: outside.display().to_string() },
         Request::GitTrust { path: outside.display().to_string() },
+        Request::GitSetExternal { path: outside.display().to_string(), external: true },
     ] {
         let err = client.request(request).await.expect_err("refused");
         assert!(
@@ -1037,4 +1039,122 @@ async fn git_actions_only_reach_folders_a_job_backs_up() {
 
     drop(client);
     harness.shutdown().await.expect("clean shutdown");
+}
+
+/// Marking a repository external must actually change what the next scan says
+/// about it.
+///
+/// The setting is stored in one place and applied in another, which is exactly
+/// the shape of change that compiles, unit-tests green, and does nothing. This
+/// drives it through the daemon: scan, mark, scan again, unmark, scan again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn marking_a_repository_external_changes_what_the_next_scan_reports() {
+    let mut repo_path = None;
+    let mut harness = Harness::start("gitexternal", |config, home| {
+        let sources = seed_tree(home, 1);
+        repo_path = Some(sources.join("vendored"));
+        let destination = mirror("copy", home.join("mirror"));
+        config.jobs.push(job("docs", sources, vec![destination.id]));
+        config.destinations.push(destination);
+    })
+    .await;
+    let repo_path = repo_path.expect("a path under the job source");
+
+    // A real repository with an uncommitted change, so it starts out as work
+    // that exists nowhere else.
+    if !make_repo_with_change(&repo_path) {
+        eprintln!("git is not installed; skipping");
+        harness.shutdown().await.expect("clean shutdown");
+        return;
+    }
+
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    macro_rules! scan {
+        () => {{
+            let Reply::GitInventory(reply) = client
+                .request(Request::GitInventory {
+                    job: None,
+                    check_remotes: false,
+                    max_depth: Some(3),
+                })
+                .await
+                .expect("scan")
+            else {
+                panic!("expected an inventory")
+            };
+            *reply.inventory
+        }};
+    }
+
+    let before = scan!();
+    let found = before.repos.iter().find(|r| r.name == "vendored").expect("the repository");
+    assert!(!found.external, "nothing is external until it is said to be");
+    assert!(found.state().only_on_this_disk(), "uncommitted work, so it is at risk");
+    assert_eq!(before.at_risk().len(), 1);
+
+    client
+        .request(Request::GitSetExternal {
+            path: repo_path.display().to_string(),
+            external: true,
+        })
+        .await
+        .expect("marked");
+
+    let after = scan!();
+    let found = after.repos.iter().find(|r| r.name == "vendored").expect("still listed");
+    assert!(found.external, "the marking survived into the next scan");
+    assert_eq!(
+        found.state(),
+        superbackup_core::git::RepoState::External,
+        "and it reads as external rather than as a warning"
+    );
+    assert!(after.at_risk().is_empty(), "it is no longer counted as work that could be lost");
+    // It is still *there*: the marking changes what is said, not what is backed up.
+    assert_eq!(after.repos.len(), before.repos.len());
+
+    client
+        .request(Request::GitSetExternal {
+            path: repo_path.display().to_string(),
+            external: false,
+        })
+        .await
+        .expect("unmarked");
+
+    let restored = scan!();
+    let found = restored.repos.iter().find(|r| r.name == "vendored").expect("still listed");
+    assert!(!found.external, "unmarking works too");
+    assert_eq!(restored.at_risk().len(), 1);
+
+    drop(client);
+    harness.shutdown().await.expect("clean shutdown");
+}
+
+/// A repository with one commit and one uncommitted edit. Returns false when
+/// git is not installed, so the test skips rather than failing.
+fn make_repo_with_change(dir: &std::path::Path) -> bool {
+    if std::process::Command::new("git").arg("--version").output().is_err() {
+        return false;
+    }
+    std::fs::create_dir_all(dir).expect("create");
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    if !run(&["init", "--initial-branch=main"]) {
+        return false;
+    }
+    run(&["config", "user.name", "Test"]);
+    run(&["config", "user.email", "test@example.invalid"]);
+    run(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(dir.join("README.md"), b"hello\n").expect("write");
+    run(&["add", "."]);
+    run(&["commit", "-m", "first"]);
+    std::fs::write(dir.join("README.md"), b"edited\n").expect("write");
+    true
 }

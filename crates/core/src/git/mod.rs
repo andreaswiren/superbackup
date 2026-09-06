@@ -140,6 +140,9 @@ pub enum RepoState {
     PullRecommended,
     /// Committed, pushed, and level with the remote.
     Clean,
+    /// Marked by the user as somebody else's code: a clone they read and never
+    /// commit to. Sorted last and never counted as at risk.
+    External,
 }
 
 impl RepoState {
@@ -171,6 +174,7 @@ impl RepoState {
             Self::NoUpstream => "Never pushed",
             Self::PullRecommended => "Pull recommended",
             Self::Clean => "Up to date",
+            Self::External => "External",
         }
     }
 
@@ -208,6 +212,9 @@ impl RepoState {
                  behind."
             }
             Self::Clean => "Committed and pushed. The remote has everything this folder has.",
+            Self::External => {
+                "Marked as somebody else's code — a clone you read rather than work in. It is                  still backed up; it is just not counted as work you could lose."
+            }
         }
     }
 }
@@ -266,6 +273,21 @@ pub struct GitRepo {
     pub last_commit_author: Option<String>,
     pub remotes: Vec<RepoRemote>,
     pub remote_check: Option<RemoteCheck>,
+    /// Every branch, not only the one checked out. A branch nobody has looked
+    /// at in months is exactly where unpushed work hides.
+    #[serde(default)]
+    pub branches: Vec<parse::Branch>,
+    /// Linked working trees. A repository with three of them has three sets of
+    /// uncommitted changes, and a scan that reported only the main one would
+    /// be quietly wrong about the thing this page is for.
+    #[serde(default)]
+    pub worktrees: Vec<parse::Worktree>,
+    /// Marked by the user as somebody else's: a plain clone they read and
+    /// never commit to. Excluded from the at-risk count, because "you have
+    /// not pushed your changes" is not true of a repository you have no
+    /// changes in and no intention of making any.
+    #[serde(default)]
+    pub external: bool,
     pub error: Option<String>,
     /// git refused this folder over its ownership rather than failing to read
     /// it. Separated from `error` because it has an exact, one-line fix and
@@ -281,6 +303,16 @@ pub struct RepoRemote {
     pub url: String,
     pub host: Option<String>,
     pub forge: Forge,
+    /// The page a person would open. Absent for a remote that is a path.
+    #[serde(default)]
+    pub web_url: Option<String>,
+    /// How this remote authenticates — the mechanism, never the secret.
+    #[serde(default = "auth_none")]
+    pub auth: parse::AuthMethod,
+}
+
+fn auth_none() -> parse::AuthMethod {
+    parse::AuthMethod::None
 }
 
 impl GitRepo {
@@ -299,6 +331,12 @@ impl GitRepo {
     /// outranks being behind the remote, because one of those is a copy that
     /// does not exist anywhere else and the other is a merge waiting to happen.
     pub fn state(&self) -> RepoState {
+        // A repository the user has marked as somebody else's. Whatever its
+        // git state, none of it is work they will lose — so it reports as
+        // external rather than as a warning they would learn to ignore.
+        if self.external {
+            return RepoState::External;
+        }
         if self.untrusted {
             return RepoState::NotTrusted;
         }
@@ -541,6 +579,9 @@ async fn examine(git: &Git, path: &Path, root: &Path, check_remotes: bool) -> Gi
         last_commit_author: None,
         remotes: Vec::new(),
         remote_check: None,
+        branches: Vec::new(),
+        worktrees: Vec::new(),
+        external: false,
         error: None,
         untrusted: false,
     };
@@ -599,16 +640,49 @@ async fn examine(git: &Git, path: &Path, root: &Path, check_remotes: bool) -> Gi
                     let location = parse::parse_remote_url(&r.url);
                     RepoRemote {
                         name: r.name,
-                        url: r.url,
                         forge: location
                             .as_ref()
                             .map(|l| Forge::from_host(&l.host))
                             .unwrap_or(Forge::None),
+                        web_url: location.as_ref().and_then(parse::web_url),
                         host: location.map(|l| l.host),
+                        auth: parse::AuthMethod::None,
+                        url: r.url,
                     }
                 })
                 .collect();
         }
+    }
+
+    // Every branch, not only the checked-out one. Unpushed work hides on a
+    // branch nobody has looked at in months, which is precisely the thing a
+    // list of "the current branch is fine" would never show.
+    if let Ok(out) = git
+        .run(
+            path,
+            &["branch", "--list", "--no-color", parse::BRANCH_FORMAT],
+            LOCAL_TIMEOUT,
+        )
+        .await
+    {
+        if out.ok() {
+            repo.branches = parse::parse_branches(&out.stdout);
+        }
+    }
+
+    // Linked working trees, each with its own uncommitted changes. Reporting
+    // only the main one would be quietly wrong about the whole question.
+    if let Ok(out) = git.run(path, &["worktree", "list", "--porcelain"], LOCAL_TIMEOUT).await {
+        if out.ok() {
+            repo.worktrees = parse::parse_worktrees(&out.stdout);
+        }
+    }
+
+    // How each remote authenticates. Configuration only — never a key, a
+    // token, or a password.
+    for index in 0..repo.remotes.len() {
+        let url = repo.remotes[index].url.clone();
+        repo.remotes[index].auth = auth_method(git, path, &url).await;
     }
 
     if check_remotes {
@@ -799,6 +873,88 @@ pub struct ActionOutcome {
     /// git's own summary, trimmed. Shown rather than paraphrased: a user who
     /// knows git wants the real message, and one who does not is no worse off.
     pub detail: String,
+}
+
+/// Work out how a remote authenticates, from its URL and git's own config.
+///
+/// Reads configuration only — `credential.helper`, `core.sshCommand` — and
+/// never a key, a token or a password. See [`parse::AuthMethod`].
+async fn auth_method(git: &Git, path: &Path, url: &str) -> parse::AuthMethod {
+    let Some(location) = parse::parse_remote_url(url) else {
+        return parse::AuthMethod::Local;
+    };
+    let ssh = url.starts_with("ssh://")
+        || (!url.contains("://") && url.contains(':'))
+        || url.starts_with("git+ssh://");
+
+    if ssh {
+        let user = url
+            .split('@')
+            .next()
+            .filter(|_| url.contains('@'))
+            .map(|u| u.rsplit('/').next().unwrap_or(u).to_string());
+        // `core.sshCommand` is where a per-repository key is usually pinned.
+        // Anything more than that lives in ~/.ssh/config, which only ssh
+        // itself resolves — and saying so is better than guessing.
+        let key_path = match git
+            .run(path, &["config", "--get", "core.sshCommand"], LOCAL_TIMEOUT)
+            .await
+        {
+            Ok(out) if out.ok() => extract_identity_file(out.stdout.trim()),
+            _ => None,
+        };
+        let key_path = match key_path {
+            Some(key) => Some(key),
+            None => default_ssh_key(),
+        };
+        return parse::AuthMethod::SshKey { key_path, user };
+    }
+
+    let _ = location;
+    match git.run(path, &["config", "--get", "credential.helper"], LOCAL_TIMEOUT).await {
+        Ok(out) if out.ok() && !out.stdout.trim().is_empty() => {
+            parse::AuthMethod::CredentialHelper { helper: out.stdout.trim().to_string() }
+        }
+        _ => parse::AuthMethod::NoneConfigured,
+    }
+}
+
+/// Pull `-i <path>` out of a `core.sshCommand`.
+fn extract_identity_file(command: &str) -> Option<String> {
+    let mut parts = command.split_whitespace();
+    while let Some(part) = parts.next() {
+        if part == "-i" {
+            return parts.next().map(|p| p.trim_matches('"').to_string());
+        }
+        if let Some(rest) = part.strip_prefix("-i") {
+            if !rest.is_empty() {
+                return Some(rest.trim_matches('"').to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The key ssh would offer by default, if exactly one obvious candidate
+/// exists.
+///
+/// Reported as the *likely* key and never as a certainty: ssh consults
+/// `~/.ssh/config` and the agent, and neither is read here. With several keys
+/// present there is no single answer, so none is given.
+fn default_ssh_key() -> Option<String> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    let ssh = home.join(".ssh");
+    let candidates: Vec<PathBuf> = ["id_ed25519", "id_ecdsa", "id_rsa"]
+        .iter()
+        .map(|name| ssh.join(name))
+        .filter(|p| p.is_file())
+        .collect();
+    match candidates.len() {
+        1 => Some(candidates[0].display().to_string()),
+        _ => None,
+    }
 }
 
 /// The trailer that says a commit was made from here.
@@ -1032,8 +1188,13 @@ mod tests {
                 url: "git@github.com:me/thing.git".into(),
                 host: Some("github.com".into()),
                 forge: Forge::GitHub,
+                web_url: Some("https://github.com/me/thing".into()),
+                auth: parse::AuthMethod::SshKey { key_path: None, user: Some("git".into()) },
             }],
             remote_check: None,
+            branches: Vec::new(),
+            worktrees: Vec::new(),
+            external: false,
             error: None,
             untrusted: false,
         }
@@ -1113,6 +1274,103 @@ mod tests {
         assert_eq!(stale.state(), RepoState::Unpushed);
     }
 
+    /// The whole point of the marking: a clone you read and never commit to
+    /// stops being reported as work you could lose. It is still backed up —
+    /// the setting changes what is *said* about it, not what is copied.
+    #[test]
+    fn an_external_repository_is_not_counted_as_work_at_risk() {
+        let mut clone = repo("some-dependency");
+        clone.untracked = 3;
+        clone.upstream = None;
+        assert_eq!(clone.state(), RepoState::Uncommitted);
+        assert!(clone.state().only_on_this_disk(), "before marking, it is a warning");
+
+        clone.external = true;
+        assert_eq!(clone.state(), RepoState::External);
+        assert!(!clone.state().only_on_this_disk(), "after marking, it is not");
+        assert!(clone.state().explanation().contains("still backed up"));
+
+        // It outranks even the states that cannot be read, because the user
+        // has said they do not care what is in there.
+        let mut broken = repo("vendored");
+        broken.external = true;
+        broken.untrusted = true;
+        broken.error = Some("dubious ownership".into());
+        assert_eq!(broken.state(), RepoState::External);
+    }
+
+    /// External sorts last, so marking a repository moves it out of the way
+    /// rather than leaving it at the top of a list of problems.
+    #[test]
+    fn external_sorts_below_everything_that_needs_attention() {
+        assert!(RepoState::External > RepoState::Clean);
+        assert!(RepoState::External > RepoState::Uncommitted);
+        assert!(RepoState::Uncommitted < RepoState::PullRecommended);
+    }
+
+    /// The auth report names the mechanism and never the secret. A screen that
+    /// showed a token would be a screen that put one in a screenshot.
+    #[test]
+    fn the_auth_report_names_the_mechanism_and_never_the_secret() {
+        let ssh = parse::AuthMethod::SshKey {
+            key_path: Some("/home/a/.ssh/id_ed25519".into()),
+            user: Some("git".into()),
+        };
+        assert_eq!(ssh.label(), "SSH · id_ed25519", "the file name, not the key");
+        assert!(ssh.detail().contains("never reads the key"));
+
+        let unknown = parse::AuthMethod::SshKey { key_path: None, user: None };
+        assert_eq!(unknown.label(), "SSH");
+        assert!(unknown.detail().contains("cannot be named"), "honest about not knowing");
+
+        let helper = parse::AuthMethod::CredentialHelper { helper: "manager".into() };
+        assert_eq!(helper.label(), "HTTPS · manager");
+        assert!(helper.detail().contains("never sees it"));
+
+        // The state that makes a private HTTPS remote fail under a scan.
+        assert!(parse::AuthMethod::NoneConfigured.detail().contains("fails rather than prompting"));
+    }
+
+    /// `-i <path>` is where a per-repository key is pinned, and it is the one
+    /// place the key can be named without running ssh itself.
+    #[test]
+    fn a_pinned_ssh_key_is_read_out_of_the_configured_command() {
+        assert_eq!(
+            extract_identity_file("ssh -i /home/a/.ssh/work_ed25519"),
+            Some("/home/a/.ssh/work_ed25519".to_string())
+        );
+        assert_eq!(
+            extract_identity_file("ssh -o BatchMode=yes -i \"C:/Users/a/.ssh/k\" -F none"),
+            Some("C:/Users/a/.ssh/k".to_string())
+        );
+        assert_eq!(extract_identity_file("ssh -o BatchMode=yes"), None);
+        assert_eq!(extract_identity_file(""), None);
+    }
+
+    /// A URL a person can click, for the hosts whose web layout is the same
+    /// as their clone path — which is every forge this recognises.
+    #[test]
+    fn a_remote_becomes_a_link_a_person_can_open() {
+        let ssh = parse::parse_remote_url("git@github.com:andreaswiren/superbackup.git")
+            .expect("parsed");
+        assert_eq!(
+            parse::web_url(&ssh).as_deref(),
+            Some("https://github.com/andreaswiren/superbackup"),
+            "an ssh remote still has a web page"
+        );
+
+        let azure =
+            parse::parse_remote_url("https://dev.azure.com/org/project/_git/repo").expect("parsed");
+        assert_eq!(
+            parse::web_url(&azure).as_deref(),
+            Some("https://dev.azure.com/org/project/_git/repo")
+        );
+
+        // A remote with a host but no path names no repository.
+        let bare = parse::RemoteLocation { host: "github.com".into(), path: String::new() };
+        assert_eq!(parse::web_url(&bare), None);
+    }
+
     #[test]
     fn origin_is_the_remote_a_person_means() {
         let mut many = repo("many");
@@ -1123,6 +1381,8 @@ mod tests {
                 url: "https://gitlab.com/them/thing".into(),
                 host: Some("gitlab.com".into()),
                 forge: Forge::GitLab,
+                web_url: Some("https://gitlab.com/them/thing".into()),
+                auth: parse::AuthMethod::NoneConfigured,
             },
         );
         assert_eq!(many.primary_remote().expect("one").name, "origin");

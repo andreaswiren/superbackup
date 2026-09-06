@@ -693,6 +693,26 @@ async fn clear_repository_folder(path: &std::path::Path, dry_run: bool) -> Resul
     .map_err(|e| Error::Config(format!("clearing the folder did not finish: {e}")))?
 }
 
+/// Do two paths name the same folder?
+///
+/// Not a string comparison. `git_target` canonicalises what a client sends,
+/// which on Windows returns the extended-length `\?\C:\...` form; the scan
+/// reports paths built by walking the configured source, which is whatever the
+/// user typed. `C:\w\thing` and `\?\C:\w\thing` are one folder and were not
+/// equal, so a repository marked as external was still reported as at risk on
+/// the very next scan — the setting stored perfectly and did nothing.
+///
+/// Canonicalising both sides also folds away `..`, a trailing separator, and
+/// case on the platforms that ignore it. A path that cannot be canonicalised
+/// (it no longer exists) falls back to a plain comparison, which is the best
+/// available answer rather than a panic.
+fn same_folder(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 /// Which folders a git scan may look in.
 ///
 /// Every source of the named job, or of every job when none is named. The
@@ -1524,7 +1544,20 @@ impl Handler for DaemonHandler {
             max_depth: max_depth.unwrap_or(4).clamp(1, 8) as usize,
             ..Default::default()
         };
-        let inventory = superbackup_core::git::inventory(&roots, &options).await?;
+        let mut inventory = superbackup_core::git::inventory(&roots, &options).await?;
+
+        // The scan reads git and knows nothing about what the user has said.
+        // Marking is applied here, and the list re-sorted, because a
+        // repository that has just been marked external must stop appearing
+        // among the ones holding work at risk — which is the entire effect the
+        // setting is supposed to have.
+        let external = &config.settings.external_git_repos;
+        if !external.is_empty() {
+            for repo in &mut inventory.repos {
+                repo.external = external.iter().any(|p| same_folder(p, &repo.path));
+            }
+            inventory.repos.sort_by_key(|r| (r.state(), r.name.to_lowercase()));
+        }
         Ok(GitInventoryReply { inventory: Box::new(inventory) })
     }
 
@@ -1552,6 +1585,42 @@ impl Handler for DaemonHandler {
     async fn git_push(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let path = self.git_target(&path).await?;
         let outcome = superbackup_core::git::push(&path).await?;
+        self.record_git(&outcome);
+        Ok(GitActionReply { outcome })
+    }
+
+    async fn git_set_external(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        external: bool,
+    ) -> Result<GitActionReply> {
+        let target = self.git_target(&path).await?;
+        let marked = target.clone();
+        self.commit(move |config| {
+            let list = &mut config.settings.external_git_repos;
+            list.retain(|p| !same_folder(p, &marked));
+            if external {
+                list.push(marked.clone());
+            }
+            Ok(())
+        })
+        .await?;
+
+        let outcome = superbackup_core::git::ActionOutcome {
+            path: target.clone(),
+            action: "set_external".into(),
+            ok: true,
+            detail: if external {
+                format!(
+                    "{} is marked as somebody else's code. It is still backed up; it is no \
+                     longer counted as work you could lose.",
+                    target.display()
+                )
+            } else {
+                format!("{} counts as your own work again.", target.display())
+            },
+        };
         self.record_git(&outcome);
         Ok(GitActionReply { outcome })
     }

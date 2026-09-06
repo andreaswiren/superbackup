@@ -1317,6 +1317,12 @@ pub fn git(ctx: &mut Ctx, command: GitCommand) -> CliResult<Outcome> {
         GitCommand::Commit(args) => git_commit(ctx, &daemon, args),
         GitCommand::Push(args) => git_action(ctx, &daemon, Request::GitPush { path: args.path }),
         GitCommand::Trust(args) => git_action(ctx, &daemon, Request::GitTrust { path: args.path }),
+        GitCommand::Show(args) => git_show(ctx, &daemon, args.path),
+        GitCommand::External(args) => git_action(
+            ctx,
+            &daemon,
+            Request::GitSetExternal { path: args.path, external: !args.off },
+        ),
     }
 }
 
@@ -1450,6 +1456,98 @@ fn git_commit(ctx: &mut Ctx, daemon: &Daemon, args: crate::cli::args::GitCommitA
             include_untracked: !args.tracked_only,
         },
     )
+}
+
+/// Everything known about one repository.
+///
+/// The list answers "which of these should I look at"; this answers "what is
+/// going on in this one" — branches that were never pushed, working trees with
+/// their own uncommitted changes, and which credential each remote uses.
+fn git_show(ctx: &mut Ctx, daemon: &Daemon, path: String) -> CliResult<Outcome> {
+    let inventory = *reply!(
+        daemon,
+        Request::GitInventory { job: None, check_remotes: false, max_depth: None },
+        GitInventory
+    )?
+    .inventory;
+
+    let wanted = std::path::absolute(&path).unwrap_or_else(|_| std::path::PathBuf::from(&path));
+    let repo = inventory
+        .repos
+        .iter()
+        .find(|r| r.path == wanted || r.path.ends_with(&path) || r.name == path)
+        .ok_or_else(|| {
+            CliError::new(ErrorCode::Validation, format!("no git repository at {path}"))
+                .with_hint("`superbackup git list` shows the ones that were found.")
+        })?;
+
+    let now = Utc::now();
+    let pad = 16;
+    ctx.ui.heading(&repo.name);
+    ctx.ui.field("Path", repo.path.display().to_string(), pad);
+    ctx.ui.field("State", repo.state().label(), pad);
+    ctx.ui.line(format!("  {}", repo.state().explanation()));
+
+    ctx.ui.blank();
+    ctx.ui.heading("Remotes");
+    if repo.remotes.is_empty() {
+        ctx.ui.line("  none - everything here exists only on this disk");
+    }
+    for remote in &repo.remotes {
+        ctx.ui.field(&remote.name, &remote.url, pad);
+        if let Some(url) = &remote.web_url {
+            ctx.ui.field("", url, pad);
+        }
+        // The mechanism, never the secret.
+        ctx.ui.field("  signs in with", remote.auth.label(), pad);
+    }
+
+    ctx.ui.blank();
+    ctx.ui.heading("Branches");
+    if repo.branches.is_empty() {
+        ctx.ui.line("  none - nothing has been committed here yet");
+    }
+    for branch in &repo.branches {
+        let mut notes = Vec::new();
+        if branch.current {
+            notes.push("checked out".to_string());
+        }
+        if branch.checked_out_elsewhere {
+            notes.push("in another working tree".to_string());
+        }
+        match (&branch.upstream, branch.ahead, branch.behind) {
+            (None, _, _) => notes.push("never pushed".to_string()),
+            (Some(_), 0, 0) => {}
+            (Some(_), a, b) => notes.push(format!("+{a}/-{b}")),
+        }
+        if let Some(at) = branch.last_commit {
+            notes.push(format::relative(at, now));
+        }
+        ctx.ui.line(format!("  {:<40} {}", branch.name, notes.join(" · ")));
+    }
+
+    ctx.ui.blank();
+    ctx.ui.heading("Working trees");
+    for tree in &repo.worktrees {
+        let mut notes = Vec::new();
+        if tree.main {
+            notes.push("main".to_string());
+        }
+        if let Some(branch) = &tree.branch {
+            notes.push(branch.clone());
+        } else {
+            notes.push("detached".to_string());
+        }
+        if tree.locked {
+            notes.push("locked".to_string());
+        }
+        if tree.prunable {
+            notes.push("stale".to_string());
+        }
+        ctx.ui.line(format!("  {:<50} {}", tree.path, notes.join(" · ")));
+    }
+
+    Outcome::data(repo.clone())
 }
 
 fn git_action(ctx: &mut Ctx, daemon: &Daemon, request: Request) -> CliResult<Outcome> {

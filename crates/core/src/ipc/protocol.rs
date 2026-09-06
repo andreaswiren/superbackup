@@ -2011,6 +2011,14 @@ protocol! {
                 path: String = "The repository's root folder, inside a configured job source.",
             }
 
+        "git.set_external" GitSetExternal => git_set_external -> GitAction(GitActionReply)
+            flags [mutating]
+            doc "Mark a repository as somebody else's code — a clone you read and never commit to — or unmark it. An external repository is still backed up; it is simply not counted among the folders holding work you could lose, so 'you have not pushed your changes' stops being said about a checkout you have no changes in. Stored in superbackup's own configuration, never written into the repository. The path must be inside a configured job source."
+            params {
+                path: String = "The repository's root folder, inside a configured job source.",
+                external: bool = "True to mark it as external, false to treat it as your own again.",
+            }
+
         "git.trust" GitTrust => git_trust -> GitAction(GitActionReply)
             flags [mutating]
             doc "Add a repository to git's `safe.directory`, so git will read a folder owned by another account — the state every folder created from an elevated shell on Windows is in. This turns off a security check for that one folder: git refuses such repositories because reading one runs configuration from it. Only ever for a folder the user recognises. The path must be inside a configured job source."

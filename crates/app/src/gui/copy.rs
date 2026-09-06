@@ -1491,6 +1491,29 @@ pub mod git {
         "Let git read this folder. It belongs to another account — usually because it was made from an administrator shell — and git will not touch it until you say it is safe.";
     pub const OPEN: &str = "Open the folder";
 
+    pub const DETAILS: &str = "Show details";
+    pub const BRANCHES: &str = "Branches";
+    pub const WORKTREES: &str = "Working trees";
+    pub const REMOTES: &str = "Remotes";
+    pub const NO_BRANCHES: &str = "No branches yet — nothing has been committed here.";
+    pub const ONE_WORKTREE: &str = "One working tree, which is the usual arrangement.";
+    pub const NO_REMOTES: &str = "No remote, so everything here exists only on this disk.";
+    pub const OPEN_REMOTE: &str = "Open on the web";
+    pub const AUTH: &str = "Signs in with";
+    pub const AUTH_NOTE: &str =
+        "Superbackup reports how a remote is authenticated, never the key, token or password \
+         itself — it does not read them.";
+    pub const CURRENT: &str = "checked out";
+    pub const ELSEWHERE: &str = "in another working tree";
+    pub const NO_UPSTREAM: &str = "never pushed";
+    pub const MAIN_TREE: &str = "main";
+    pub const LOCKED: &str = "locked";
+    pub const PRUNABLE: &str = "stale";
+    pub const MARK_EXTERNAL: &str = "Mark as external";
+    pub const UNMARK_EXTERNAL: &str = "Treat as my own again";
+    pub const EXTERNAL_HINT: &str =
+        "For a repository you cloned to read and will never commit to. It stays backed up; it \
+         just stops being counted among the folders holding work you could lose.";
     pub const COMMIT_TITLE: &str = "Commit everything in this repository";
     pub const COMMIT_MESSAGE: &str = "Message";
     pub const COMMIT_MESSAGE_HINT: &str =

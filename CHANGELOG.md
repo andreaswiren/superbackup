@@ -12,7 +12,34 @@ rather than mangling it.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **The Git section is a repository manager.** Clicking a repository opens
+  everything about it: every branch with its tracking state (and a plain
+  "never pushed" where there is no upstream), every linked working tree,
+  every remote with a link to its page, and how each remote authenticates.
+  Branches are where unpushed work actually hides — one repository on the
+  machine this was written on has two `aw/*` branches that were never pushed,
+  which no list of "the current branch is fine" could ever have shown.
+
+  Also `superbackup git show <PATH>`, which prints the same thing.
+
+- **Mark a repository as External.** For a clone you read and will never
+  commit to. It stays backed up; it stops being counted among the folders
+  holding work you could lose, so "you have not pushed your changes" is no
+  longer said about a checkout you have no changes in. Stored in
+  superbackup's configuration, never written into the repository — writing
+  into a checkout you asked us to leave alone is the one thing the setting
+  says not to do. `superbackup git external <PATH>`, `--off` to undo.
+
+- **Which credential each remote uses.** The *mechanism*, never the secret:
+  `SSH · id_ed25519`, or `HTTPS · manager` naming the credential helper git
+  will ask. A key's path is not secret — it is in your `~/.ssh/config` and in
+  every `ssh -v` line — and it is exactly the thing that is hard to find out
+  when a push starts failing. The key's contents, a token's value and a
+  stored password are never read, displayed, or asked for. Where ssh's own
+  config decides, it says so rather than guessing.
+
 
 ## [0.3.0] - 2026-09-06
 

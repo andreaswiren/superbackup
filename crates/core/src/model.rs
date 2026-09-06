@@ -346,6 +346,14 @@ pub struct Settings {
     pub kopia_path: Option<PathBuf>,
     #[serde(default)]
     pub kopia: KopiaManagement,
+    /// Repository folders the user has marked as somebody else's code: a
+    /// clone they read and never commit to.
+    ///
+    /// Stored as absolute paths in the configuration rather than as a marker
+    /// file inside the repository, because writing into a checkout we were
+    /// asked to leave alone is exactly what this setting says not to do.
+    #[serde(default)]
+    pub external_git_repos: Vec<PathBuf>,
     pub start_at_login: bool,
     pub start_minimised: bool,
     pub run_as_service: bool,
@@ -389,6 +397,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            external_git_repos: Vec::new(),
             kopia_path: None,
             kopia: KopiaManagement::default(),
             start_at_login: true,
