@@ -22,6 +22,9 @@ pub enum Section {
     Jobs,
     Destinations,
     Providers,
+    /// Which backed-up folders are git repositories, and whether their work
+    /// exists anywhere but this disk.
+    Git,
     Restore,
     Activity,
     Settings,
@@ -29,11 +32,12 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
         Section::Dashboard,
         Section::Jobs,
         Section::Destinations,
         Section::Providers,
+        Section::Git,
         Section::Restore,
         Section::Activity,
         Section::Settings,
@@ -46,6 +50,7 @@ impl Section {
             Section::Jobs => copy::jobs::TITLE,
             Section::Destinations => copy::dest::TITLE,
             Section::Providers => copy::prov::TITLE,
+            Section::Git => copy::git::TITLE,
             Section::Restore => copy::restore::TITLE,
             Section::Activity => copy::activity::TITLE,
             Section::Settings => copy::settings::TITLE,
@@ -60,6 +65,7 @@ impl Section {
             Section::Jobs => Icon::Repeat,
             Section::Destinations => Icon::HardDrive,
             Section::Providers => Icon::KeyRound,
+            Section::Git => Icon::GitBranch,
             Section::Restore => Icon::History,
             Section::Activity => Icon::List,
             Section::Settings => Icon::Settings,
@@ -67,16 +73,17 @@ impl Section {
         }
     }
 
-    /// `Ctrl/Cmd + 1…7`. About has no shortcut, matching the spec's table.
+    /// `Ctrl/Cmd + 1…8`. About has no shortcut, matching the spec's table.
     pub fn shortcut(self) -> Option<egui::Key> {
         match self {
             Section::Dashboard => Some(egui::Key::Num1),
             Section::Jobs => Some(egui::Key::Num2),
             Section::Destinations => Some(egui::Key::Num3),
             Section::Providers => Some(egui::Key::Num4),
-            Section::Restore => Some(egui::Key::Num5),
-            Section::Activity => Some(egui::Key::Num6),
-            Section::Settings => Some(egui::Key::Num7),
+            Section::Git => Some(egui::Key::Num5),
+            Section::Restore => Some(egui::Key::Num6),
+            Section::Activity => Some(egui::Key::Num7),
+            Section::Settings => Some(egui::Key::Num8),
             Section::About => None,
         }
     }
@@ -92,6 +99,7 @@ impl Section {
             Section::Jobs => Route::Jobs,
             Section::Destinations => Route::Destinations,
             Section::Providers => Route::Providers,
+            Section::Git => Route::Git,
             Section::Restore => Route::Restore,
             Section::Activity => Route::Activity,
             Section::Settings => Route::Settings(SettingsSection::General),
@@ -157,6 +165,7 @@ pub enum Route {
     Providers,
     ProviderEditor(Uuid),
     NewProvider,
+    Git,
     Restore,
     Activity,
     RunDetail(Uuid),
@@ -179,6 +188,7 @@ impl Route {
                 Section::Destinations
             }
             Route::Providers | Route::ProviderEditor(_) | Route::NewProvider => Section::Providers,
+            Route::Git => Section::Git,
             Route::Restore => Section::Restore,
             Route::Activity | Route::RunDetail(_) => Section::Activity,
             Route::Settings(_) => Section::Settings,
@@ -292,13 +302,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_rail_is_eight_items_in_the_documented_order() {
-        assert_eq!(Section::ALL.len(), 8);
+    fn the_rail_is_nine_items_in_the_documented_order() {
+        assert_eq!(Section::ALL.len(), 9);
         assert_eq!(Section::ALL[0], Section::Dashboard);
-        assert_eq!(Section::ALL[6], Section::Settings);
-        assert_eq!(Section::ALL[7], Section::About);
+        assert_eq!(Section::ALL[7], Section::Settings);
+        assert_eq!(Section::ALL[8], Section::About);
         assert!(Section::Settings.gap_before());
         assert!(Section::About.shortcut().is_none());
+    }
+
+    /// Every rail item is reachable by keyboard except About, and no two
+    /// share a key — an accelerator that opens the wrong page is worse than
+    /// none, and adding a section is exactly when that happens.
+    #[test]
+    fn each_section_has_its_own_accelerator() {
+        let mut seen: Vec<egui::Key> = Vec::new();
+        for section in Section::ALL {
+            let Some(key) = section.shortcut() else {
+                assert_eq!(section, Section::About, "{section:?} has no shortcut");
+                continue;
+            };
+            assert!(!seen.contains(&key), "{section:?} reuses a key");
+            seen.push(key);
+        }
+        assert_eq!(seen.len(), Section::ALL.len() - 1);
+    }
+
+    /// Every section leads somewhere, and the route it leads to reports the
+    /// section it came from. A mismatch leaves the rail highlighting one page
+    /// while another is on screen.
+    #[test]
+    fn every_section_round_trips_through_its_route() {
+        for section in Section::ALL {
+            assert_eq!(section.route().section(), section, "{section:?}");
+            assert!(!section.title().is_empty(), "{section:?}");
+        }
     }
 
     #[test]

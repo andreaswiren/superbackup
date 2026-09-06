@@ -92,6 +92,10 @@ pub use command::{
     cancellation, CancelHandle, CancelToken, CommandOutput, EventSink, KopiaCommand, KopiaEvent,
     RunContext,
 };
+/// Suppressing the console flash is not kopia's concern in particular — every
+/// child process this application spawns needs it. `crate::git` runs `git` the
+/// same way and shares this rather than growing a second copy that could drift.
+pub(crate) use command::harden_child;
 pub use driver::{
     s3_endpoint_host, BlobStats, ConnectionTest, ContentStats, DestinationSecrets, KopiaDriver,
     KopiaResult, RepositoryStatus, SyncOptions, SyncOutcome, SyncTarget, UnsupportedOption,

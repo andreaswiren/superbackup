@@ -86,6 +86,17 @@ impl Default for MockHandler {
 }
 
 impl MockHandler {
+    fn git_did(action: &str, path: &str) -> GitActionReply {
+        GitActionReply {
+            outcome: crate::git::ActionOutcome {
+                path: std::path::PathBuf::from(path),
+                action: action.to_string(),
+                ok: true,
+                detail: format!("the mock did not really {action}"),
+            },
+        }
+    }
+
     /// A handler with an empty configuration and a locked vault.
     pub fn new() -> MockHandler {
         MockHandler::with_capacity(64)
@@ -1029,6 +1040,84 @@ impl Handler for MockHandler {
     async fn set_autostart(&self, _ctx: &RequestContext, enabled: bool) -> Result<ServiceReply> {
         let _guard = self.enter("service.set_autostart").await?;
         Ok(ServiceReply { autostart: enabled, ..Self::service() })
+    }
+
+    async fn git_inventory(
+        &self,
+        _ctx: &RequestContext,
+        _job: Option<String>,
+        check_remotes: bool,
+        _max_depth: Option<u32>,
+    ) -> Result<GitInventoryReply> {
+        let _guard = self.enter("git.inventory").await?;
+        // An empty inventory, not a fabricated one: a client test that asserts
+        // on invented repositories is asserting on the mock.
+        Ok(GitInventoryReply {
+            inventory: Box::new(crate::git::Inventory {
+                roots: Vec::new(),
+                repos: Vec::new(),
+                scanned_at: chrono::Utc::now(),
+                folders_scanned: 0,
+                truncated: false,
+                git_available: true,
+                notes: if check_remotes {
+                    vec!["the mock does not reach any remote".into()]
+                } else {
+                    Vec::new()
+                },
+            }),
+        })
+    }
+
+    async fn git_pull(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
+        let _guard = self.enter("git.pull").await?;
+        Ok(Self::git_did("pull", &path))
+    }
+
+    async fn git_commit(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        message: String,
+        _include_untracked: bool,
+    ) -> Result<GitActionReply> {
+        let _guard = self.enter("git.commit").await?;
+        // The real handler refuses this, so a test that passes an empty
+        // message must not pass here either.
+        if message.trim().is_empty() {
+            return Err(Error::Validation("a commit needs a message".into()));
+        }
+        Ok(Self::git_did("commit", &path))
+    }
+
+    async fn git_push(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
+        let _guard = self.enter("git.push").await?;
+        Ok(Self::git_did("push", &path))
+    }
+
+    async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
+        let _guard = self.enter("git.trust").await?;
+        Ok(Self::git_did("trust", &path))
+    }
+
+    async fn clear_repository(
+        &self,
+        _ctx: &RequestContext,
+        destination: String,
+        confirm: String,
+    ) -> Result<ClearedReply> {
+        let _guard = self.enter("dest.clear_repository").await?;
+        // The mock enforces the confirmation too, so a test that forgets it
+        // fails here rather than passing against a daemon that would refuse.
+        if confirm != destination {
+            return Err(Error::Validation("the confirmation did not match".into()));
+        }
+        Ok(ClearedReply {
+            removed: 0,
+            location: format!("mock://{destination}"),
+            preserved: Vec::new(),
+            blocked: None,
+        })
     }
 
     async fn preview_file(

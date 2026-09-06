@@ -10,6 +10,7 @@ pub mod activity;
 pub mod dashboard;
 pub mod destination_editor;
 pub mod destinations;
+pub mod git;
 pub mod job_editor;
 pub mod jobs;
 pub mod locked;
@@ -30,6 +31,7 @@ pub struct Screens {
     pub destinations: destinations::State,
     pub destination_editor: destination_editor::State,
     pub providers: providers::State,
+    pub git: git::State,
     pub provider_editor: provider_editor::State,
     pub activity: activity::State,
     pub restore: restore::State,
@@ -55,5 +57,6 @@ impl Screens {
             || self.restore.busy()
             || self.settings.busy()
             || self.preview.busy()
+            || self.git.busy()
     }
 }

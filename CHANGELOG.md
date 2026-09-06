@@ -14,6 +14,75 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.3.0] - 2026-09-06
+
+### Added
+
+- **Git inventory.** A new Git section answers the question this whole program
+  exists for: *which of the folders you back up hold work that exists nowhere
+  but this disk?* It finds every git repository under your jobs' source
+  folders and sorts them by how much of their work is only here - uncommitted
+  changes first, then commits that were never pushed, then repositories with no
+  remote at all. A repository that is committed and pushed is already safe on a
+  forge; those sort last and are green.
+
+  Buttons for the obvious next step, on the rows that need them: **Pull**,
+  **Commit** and **Push**. Pull is always `--ff-only` - a branch that has
+  diverged is left alone, because choosing between a merge and a rebase is your
+  decision and not a backup tool's. Push asks first, being the only one of the
+  three that sends code off the machine.
+
+  Also available from the command line: `superbackup git list`, with
+  `--at-risk` to show only what is unprotected, and `git pull`, `git commit`,
+  `git push`.
+
+- **Ask the remote where it actually is.** `ahead 0, behind 0` in `.git` means
+  "in sync as of your last fetch", and a repository last fetched in March will
+  cheerfully report itself up to date all summer. Turning on "Ask each remote
+  where it is" queries each remote directly with `ls-remote`, which is a
+  read-only call: no fetch, no ref update, nothing written into a repository
+  you did not ask us to touch. Off by default, since it is the only part that
+  uses the network.
+
+- **Folders git refuses to read are now fixable.** Anything created from an
+  administrator shell on Windows belongs to `Administrators`, and git will not
+  open it - three of nineteen repositories on the machine this was written on.
+  Those used to be dead rows reading "Unreadable"; they now say why, and offer
+  a **Trust** button that does what git's own error message instructs. The
+  dialog says plainly that this turns off a security check for that one folder,
+  and why the check exists.
+
+- **GitHub, GitLab, Gitea, Forgejo, Azure DevOps and Bitbucket** are
+  recognised from a remote's URL, in every form git accepts - `https://`,
+  `ssh://`, and the `git@host:owner/repo` form that is not a URL at all. A
+  self-hosted host is reported as self-hosted rather than guessed at, because a
+  GitLab and a Gitea at `git.company.com` are indistinguishable from here.
+
+### Changed
+
+- **Bandwidth limits are in Mbit/s everywhere, and the number boxes are number
+  boxes.** Connections are sold in megabits and every speed test reports
+  megabits, so "half of my 100/100 line" should be `50` - the kB/s the limit is
+  stored in is now never shown. The value box was an egui `DragValue`, which
+  silently changed its own value when the pointer was dragged across it;
+  nothing on screen said so, and the number moved when you meant to select the
+  text. It is now a plain field you type into, with the slider beside it for
+  dragging.
+
+- **The About page shows the superbackup logo** rather than the tray's idle
+  status dot, which at 64px was a plain blue circle.
+
+### Fixed
+
+- **Clearing a destination could have deleted your own folders.** The new
+  `dest.clear_repository` matched kopia's blob names by their first letter, so
+  a `src`, `notes`, `music`, `photos` or `projects` folder sitting beside a
+  repository matched too - and the clear deletes directories recursively. It
+  now refuses to run at all unless the folder actually holds a
+  `kopia.repository`, deletes only what matches kopia's real on-disk layout,
+  and reports by name everything it chose to leave behind, including the
+  `_superbackup` folder that carries your machine identities.
+
 ## [0.2.9] - 2026-09-03
 
 ### Fixed

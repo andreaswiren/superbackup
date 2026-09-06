@@ -803,7 +803,7 @@ pub mod job {
     pub const BANDWIDTH_CUSTOM: &str = "Set a limit for this job";
     pub const BANDWIDTH_UPLOAD: &str = "Upload limit";
     pub const BANDWIDTH_DOWNLOAD: &str = "Download limit";
-    pub const BANDWIDTH_UNIT: &str = "kB/s";
+    pub const BANDWIDTH_UNIT: &str = "Mbit/s";
     pub const BANDWIDTH_NO_WINDOW: &str = "The daily window is a global setting, so two jobs can never disagree about it. Set it in Settings › Bandwidth.";
 
     pub const RETENTION_TITLE: &str = "Retention";
@@ -1427,6 +1427,79 @@ pub fn run_stopped_toast(job: &str) -> String {
 // 10. Restore
 // ---------------------------------------------------------------------------
 
+/// The git inventory: which backed-up folders are repositories, and whether
+/// what is in them exists anywhere but this disk.
+pub mod git {
+    pub const TITLE: &str = "Git";
+    pub const SUBTITLE: &str =
+        "Which of the folders you back up are git repositories, and whether their work exists anywhere else.";
+    pub const SCAN: &str = "Scan now";
+    pub const CHECK_REMOTES: &str = "Ask each remote where it is";
+    pub const CHECK_REMOTES_HINT: &str =
+        "Ahead and behind normally come from the last time you fetched, which can be months ago. This asks each remote directly. One network request per repository, and nothing is fetched or changed.";
+    pub const AT_RISK_ONLY: &str = "Only what is at risk";
+    pub const AT_RISK_HINT: &str =
+        "Hide repositories that are committed and pushed. Their work is already safe on the remote; these are the ones your backup is the second copy of.";
+    pub const EMPTY: &str = "No git repositories in the folders you back up";
+    pub const EMPTY_BODY: &str =
+        "Nothing here uses git, or the folders are deeper than the scan looks. Sources come from your jobs.";
+    pub const ALL_SAFE: &str = "Everything is committed and pushed";
+    pub const ALL_SAFE_BODY: &str =
+        "Every repository found has its work on a remote as well as on this disk.";
+    pub const NO_GIT: &str = "git is not installed";
+    pub const NO_GIT_BODY: &str =
+        "Install git from git-scm.com and scan again. Nothing else in superbackup needs it.";
+    pub const NO_SOURCES: &str = "No job has any source folders yet";
+    pub const NO_SOURCES_BODY: &str =
+        "Add a job with the folders you want backed up, and this page will show what is in them.";
+    pub const SCANNING: &str = "Looking for repositories…";
+    pub const SEARCH: &str = "Search repositories";
+    pub const SCAN_FAILED: &str = "The scan could not run";
+
+    pub const COL_REPO: &str = "Repository";
+    pub const COL_STATE: &str = "State";
+    pub const COL_BRANCH: &str = "Branch";
+    pub const COL_CHANGES: &str = "Changes";
+    pub const COL_LAST: &str = "Last commit";
+    pub const COL_HOST: &str = "Host";
+    pub const COL_ACTIONS: &str = "";
+
+    pub const PULL: &str = "Pull";
+    pub const PULL_HINT: &str =
+        "Fast-forward from the remote. Never merges and never rebases: a branch that has diverged is left alone.";
+    pub const COMMIT: &str = "Commit";
+    pub const COMMIT_HINT: &str = "Stage everything here and commit it. Nothing is pushed.";
+    pub const PUSH: &str = "Push";
+    pub const PUSH_HINT: &str = "Send this branch to its remote. This sends code off the machine.";
+    pub const TRUST: &str = "Trust";
+    pub const TRUST_HINT: &str =
+        "Let git read this folder. It belongs to another account — usually because it was made from an administrator shell — and git will not touch it until you say it is safe.";
+    pub const OPEN: &str = "Open the folder";
+
+    pub const COMMIT_TITLE: &str = "Commit everything in this repository";
+    pub const COMMIT_MESSAGE: &str = "Message";
+    pub const COMMIT_MESSAGE_HINT: &str = "What changed, in a line";
+    pub const COMMIT_UNTRACKED: &str = "Include files git has never seen";
+    pub const COMMIT_UNTRACKED_HINT: &str =
+        "New files are where new work usually is. Anything your .gitignore excludes stays excluded either way.";
+    pub const COMMIT_CONFIRM: &str = "Commit";
+
+    pub const PUSH_TITLE: &str = "Send this code to its remote";
+    pub const PUSH_BODY: &str =
+        "Pushing copies these commits to the remote, where anyone with access to it can read them. Check what is in them first if you are not sure.";
+    pub const PUSH_CONFIRM: &str = "Push";
+
+    pub const TRUST_TITLE: &str = "Let git read this folder";
+    pub const TRUST_BODY: &str =
+        "git refuses folders owned by another account, because opening a repository runs settings from inside it — so a repository someone else left here could run programs as you. Marking this one as trusted turns that check off for this folder only. Do it if you recognise the folder as yours.";
+    pub const TRUST_CONFIRM: &str = "Mark as trusted";
+
+    pub const SUMMARY_AT_RISK: &str = "only on this disk";
+    pub const SUMMARY_TOTAL: &str = "repositories";
+    pub const STALE_NOTE: &str =
+        "Ahead and behind come from the last fetch. Turn on \"Ask each remote where it is\" to check for real.";
+}
+
 pub mod restore {
     pub const BROWSE_HINT: &str = "Browse this snapshot";
     pub const QUEUE_CLEAR: &str = "Clear all";
@@ -1629,7 +1702,7 @@ pub mod set {
 
     pub const BW_UPLOAD: &str = "Upload limit";
     pub const BW_DOWNLOAD: &str = "Download limit";
-    pub const BW_UNIT: &str = "kB/s";
+    pub const BW_UNIT: &str = "Mbit/s";
     pub const BW_UNLIMITED: &str = "No limit";
     pub const BW_DOWNLOAD_BODY: &str =
         "Downloads happen during restores and repository maintenance.";
@@ -2171,7 +2244,7 @@ pub mod valid {
     pub const MASTER_MISMATCH: &str = "The two passphrases are different.";
     pub const REPO_PASS_SHORT: &str = "Use at least 12 characters.";
     pub const REPO_PASS_MISMATCH: &str = "The two passphrases are different.";
-    pub const BANDWIDTH: &str = "Choose between 1 and 10,000,000 kB/s.";
+    pub const BANDWIDTH: &str = "Choose between 1 and 10,000 Mbit/s.";
     pub const BW_WINDOW: &str = "The start and end times need to be different.";
     pub const REMOTE_URL: &str = "That does not look like a Git address.";
     pub const SIGNER: &str = "A fingerprint is 16 to 128 characters of hex or base64.";

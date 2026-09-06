@@ -290,22 +290,26 @@ pub fn short_snapshot(id: &str) -> String {
     }
 }
 
-/// `2,000 kB/s up, unlimited down` — the sentence the bandwidth override needs
+/// `16 Mbit/s up, unlimited down` — the sentence the bandwidth override needs
 /// so an override is comparable with the thing it overrides.
+///
+/// Takes the stored kB/s and reports megabits, which is the only unit the
+/// interface shows: it is what connections are sold in and what speed tests
+/// report, so it is the number a user can compare against something they know.
 pub fn kbps(value: Option<u32>) -> String {
     match value {
-        Some(v) => format!("{} kB/s", count(v as u64)),
+        Some(v) => kbps_as_mbit(v),
         None => "unlimited".to_string(),
     }
 }
 
-/// `≈ 16 Mbit/s`, the reassurance line beside a kB/s field.
+/// `16 Mbit/s` from a stored kB/s limit.
 pub fn kbps_as_mbit(kbps_value: u32) -> String {
     let mbit = (kbps_value as f64) * 8.0 / 1000.0;
     if mbit < 10.0 {
-        format!("≈ {mbit:.1} Mbit/s")
+        format!("{mbit:.1} Mbit/s")
     } else {
-        format!("≈ {mbit:.0} Mbit/s")
+        format!("{} Mbit/s", count(mbit.round() as u64))
     }
 }
 
@@ -445,8 +449,11 @@ mod tests {
     #[test]
     fn bandwidth_helpers_say_unlimited_rather_than_zero() {
         assert_eq!(kbps(None), "unlimited");
-        assert_eq!(kbps(Some(2000)), "2,000 kB/s");
-        assert_eq!(kbps_as_mbit(2000), "≈ 16 Mbit/s");
+        // Megabits, never the kB/s the value is stored in.
+        assert_eq!(kbps(Some(2000)), "16 Mbit/s");
+        assert_eq!(kbps_as_mbit(2000), "16 Mbit/s");
+        assert_eq!(kbps_as_mbit(125), "1.0 Mbit/s");
+        assert_eq!(kbps_as_mbit(125_000), "1,000 Mbit/s");
         assert_eq!(minutes_of_day(540), "09:00");
         assert_eq!(minutes_of_day(1_080), "18:00");
     }

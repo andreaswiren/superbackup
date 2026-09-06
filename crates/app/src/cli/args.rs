@@ -150,6 +150,11 @@ pub enum Command {
     #[command(subcommand)]
     Project(ProjectCommand),
 
+    /// See which backed-up folders are git repositories, and whether their
+    /// work exists anywhere but this disk.
+    #[command(subcommand)]
+    Git(GitCommand),
+
     // -- Data -------------------------------------------------------------
     /// List snapshots taken by a job.
     Snapshots(SnapshotsArgs),
@@ -662,6 +667,77 @@ pub struct DestinationMaintainArgs {
 // ---------------------------------------------------------------------------
 // Providers
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Subcommand)]
+pub enum GitCommand {
+    /// List the git repositories under the folders jobs back up.
+    ///
+    /// Reads only. Nothing is fetched and nothing in any repository is
+    /// written.
+    #[command(visible_alias = "ls")]
+    List(GitListArgs),
+
+    /// Fast-forward a repository from its remote.
+    ///
+    /// Never merges and never rebases: a branch that has diverged is refused,
+    /// because choosing between the two is your decision.
+    Pull(GitPathArgs),
+
+    /// Stage and commit everything in a repository. Does not push.
+    Commit(GitCommitArgs),
+
+    /// Push the current branch. THIS SENDS CODE OFF THIS MACHINE.
+    Push(GitPathArgs),
+
+    /// Let git read a folder owned by another account.
+    ///
+    /// Adds it to git's `safe.directory`, which turns off a security check for
+    /// that one folder. Only for folders you recognise.
+    Trust(GitPathArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct GitListArgs {
+    /// Only look under this job's sources. Default: every job's.
+    #[arg(long, value_name = "JOB")]
+    pub job: Option<String>,
+
+    /// Ask each remote where it actually is, instead of trusting the last
+    /// fetch. One network call per repository.
+    #[arg(long)]
+    pub check_remotes: bool,
+
+    /// Only show repositories holding work that exists nowhere else.
+    #[arg(long)]
+    pub at_risk: bool,
+
+    /// How many folder levels below each source to search.
+    #[arg(long, value_name = "N")]
+    pub depth: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct GitPathArgs {
+    /// The repository's root folder. Must be inside a folder a job backs up.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+}
+
+#[derive(Debug, Args)]
+pub struct GitCommitArgs {
+    /// The repository's root folder. Must be inside a folder a job backs up.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// The commit message.
+    #[arg(short, long, value_name = "MESSAGE")]
+    pub message: String,
+
+    /// Leave files git has never seen out of the commit. They are included by
+    /// default, because that is usually where new work is.
+    #[arg(long)]
+    pub tracked_only: bool,
+}
 
 #[derive(Debug, Subcommand)]
 pub enum ProviderCommand {

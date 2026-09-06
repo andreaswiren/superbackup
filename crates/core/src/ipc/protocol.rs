@@ -831,6 +831,75 @@ pub struct ConfigDocumentReply {
     pub size_bytes: u64,
 }
 
+/// The git repositories found under a job's sources.
+///
+/// The whole point is the states, not the list: a developer machine has forty
+/// repositories and the question is which of them hold work that exists
+/// nowhere but this disk. See [`crate::git::RepoState`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitInventoryReply {
+    pub inventory: Box<crate::git::Inventory>,
+}
+
+/// The result of one git action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitActionReply {
+    pub outcome: crate::git::ActionOutcome,
+}
+
+/// What `dest.clear_repository` erased — or why it could not, and what to do.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClearedReply {
+    /// Files or objects removed. Zero is a success: the location was already
+    /// empty, which is exactly the state the caller wanted it in.
+    pub removed: u64,
+    /// The folder or `s3://bucket/prefix` that was cleared, so the answer
+    /// names the place rather than leaving it to be assumed.
+    pub location: String,
+    /// Names left in place because they are not part of the repository — the
+    /// `_superbackup` identity folder, and anything else the user keeps there.
+    /// Reported rather than silently skipped, so "cleared" cannot be mistaken
+    /// for "emptied" by someone who then reuses the location.
+    #[serde(default)]
+    pub preserved: Vec<String>,
+    /// Set when the location could not be emptied. See [`ClearBlocked`].
+    #[serde(default)]
+    pub blocked: Option<ClearBlocked>,
+}
+
+/// The location could not be emptied, and here is the way round it.
+///
+/// A bucket under S3 Object Lock in compliance mode will not let *anyone*
+/// delete an object before its retention expires — not the account root, not
+/// the provider. That is the entire point of the setting, and no amount of
+/// retrying changes it. Reporting "could not delete" and stopping would leave
+/// the user with a destination that can never become a copy and no idea what
+/// to do about it.
+///
+/// So the answer carries the way forward instead: a prefix that is free, and
+/// the exact location to delete by hand if the old data actually has to go.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClearBlocked {
+    /// Why, in words a person can act on.
+    pub reason: String,
+    /// A prefix or folder that is empty and can be used instead.
+    pub suggested_location: String,
+    /// Just the bucket, for a user going to their provider's console.
+    #[serde(default)]
+    pub bucket: Option<String>,
+    /// The exact folder or key prefix the user must remove themselves if they
+    /// need the old data gone. Spelled out in full: the whole reason this
+    /// field exists is that they will be doing it in someone else's console,
+    /// away from anything superbackup can label for them.
+    pub delete_by_hand: String,
+    /// True when moving to the suggested location means the next backup
+    /// uploads everything again. It always does for a copy — a fresh
+    /// repository shares no blobs with the old one — and saying so up front is
+    /// the difference between a considered choice and a surprise bandwidth
+    /// bill.
+    pub reupload_required: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunsReply {
     pub runs: Vec<JobRun>,
@@ -1334,6 +1403,12 @@ replies! {
         "One job."
     "runs" Runs(RunsReply)
         "A list of job runs, newest first."
+    "cleared" Cleared(ClearedReply)
+        "What was erased from a destination, and from where."
+    "git_inventory" GitInventory(GitInventoryReply)
+        "The git repositories under a job's sources, and whether their work exists anywhere else."
+    "git_action" GitAction(GitActionReply)
+        "What a pull, commit, push or trust did."
     "preview" Preview(PreviewReply)
         "One file restored for inspection, and where it was put."
     "config_document" ConfigDocument(ConfigDocumentReply)
@@ -1885,6 +1960,53 @@ protocol! {
             params {
                 destination: String = "Destination id, or a unique prefix of its name.",
                 force: bool = "Delete even though jobs still reference it; those jobs lose the destination.",
+            }
+
+        "dest.clear_repository" DestinationClearRepository => clear_repository -> Cleared(ClearedReply)
+            flags [mutating, needs_unlock, elevated]
+            doc "Erase the repository stored at a destination, so the location can be used again. THIS DESTROYS EVERY BACKUP THERE. Its only intended use is a destination that is to become a copy of another: `repository sync-to` refuses a location holding a different repository, and this is the way to empty it. Bounded to the destination's own folder or key prefix, and nothing outside it. `confirm` must be the destination's exact name, so this cannot be invoked by a caller that has not read what it does."
+            params {
+                destination: String = "Destination id, or a unique prefix of its name.",
+                confirm: String = "The destination's exact name, typed back. Anything else is refused.",
+            }
+
+        "git.inventory" GitInventory => git_inventory -> GitInventory(GitInventoryReply)
+            flags []
+            doc "Find every git repository under a job's source folders and report whether its work exists anywhere but this disk. Reads only: nothing is fetched, nothing in any repository is written. `check_remotes` additionally asks each remote where it is, with `ls-remote`, which is the only way to tell an up-to-date clone from one that has not fetched since March — it makes one network call per repository and is off by default. Omit `job` to cover every enabled job's sources."
+            params {
+                job: Option<String> = "Job id, or a unique prefix of its name. Omit for every job's sources.",
+                check_remotes: bool = "Ask each remote for its current head, instead of trusting the last fetch.",
+                max_depth: Option<u32> = "How many folder levels below each source to search; 4 by default.",
+            }
+
+        "git.pull" GitPull => git_pull -> GitAction(GitActionReply)
+            flags [mutating]
+            doc "Fast-forward a repository from its remote. Never merges and never rebases: on a branch that has diverged it refuses and says so, because choosing between a merge and a rebase is the user's decision and not a backup tool's. The path must be the root of a repository inside one of the configured job sources."
+            params {
+                path: String = "The repository's root folder, inside a configured job source.",
+            }
+
+        "git.commit" GitCommit => git_commit -> GitAction(GitActionReply)
+            flags [mutating]
+            doc "Stage and commit everything in a repository. Committing does not push, so nothing leaves the machine. Files excluded by .gitignore are still excluded. The path must be the root of a repository inside one of the configured job sources."
+            params {
+                path: String = "The repository's root folder, inside a configured job source.",
+                message: String = "The commit message. An empty message is refused.",
+                include_untracked: bool = "Include files git has never seen, which is usually where new work is.",
+            }
+
+        "git.push" GitPush => git_push -> GitAction(GitActionReply)
+            flags [mutating]
+            doc "Push the current branch to its remote, setting an upstream the first time. THIS SENDS CODE OFF THE MACHINE, to whatever remote the repository is configured with. The path must be the root of a repository inside one of the configured job sources."
+            params {
+                path: String = "The repository's root folder, inside a configured job source.",
+            }
+
+        "git.trust" GitTrust => git_trust -> GitAction(GitActionReply)
+            flags [mutating]
+            doc "Add a repository to git's `safe.directory`, so git will read a folder owned by another account — the state every folder created from an elevated shell on Windows is in. This turns off a security check for that one folder: git refuses such repositories because reading one runs configuration from it. Only ever for a folder the user recognises. The path must be inside a configured job source."
+            params {
+                path: String = "The repository's root folder, inside a configured job source.",
             }
 
         "dest.test" DestinationTest => test_destination -> Probe(ProbeReply)

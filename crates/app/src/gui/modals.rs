@@ -43,6 +43,14 @@ pub enum ConfirmAction {
     ResetSettings,
     ResetVault,
     RemoveAllConfiguration,
+    /// Push one repository's branch to its remote. Confirmed rather than
+    /// immediate because it is the one git action that sends code off the
+    /// machine, and it cannot be taken back once the remote has it.
+    GitPush(std::path::PathBuf),
+    /// Add one repository to git's `safe.directory`. Confirmed because it
+    /// turns off a security check, and the user is the only one who can say
+    /// whether they recognise the folder.
+    GitTrust(std::path::PathBuf),
     Nothing,
 }
 
@@ -413,6 +421,22 @@ pub enum Modal {
     NewProject(NewProjectState),
     CronHelp,
     Export,
+    /// Committing needs a message, which no confirmation dialog can take, so
+    /// this is its own modal rather than a `Confirm` with a field bolted on.
+    GitCommit(GitCommitState),
+}
+
+/// What is being committed, and with what message.
+#[derive(Debug, Clone)]
+pub struct GitCommitState {
+    pub path: std::path::PathBuf,
+    /// The repository's folder name, for a title that says which one.
+    pub name: String,
+    pub message: String,
+    pub include_untracked: bool,
+    /// How many files this will touch, so the modal can say what "everything"
+    /// means before it is agreed to.
+    pub changes: u32,
 }
 
 impl Modal {
@@ -631,6 +655,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::NewProject(state) => show_new_project(app, ctx, state),
         Modal::CronHelp => show_cron_help(ctx),
         Modal::Export => show_export(app, ctx),
+        Modal::GitCommit(state) => show_git_commit(app, ctx, state),
     }
 }
 
@@ -877,6 +902,24 @@ fn perform(app: &mut App, confirm: &Confirm) {
         ConfirmAction::ResetVault | ConfirmAction::RemoveAllConfiguration => {
             app.toasts.warning(
                 "This build cannot reset the vault from the window yet. Use the command line.",
+            );
+        }
+        ConfirmAction::GitPush(path) => {
+            let path = path.clone();
+            app.git_act(
+                superbackup_core::ipc::protocol::Request::GitPush {
+                    path: path.display().to_string(),
+                },
+                path,
+            );
+        }
+        ConfirmAction::GitTrust(path) => {
+            let path = path.clone();
+            app.git_act(
+                superbackup_core::ipc::protocol::Request::GitTrust {
+                    path: path.display().to_string(),
+                },
+                path,
             );
         }
         ConfirmAction::Nothing => {}
@@ -1584,6 +1627,88 @@ fn show_cron_help(ctx: &egui::Context) -> Option<Modal> {
         None
     } else {
         Some(Modal::CronHelp)
+    }
+}
+
+/// Commit everything in one repository.
+///
+/// The message is required and the modal will not let it be empty: a commit
+/// with no message is a commit nobody can identify later, and this is exactly
+/// the situation — a folder somebody had not looked at in weeks — where that
+/// matters most.
+fn show_git_commit(
+    app: &mut App,
+    ctx: &egui::Context,
+    mut state: GitCommitState,
+) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let mut commit = false;
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-git-commit",
+        ModalSize::Medium,
+        copy::git::COMMIT_TITLE,
+        Some((Icon::GitBranch, t.accent)),
+        false,
+        |m| {
+            m.body(|ui| {
+                widgets::paragraph(
+                    ui,
+                    format!(
+                        "{} — {} {} to commit.",
+                        state.name,
+                        state.changes,
+                        if state.changes == 1 { "change" } else { "changes" }
+                    ),
+                    Type::Body,
+                    t.text_secondary,
+                );
+                ui.add_space(space::L);
+                widgets::Field::new()
+                    .label(copy::git::COMMIT_MESSAGE)
+                    .placeholder(copy::git::COMMIT_MESSAGE_HINT)
+                    .width(440.0)
+                    .show(ui, &mut state.message);
+                ui.add_space(space::L);
+                widgets::checkbox(
+                    ui,
+                    &mut state.include_untracked,
+                    copy::git::COMMIT_UNTRACKED,
+                    Some(copy::git::COMMIT_UNTRACKED_HINT),
+                    true,
+                );
+            });
+            m.footer(|ui| {
+                if Button::primary(copy::git::COMMIT_CONFIRM)
+                    .enabled(!state.message.trim().is_empty())
+                    .show(ui)
+                    .clicked()
+                {
+                    commit = true;
+                }
+                if Button::secondary(copy::action::CANCEL).show(ui).clicked() {
+                    commit = false;
+                }
+            });
+        },
+    );
+
+    if commit {
+        let path = state.path.clone();
+        app.git_act(
+            superbackup_core::ipc::protocol::Request::GitCommit {
+                path: path.display().to_string(),
+                message: state.message.trim().to_string(),
+                include_untracked: state.include_untracked,
+            },
+            path,
+        );
+        return None;
+    }
+    if close {
+        None
+    } else {
+        Some(Modal::GitCommit(state))
     }
 }
 

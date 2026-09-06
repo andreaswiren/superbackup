@@ -13,9 +13,9 @@ use superbackup_core::model::{
 
 use crate::cli::args::{
     DestinationAddArgs, DestinationCommand, DestinationEditArgs, DestinationMaintainArgs,
-    DestinationRemoveArgs, JobAddArgs, JobCommand, JobEditArgs, JobListArgs, JobPreviewArgs,
-    JobRemoveArgs, JobTemplate, PassphraseMode, ProjectCommand, ProviderAddArgs, ProviderCommand,
-    ProviderEditArgs, ProviderFlavour, ProviderRemoveArgs,
+    DestinationRemoveArgs, GitCommand, GitListArgs, JobAddArgs, JobCommand, JobEditArgs,
+    JobListArgs, JobPreviewArgs, JobRemoveArgs, JobTemplate, PassphraseMode, ProjectCommand,
+    ProviderAddArgs, ProviderCommand, ProviderEditArgs, ProviderFlavour, ProviderRemoveArgs,
 };
 use crate::cli::client::{reply, Daemon, Start};
 use crate::cli::context::Ctx;
@@ -1297,4 +1297,138 @@ pub fn project(_ctx: &mut Ctx, command: ProjectCommand) -> CliResult<Outcome> {
     };
     Err(CliError::unsupported(what, "the running instance exposes no project commands over IPC")
         .with_hint("Group jobs with tags, or edit projects in the graphical interface."))
+}
+
+// ---------------------------------------------------------------------------
+// git
+// ---------------------------------------------------------------------------
+
+/// Which backed-up folders are git repositories, and what state they are in.
+///
+/// The listing leads with the repositories whose work exists nowhere but this
+/// disk, because that is the only part a backup tool has an opinion about. A
+/// repository that is committed and pushed is already safe somewhere else.
+pub fn git(ctx: &mut Ctx, command: GitCommand) -> CliResult<Outcome> {
+    let daemon = Daemon::connect(ctx, Start::Never)?;
+    match command {
+        GitCommand::List(args) => git_list(ctx, &daemon, args),
+        GitCommand::Pull(args) => git_action(ctx, &daemon, Request::GitPull { path: args.path }),
+        GitCommand::Commit(args) => git_action(
+            ctx,
+            &daemon,
+            Request::GitCommit {
+                path: args.path,
+                message: args.message,
+                include_untracked: !args.tracked_only,
+            },
+        ),
+        GitCommand::Push(args) => git_action(ctx, &daemon, Request::GitPush { path: args.path }),
+        GitCommand::Trust(args) => git_action(ctx, &daemon, Request::GitTrust { path: args.path }),
+    }
+}
+
+fn git_list(ctx: &mut Ctx, daemon: &Daemon, args: GitListArgs) -> CliResult<Outcome> {
+    let inventory = *reply!(
+        daemon,
+        Request::GitInventory {
+            job: args.job,
+            check_remotes: args.check_remotes,
+            max_depth: args.depth,
+        },
+        GitInventory
+    )?
+    .inventory;
+
+    let shown: Vec<&superbackup_core::git::GitRepo> = if args.at_risk {
+        inventory.at_risk()
+    } else {
+        inventory.repos.iter().collect()
+    };
+
+    let mut table = Table::new(vec![
+        Column::new("repository").flex(),
+        Column::new("state").flex(),
+        Column::new("branch").flex(),
+        Column::new("changes").right(),
+        Column::new("last commit"),
+        Column::new("host"),
+    ])
+    .empty_note(if args.at_risk {
+        "Nothing is only on this disk: every repository found is committed and pushed."
+    } else {
+        "No git repositories under any job's sources."
+    });
+
+    let now = Utc::now();
+    for repo in &shown {
+        let state = repo.state();
+        let changes = repo.staged + repo.unstaged + repo.untracked + repo.conflicted;
+        let ahead_behind = match (repo.ahead, repo.behind) {
+            (0, 0) => String::new(),
+            (a, 0) => format!(" +{a}"),
+            (0, b) => format!(" -{b}"),
+            (a, b) => format!(" +{a}/-{b}"),
+        };
+        table.push(vec![
+            Cell::new(repo.name.clone()),
+            // Colour carries the same ordering the list is sorted by, so the
+            // rows that need a person are the ones that catch the eye.
+            Cell::coloured(
+                state.label().to_string(),
+                match state {
+                    superbackup_core::git::RepoState::Clean => Colour::Green,
+                    superbackup_core::git::RepoState::PullRecommended => Colour::Blue,
+                    superbackup_core::git::RepoState::Unreadable
+                    | superbackup_core::git::RepoState::NotTrusted
+                    | superbackup_core::git::RepoState::Diverged
+                    | superbackup_core::git::RepoState::Detached => Colour::Red,
+                    _ => Colour::Yellow,
+                },
+            ),
+            Cell::new(format!(
+                "{}{ahead_behind}",
+                repo.branch.clone().unwrap_or_else(|| "—".into())
+            )),
+            Cell::new(if changes == 0 { String::new() } else { changes.to_string() }),
+            Cell::new(format::opt_relative(repo.last_commit_at, now)),
+            Cell::new(
+                repo.primary_remote()
+                    .map(|r| r.forge.label().to_string())
+                    .unwrap_or_else(|| "—".into()),
+            ),
+        ]);
+    }
+    ctx.ui.table(&table);
+
+    for note in &inventory.notes {
+        ctx.ui.warn(note);
+    }
+    let risky = inventory.at_risk().len();
+    if !args.at_risk && risky > 0 {
+        ctx.ui.note(format!(
+            "{risky} of {} hold work that exists nowhere but this disk. `superbackup git list \
+             --at-risk` shows only those.",
+            inventory.repos.len()
+        ));
+    }
+    if !args.check_remotes && !inventory.repos.is_empty() {
+        ctx.ui.note(
+            "Ahead and behind come from the last fetch. Add --check-remotes to ask each remote \
+             where it actually is.",
+        );
+    }
+    Outcome::data(inventory)
+}
+
+fn git_action(ctx: &mut Ctx, daemon: &Daemon, request: Request) -> CliResult<Outcome> {
+    let outcome = reply!(daemon, request, GitAction)?.outcome;
+    if outcome.ok {
+        ctx.ui.announce(&outcome.detail);
+    } else {
+        // Not an error: git ran and declined, and its own words are the most
+        // useful thing to show. The exit code still says it did not work.
+        ctx.ui.warn(&outcome.detail);
+        return Err(CliError::new(ErrorCode::Config, outcome.detail.clone()));
+    }
+    Outcome::data(outcome)
 }

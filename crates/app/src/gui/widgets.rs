@@ -1381,6 +1381,8 @@ pub struct Field<'a> {
     unit: Option<&'a str>,
     enabled: bool,
     char_limit: Option<usize>,
+    announce: Option<&'a str>,
+    id: Option<egui::Id>,
 }
 
 impl<'a> Field<'a> {
@@ -1397,6 +1399,8 @@ impl<'a> Field<'a> {
             unit: None,
             enabled: true,
             char_limit: None,
+            announce: None,
+            id: None,
         }
     }
     pub fn label(mut self, l: &'a str) -> Self {
@@ -1443,6 +1447,22 @@ impl<'a> Field<'a> {
         self.char_limit = Some(n);
         self
     }
+    /// The name a screen reader reads, for a field whose label is drawn by the
+    /// caller — beside it in a row, say — rather than above it by `Field`.
+    /// Without this such a field announces itself as an unnamed text box.
+    pub fn announce(mut self, name: &'a str) -> Self {
+        self.announce = Some(name);
+        self
+    }
+
+    /// Show the field under a caller-chosen id, so the caller can ask egui
+    /// whether it currently has focus. A field whose text is derived from
+    /// something else — a number held as a `u32` — has to know that, or it
+    /// overwrites what is being typed on the very next frame.
+    pub fn show_with_id(mut self, ui: &mut Ui, id: egui::Id, value: &mut String) -> Response {
+        self.id = Some(id);
+        self.show(ui, value)
+    }
 
     pub fn show(self, ui: &mut Ui, value: &mut String) -> Response {
         let t = theme::tokens(ui.ctx());
@@ -1487,6 +1507,9 @@ impl<'a> Field<'a> {
             }
             if let Some(n) = self.char_limit {
                 edit = edit.char_limit(n);
+            }
+            if let Some(id) = self.id {
+                edit = edit.id(id);
             }
 
             // Both the widget's own response rect and the rect its frame was
@@ -1584,7 +1607,7 @@ impl<'a> Field<'a> {
 
             // The error is announced on the field itself, so a screen reader
             // hears it while focused (§8.2).
-            let label = self.label.unwrap_or("");
+            let label = self.announce.or(self.label).unwrap_or("");
             let announce = match self.error {
                 Some(e) => format!("{label}. {e}"),
                 None => label.to_string(),
@@ -1671,15 +1694,33 @@ pub fn passphrase_field(
     response.expect("the vertical layout always runs")
 }
 
-/// A numeric field. egui has no spinner and no input mask (L11), so this is a
-/// `DragValue` with the unit drawn beside it and the range clamped.
-/// One bandwidth limit: checkbox, value, unit, Mbit readout, and a notched
-/// slider — laid out on a fixed label column so upload and download line up.
+/// One bandwidth limit: checkbox, a Mbit/s box, and a notched slider — laid
+/// out on a fixed label column so upload and download line up.
 ///
-/// The number box and the slider edit the same value in different units. The
-/// box is authoritative: typing a value leaves it exactly as typed, and only a
-/// drag snaps to a 10 Mbit notch. Rounding what someone deliberately typed is
-/// the behaviour that makes a control feel like it is arguing.
+/// **Megabits per second everywhere.** The value is stored as kB/s, because
+/// that is what kopia's `--max-upload-speed` takes, but that unit is never
+/// shown: connections are sold in Mbit/s, every speed test reports Mbit/s, and
+/// a user who wants "half of my 100/100 line" should be able to type `50`. The
+/// conversion is this control's job, not theirs.
+///
+/// The box and the slider edit the same number in the same unit. The box is
+/// authoritative: typing 37 leaves 37, and only the slider snaps to a 10 Mbit
+/// notch. Rounding what somebody deliberately typed is the behaviour that
+/// makes a control feel like it is arguing.
+/// kB/s -> Mbit/s. 1 Mbit/s is 125 kB/s.
+///
+/// Rounded to a whole Mbit and never to zero: a limit read back as `0` would
+/// say "no bandwidth" when it means "less than one megabit", and the checkbox
+/// is what turns a limit off.
+pub fn kbps_to_mbit(kbps: u32) -> u32 {
+    (kbps / 125).max(1)
+}
+
+/// Mbit/s -> kB/s, the unit the limit is stored and passed to kopia in.
+pub fn mbit_to_kbps(mbit: u32) -> u32 {
+    mbit.saturating_mul(125).max(125)
+}
+
 pub fn bandwidth_control(ui: &mut Ui, id: &str, label: &str, value: &mut Option<u32>) -> bool {
     const LABEL_W: f32 = 150.0;
     let t = theme::tokens(ui.ctx());
@@ -1691,7 +1732,7 @@ pub fn bandwidth_control(ui: &mut Ui, id: &str, label: &str, value: &mut Option<
         // width so everything after it starts at the same x on every row.
         let before_x = ui.cursor().left();
         if checkbox(ui, &mut on, label, None, true).clicked() {
-            *value = if on { Some(2000) } else { None };
+            *value = if on { Some(mbit_to_kbps(50)) } else { None };
             changed = true;
         }
         let used = ui.cursor().left() - before_x;
@@ -1700,13 +1741,16 @@ pub fn bandwidth_control(ui: &mut Ui, id: &str, label: &str, value: &mut Option<
         }
 
         if let Some(v) = value.as_mut() {
-            let before = *v;
-            number(ui, v, 1..=10_000_000, super::copy::set::BW_UNIT, true, label);
-            if *v != before {
+            // Edited in Mbit/s and converted back, so the round trip is
+            // exact for anything the box can hold and the stored kB/s never
+            // surfaces.
+            let mut mbit = kbps_to_mbit(*v);
+            number(ui, &mut mbit, 1..=10_000, super::copy::set::BW_UNIT, true, label);
+            let as_kbps = mbit_to_kbps(mbit);
+            if as_kbps != *v {
+                *v = as_kbps;
                 changed = true;
             }
-            ui.add_space(space::M);
-            text(ui, super::format::kbps_as_mbit(*v), Type::Small, t.text_muted);
         } else {
             text(ui, super::copy::set::BW_UNLIMITED, Type::Small, t.text_muted);
         }
@@ -1724,6 +1768,59 @@ pub fn bandwidth_control(ui: &mut Ui, id: &str, label: &str, value: &mut Option<
         });
     }
     changed
+}
+
+/// The application's own mark, at any size.
+///
+/// The About page used to draw `health_mark(Health::Idle)` here — the status
+/// dot from the tray, which at 64px is a plain blue circle. It is the one
+/// screen whose entire job is to say what this program is, and it was showing
+/// a shape that belongs to something else. This is the same artwork the window
+/// icon, the taskbar and the installer use, so the application looks like one
+/// product rather than three.
+///
+/// Decoded once and kept as a texture in egui's memory: the About page is
+/// rebuilt every frame, and decoding a 256px PNG sixty times a second to draw
+/// one logo is work nobody asked for.
+pub fn app_logo(ui: &mut Ui, size: f32) -> Response {
+    const PNG: &[u8] = include_bytes!("../../../../assets/icons/png/superbackup-256.png");
+    let key = egui::Id::new("superbackup-app-logo");
+
+    let cached: Option<egui::TextureHandle> = ui.ctx().data_mut(|d| d.get_temp(key));
+    let texture = match cached {
+        Some(handle) => Some(handle),
+        None => image::load_from_memory(PNG).ok().map(|decoded| {
+            let rgba = decoded.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            let image =
+                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw());
+            let handle =
+                ui.ctx().load_texture("superbackup-app-logo", image, egui::TextureOptions::LINEAR);
+            ui.ctx().data_mut(|d| d.insert_temp(key, handle.clone()));
+            handle
+        }),
+    };
+
+    match texture {
+        Some(handle) => {
+            ui.add(egui::Image::new(&handle).fit_to_exact_size(Vec2::splat(size)))
+        }
+        // A PNG that will not decode is not a reason to leave a hole in the
+        // page; the accent mark still reads as "this application".
+        None => {
+            let t = theme::tokens(ui.ctx());
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+            super::icons::health_mark(
+                ui.painter(),
+                rect,
+                superbackup_core::state::Health::Idle,
+                t.accent,
+                None,
+                0.0,
+            );
+            response
+        }
+    }
 }
 
 /// A filled line graph of recent transfer rates.
@@ -1921,6 +2018,21 @@ fn mbit_slider_inner(ui: &mut Ui, kbps: &mut u32) -> bool {
     changed
 }
 
+/// A numeric field: a box you type into, with the unit drawn beside it.
+///
+/// This used to be an egui `DragValue`, which changes its value when the
+/// pointer is dragged *across the box*. Nothing on screen says so, so the
+/// number moved when someone meant to select the text in it — a control that
+/// silently edits itself while you are trying to read it. Where a value wants
+/// dragging there is a real slider next to the box ([`mbit_slider`]); the box
+/// itself now does one thing, which is take what is typed.
+///
+/// The text being edited lives in egui's memory rather than in the caller's
+/// `u32`, because a half-typed number is not a number: clearing the box to
+/// retype it passes through `""`, and `"0"` on the way to `"0…"`. Writing
+/// those back would fight the typist. The buffer is authoritative while the
+/// field has focus and is re-synced from `value` the moment it loses focus, so
+/// what is left behind is always the clamped value the caller holds.
 pub fn number(
     ui: &mut Ui,
     value: &mut u32,
@@ -1930,31 +2042,64 @@ pub fn number(
     label: &str,
 ) -> Response {
     let t = theme::tokens(ui.ctx());
+    // Wide enough for the largest value the range allows, so the digits never
+    // scroll out of a box that had room for them.
+    let digits = range.end().to_string().len() as f32;
+    let width = (34.0 + digits * 9.0).clamp(56.0, 130.0);
+
+    let id = ui.auto_id_with(("number", label));
+    let mut buffer: String =
+        ui.data_mut(|d| d.get_temp(id)).unwrap_or_else(|| (*value).to_string());
+
     let mut response = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = space::M;
-        let r = ui.add_enabled(
-            enabled,
-            egui::DragValue::new(value).range(range).speed(1.0).clamp_existing_to_range(true),
-        );
-        ui.painter().rect_stroke(
-            r.rect,
-            radius::CONTROL,
-            Stroke::new(1.0_f32, if enabled { t.border_control } else { t.border_subtle }),
-            StrokeKind::Inside,
-        );
+        let focused = ui.memory(|m| m.has_focus(id));
+        if !focused {
+            // Not being edited: the caller's value wins, including any clamp
+            // it applied since the last frame.
+            buffer = (*value).to_string();
+        }
+
+        let r = Field::new()
+            .width(width)
+            .enabled(enabled)
+            .announce(label)
+            .show_with_id(ui, id, &mut buffer);
+
+        if r.changed() {
+            // Digits only. Rejecting the character is quieter than accepting
+            // it and then showing an error about it.
+            buffer.retain(|c| c.is_ascii_digit());
+            // A partial entry — empty, or still being extended — leaves the
+            // caller's value alone until it parses inside the range.
+            if let Ok(parsed) = buffer.parse::<u32>() {
+                if range.contains(&parsed) {
+                    *value = parsed;
+                }
+            }
+        }
+        if r.lost_focus() {
+            // Whatever was left in the box is now settled: an out-of-range or
+            // unfinished entry snaps back to the value actually held.
+            let settled = buffer.parse::<u32>().unwrap_or(*value).clamp(*range.start(), *range.end());
+            *value = settled;
+            buffer = settled.to_string();
+        }
+
         if !unit.is_empty() {
             text(ui, unit, Type::Small, t.text_muted);
         }
         let v = *value;
         r.widget_info(|| {
             let mut info =
-                WidgetInfo::labeled(WidgetType::DragValue, enabled, format!("{label}, {v} {unit}"));
+                WidgetInfo::labeled(WidgetType::TextEdit, enabled, format!("{label}, {v} {unit}"));
             info.value = Some(v as f64);
             info
         });
         response = Some(r);
     });
+    ui.data_mut(|d| d.insert_temp(id, buffer));
     response.expect("the horizontal layout always runs")
 }
 
@@ -2697,6 +2842,21 @@ pub fn menu_item_danger(ui: &mut Ui, label: &str, enabled: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    /// The interface shows megabits and stores kilobytes. Anything typed into
+    /// the box has to survive the round trip, or a limit set to 50 reopens as
+    /// 49 and drifts down every time the page is visited.
+    #[test]
+    fn a_bandwidth_limit_typed_in_megabits_comes_back_unchanged() {
+        for mbit in [1u32, 7, 10, 37, 50, 100, 250, 1000, 10_000] {
+            assert_eq!(kbps_to_mbit(mbit_to_kbps(mbit)), mbit, "{mbit} Mbit/s did not survive");
+        }
+        // 1 Mbit/s is 125 kB/s, and a limit never reads back as zero.
+        assert_eq!(mbit_to_kbps(1), 125);
+        assert_eq!(mbit_to_kbps(0), 125);
+        assert_eq!(kbps_to_mbit(0), 1);
+        assert_eq!(kbps_to_mbit(124), 1);
+    }
     use super::*;
 
     #[test]

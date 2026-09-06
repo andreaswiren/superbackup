@@ -330,6 +330,44 @@ async fn every_command_answers_or_refuses_cleanly() {
         }
     );
 
+    // -- git ---------------------------------------------------------------
+    // The harness's job has a real source tree, so the scan runs for real and
+    // simply finds no repositories in it.
+    run!(
+        "git.inventory",
+        Request::GitInventory { job: None, check_remotes: false, max_depth: Some(2) }
+    );
+    // Every action is asserted to *refuse* a path outside the configured
+    // sources. That refusal is the security boundary — see `git_target` — so
+    // a test that only exercised the success path would be testing the wrong
+    // half of the command.
+    let outside = home_outside_every_source();
+    run!("git.pull", Request::GitPull { path: outside.clone() });
+    run!(
+        "git.commit",
+        Request::GitCommit {
+            path: outside.clone(),
+            message: "should never happen".into(),
+            include_untracked: true,
+        }
+    );
+    run!("git.push", Request::GitPush { path: outside.clone() });
+    run!("git.trust", Request::GitTrust { path: outside });
+
+    // -- clearing a destination -------------------------------------------
+    // The confirmation is deliberately wrong. This command erases every
+    // backup at a destination, and the property worth asserting here is that
+    // it refuses without the exact name rather than that it can delete — the
+    // deleting half has its own test, where the wreckage is a temporary
+    // directory and not this harness's own mirror.
+    run!(
+        "dest.clear_repository",
+        Request::DestinationClearRepository {
+            destination: mirror_id.to_string(),
+            confirm: "not-the-name".into(),
+        }
+    );
+
     // -- applications menu ------------------------------------------------
     // Adding and then removing, so the test leaves the real Start menu (or
     // launcher) exactly as it found it.
@@ -912,4 +950,90 @@ async fn a_wrong_secret_key_is_a_credential_failure_not_a_missing_repository() {
     assert!(!detail.contains("wrong-secret"), "{detail}");
 
     let _ = served.await;
+}
+
+/// A folder that certainly exists and is certainly not a job source.
+fn home_outside_every_source() -> String {
+    std::env::temp_dir().display().to_string()
+}
+
+/// The git actions are confined to folders the configuration already names.
+///
+/// This is the security boundary described on `DaemonHandler::git_target`.
+/// Running `git` in a folder executes configuration from the repository there,
+/// and the service instance of the daemon runs as SYSTEM — so a path a caller
+/// could choose freely would be a way to get code running as SYSTEM by leaving
+/// a repository somewhere and asking us to look at it.
+///
+/// Asserted by the *shape of the refusal*, not merely by the fact of one: a
+/// path outside every source must be turned away by the confinement check,
+/// while a path inside one must reach git and be turned away by git. If both
+/// produced the same message this test would pass with the boundary removed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn git_actions_only_reach_folders_a_job_backs_up() {
+    let mut inside = None;
+    let mut harness = Harness::start("gitguard", |config, home| {
+        let sources = seed_tree(home, 1);
+        inside = Some(sources.join("nested"));
+        let destination = mirror("copy", home.join("mirror"));
+        config.jobs.push(job("docs", sources, vec![destination.id]));
+        config.destinations.push(destination);
+    })
+    .await;
+    let inside = inside.expect("a source folder");
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    // Outside: refused before git is ever run.
+    let outside = std::env::temp_dir();
+    let err = client
+        .request(Request::GitPull { path: outside.display().to_string() })
+        .await
+        .expect_err("a path outside every source is refused");
+    let text = err.to_string();
+    assert!(
+        text.contains("not inside any folder a job backs up"),
+        "the refusal must be the confinement check, not git's: {text}"
+    );
+
+    // Inside, but not a repository: the confinement check passed, and git is
+    // what turned it down. A different message, from a different layer.
+    let err = client
+        .request(Request::GitPull { path: inside.display().to_string() })
+        .await
+        .expect_err("not a repository");
+    let text = err.to_string();
+    assert!(
+        text.contains("not a git repository") || text.contains("git is not installed"),
+        "a source folder must reach git: {text}"
+    );
+
+    // A folder that does not exist at all is refused too, rather than
+    // canonicalising to something surprising.
+    let err = client
+        .request(Request::GitPush { path: outside.join("no-such-folder-here").display().to_string() })
+        .await
+        .expect_err("missing folder");
+    assert!(!err.to_string().is_empty());
+
+    // And every action shares the boundary — one of them opting out would be
+    // the whole hole.
+    for request in [
+        Request::GitCommit {
+            path: outside.display().to_string(),
+            message: "never".into(),
+            include_untracked: true,
+        },
+        Request::GitPush { path: outside.display().to_string() },
+        Request::GitTrust { path: outside.display().to_string() },
+    ] {
+        let err = client.request(request).await.expect_err("refused");
+        assert!(
+            err.to_string().contains("not inside any folder a job backs up"),
+            "{err}"
+        );
+    }
+
+    drop(client);
+    harness.shutdown().await.expect("clean shutdown");
 }

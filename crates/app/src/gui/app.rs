@@ -421,6 +421,24 @@ impl App {
                 self.screens.destination_editor.repository_done(repo.clone());
                 self.ask(Intent::Destinations, Request::DestinationList {});
             }
+            (Intent::GitInventory, Reply::GitInventory(reply)) => {
+                self.screens.git.arrived((*reply.inventory).clone());
+            }
+            (Intent::GitAction, Reply::GitAction(reply)) => {
+                self.screens.git.action_finished();
+                let outcome = &reply.outcome;
+                if outcome.ok {
+                    self.toasts.success(outcome.detail.clone());
+                } else {
+                    // git ran and declined. Its own words, not a paraphrase:
+                    // the user is going to have to act on this in a terminal,
+                    // and a rewritten message is one they cannot search for.
+                    self.toasts.warning(outcome.detail.clone());
+                }
+                // The row that was acted on now says something else, and a
+                // stale one is worse than a moment's wait.
+                self.scan_git();
+            }
             (Intent::Snapshots(id), Reply::Snapshots(list)) => {
                 self.screens.restore.snapshots_arrived(*id, list.snapshots.clone());
             }
@@ -505,6 +523,14 @@ impl App {
             E::JobRunning => self.toasts.warning(copy::err::JOB_RUNNING),
             E::JobCancelled => {}
             _ => match intent {
+                // The git screen shows a failed scan in place, because the
+                // whole page is the scan: a toast over an empty table would
+                // leave the user looking at a list that says nothing is here.
+                Intent::GitInventory => self.screens.git.scan_failed(payload.message),
+                Intent::GitAction => {
+                    self.screens.git.action_finished();
+                    self.toasts.warning(payload.message);
+                }
                 // Errors that belong to a screen are rendered by that screen.
                 Intent::TestProvider(id) => {
                     let name = self.data.provider_name(&id);
@@ -1517,6 +1543,7 @@ impl App {
             Route::Providers => self.show_providers(ui),
             Route::ProviderEditor(id) => self.show_provider_editor(ui, Some(id)),
             Route::NewProvider => self.show_provider_editor(ui, None),
+            Route::Git => self.show_git(ui),
             Route::Restore => self.show_restore(ui),
             Route::Activity => self.show_activity(ui),
             Route::RunDetail(id) => self.show_run_detail(ui, id),
@@ -1533,6 +1560,7 @@ impl App {
             Route::JobEditor(id) => self.job_editor_actions(ui, id),
             Route::Destinations => self.destinations_actions(ui),
             Route::Providers => self.providers_actions(ui),
+            Route::Git => self.git_actions(ui),
             Route::Activity => self.activity_actions(ui),
             Route::Restore => self.restore_actions(ui),
             _ => {}

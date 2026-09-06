@@ -380,16 +380,25 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.add_space(28.0);
                         ui.vertical(|ui| {
-                            let mut upload = bandwidth.upload_kbps.unwrap_or(2000);
-                            widgets::number(
+                            // The shared control, so a limit is set the same
+                            // way here as in Settings and on a job. This screen
+                            // also only offered upload, which is half a
+                            // bandwidth setting: a restore from an offsite
+                            // destination is a download, and it is the one that
+                            // saturates a line at an inconvenient moment.
+                            widgets::bandwidth_control(
                                 ui,
-                                &mut upload,
-                                1..=10_000_000,
-                                copy::job::BANDWIDTH_UNIT,
-                                true,
+                                "dest-bw-up",
                                 copy::job::BANDWIDTH_UPLOAD,
+                                &mut bandwidth.upload_kbps,
                             );
-                            bandwidth.upload_kbps = Some(upload);
+                            ui.add_space(space::L);
+                            widgets::bandwidth_control(
+                                ui,
+                                "dest-bw-down",
+                                copy::job::BANDWIDTH_DOWNLOAD,
+                                &mut bandwidth.download_kbps,
+                            );
                         });
                     });
                 }

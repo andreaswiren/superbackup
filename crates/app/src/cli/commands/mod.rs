@@ -39,6 +39,7 @@ pub fn dispatch(ctx: &mut Ctx, command: Command) -> CliResult<Outcome> {
         Command::Destination(sub) => objects::destination(ctx, sub),
         Command::Provider(sub) => objects::provider(ctx, sub),
         Command::Project(sub) => objects::project(ctx, sub),
+        Command::Git(sub) => objects::git(ctx, sub),
 
         Command::Snapshots(args) => data::snapshots(ctx, args),
         Command::Restore(args) => data::restore(ctx, args),

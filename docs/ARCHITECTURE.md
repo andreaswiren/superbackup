@@ -150,6 +150,45 @@ module directly. That keeps the scheduling logic testable against a mock with
 no subprocess in sight, and it is why the scheduler's tests can prove DST and
 catch-up behaviour deterministically.
 
+### `git` — what is only on this disk
+
+A backup of a source tree that is committed and pushed is a convenience; a
+backup of one with uncommitted work is the only other copy. This module tells
+those apart, across every repository under a job's sources, and that is the
+only question it tries to answer.
+
+Three deliberate choices:
+
+**It shells out to `git`, unlike `remote`.** The config-sync module goes
+straight to the GitHub API precisely so it never hands a token to `git`. Here
+the reasoning inverts: these are the *user's* repositories read with the
+*user's* credentials — their SSH agent, their credential helper, their
+`insteadOf` rewrites — and we carry no secret of our own into the call.
+Reimplementing enough of git to read a working tree, and then every
+authentication path a developer machine actually uses, would produce a worse
+tool that agreed with `git status` most of the time.
+
+**Nothing may hang, and nothing may flash.** Git will block forever asking for
+a password on a terminal that does not exist. Every invocation carries a
+deadline and `GIT_TERMINAL_PROMPT=0` plus the credential managers' own
+non-interactive switches, and shares the kopia driver's `CREATE_NO_WINDOW` — a
+scan of forty repositories would otherwise pop forty console windows.
+
+**The remote is asked, never fetched.** `ahead/behind` in `.git` is only as
+fresh as the last fetch, so a tree last fetched in March reports itself up to
+date all summer. `ls-remote` gets the remote's head without writing anything
+into a repository the user did not ask us to modify; ancestry is then worked
+out from objects already in the clone, and "we do not have that commit" is
+itself a useful answer.
+
+The path a client names is confined to the folders the stored configuration
+already lists as job sources. Running `git` in a folder *executes*
+configuration from the repository there — `core.fsmonitor` names a program git
+will run — and the service daemon is SYSTEM, so an unconstrained path would be
+a way to get code running as SYSTEM by leaving a repository where a job looks.
+`DaemonHandler::git_target` is that boundary, and it canonicalises before
+comparing so a symlink cannot step over it.
+
 ### `ipc` — the seam
 
 Newline-delimited JSON over a Windows named pipe or a Unix domain socket. Chosen

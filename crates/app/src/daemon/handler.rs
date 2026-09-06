@@ -543,6 +543,178 @@ fn looks_executable(name: &str) -> bool {
         .is_some_and(|ext| RUNNABLE.contains(&ext.as_str()))
 }
 
+/// A destination's location as one line: a path, or `s3://bucket/prefix`.
+fn gui_location(destination: &Destination) -> String {
+    use superbackup_core::model::DestinationKind as K;
+    match &destination.kind {
+        K::LocalRepository { path } | K::OneDrive { path, .. } | K::LocalMirror { path } => {
+            path.display().to_string()
+        }
+        K::S3 { bucket, prefix, .. } => format!("s3://{bucket}/{prefix}"),
+    }
+}
+
+/// A sibling prefix that is almost certainly free.
+///
+/// Dated rather than numbered: `-2` collides the second time somebody does
+/// this, and a date says *when* the move happened, which is the thing a person
+/// staring at two prefixes in a console a year later actually wants to know.
+fn suggest_free_prefix(prefix: &str) -> String {
+    let stem = prefix.trim_end_matches('/');
+    format!("{stem}-{}/", Utc::now().format("%Y%m%d"))
+}
+
+/// Build the "could not empty it, do this instead" answer.
+///
+/// The user is going to act on this in someone else's console — the StorJ or
+/// AWS web UI — where nothing is labelled for them, so the location to delete
+/// is spelled out in full rather than described.
+fn blocked_with_alternative(
+    reason: &str,
+    bucket: Option<String>,
+    delete_by_hand: &str,
+    suggested: &str,
+) -> ClearBlocked {
+    ClearBlocked {
+        reason: format!(
+            "The existing backups could not be deleted: {reason} A bucket with Object Lock or a \
+             retention policy refuses deletes until retention expires, for every user including \
+             the account owner, which is what the setting is for."
+        ),
+        suggested_location: suggested.to_string(),
+        bucket,
+        delete_by_hand: delete_by_hand.to_string(),
+        // Always. A copy is a fresh repository sharing no blobs with the old
+        // one, so the first run after a move sends everything again.
+        reupload_required: true,
+    }
+}
+
+/// Does this directory entry belong to a kopia repository?
+///
+/// Taken from what a repository on disk actually looks like rather than from
+/// the documentation:
+///
+/// ```text
+/// .shards              {"default":[3,3],"maxNonShardedLength":20}
+/// kopia.repository.f   kopia.blobcfg.f   kopia.maintenance.f
+/// p00/ p01/ … q01/ … s3f/ … xn0/ xe1/ _lo/     sharded blobs, 3 characters
+/// xe1.f  xw1788377916.f                        short blob ids, stored whole
+/// _superbackup/                                *ours*, not kopia's
+/// ```
+///
+/// So: the named files, three-character shard directories under a blob-id
+/// prefix, and `.f` files under the same prefixes. Everything else stays —
+/// including `_superbackup/`, which carries the machine identities and has to
+/// outlive the repository it sits beside, and anything a user put there.
+///
+/// Three characters is short enough that `pdf` and `src` are shaped exactly
+/// like shard directories, which is why [`clear_repository_folder`] refuses to
+/// run at all unless the folder is a repository root, and reports back
+/// everything it chose not to delete.
+fn is_kopia_blob_name(name: &str) -> bool {
+    if name == ".shards" || name.starts_with("kopia.") {
+        return true;
+    }
+    // `_log_…` shards to `_lo`, so the underscore is one of the prefixes.
+    let starts_with_blob_prefix =
+        matches!(name.chars().next(), Some('p' | 'q' | 's' | 'x' | 'n' | 'm' | 'e' | '_'));
+    if !starts_with_blob_prefix {
+        return false;
+    }
+    // A shard directory is the first three characters of a blob id; a blob
+    // short enough to skip sharding is written whole, with a `.f` suffix.
+    name.chars().count() == 3 || name.ends_with(".f")
+}
+
+/// What clearing a folder did, and what it deliberately left behind.
+#[derive(Debug)]
+struct FolderCleared {
+    removed: u64,
+    preserved: Vec<String>,
+}
+
+/// Remove a kopia repository's files from a folder, leaving anything else.
+///
+/// Refuses outright unless the folder holds `kopia.repository`. That one check
+/// is the difference between a command that empties a repository and a command
+/// that empties whatever folder it was pointed at: without it, a destination
+/// misconfigured to a documents folder would lose the documents. With it, the
+/// worst case is a repository root that also holds something shaped like a
+/// shard directory — and those names come back in `preserved` either way, so
+/// the answer says what survived rather than leaving it to be discovered.
+async fn clear_repository_folder(path: &std::path::Path) -> Result<FolderCleared> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let is_repository = ["kopia.repository.f", "kopia.repository"]
+            .iter()
+            .any(|marker| path.join(marker).exists());
+        if !is_repository {
+            return Err(Error::Validation(format!(
+                "there is no kopia repository at {} — nothing was deleted. Only a folder holding \
+                 kopia.repository can be cleared.",
+                path.display()
+            )));
+        }
+
+        let mut removed = 0u64;
+        let mut preserved = Vec::new();
+        let entries = std::fs::read_dir(&path)
+            .map_err(|e| Error::io(format!("reading {}", path.display()), e))?;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !is_kopia_blob_name(&name) {
+                preserved.push(name);
+                continue;
+            }
+            let target = entry.path();
+            let result = if target.is_dir() {
+                std::fs::remove_dir_all(&target)
+            } else {
+                std::fs::remove_file(&target)
+            };
+            result.map_err(|e| Error::io(format!("removing {}", target.display()), e))?;
+            removed += 1;
+        }
+        preserved.sort();
+        Ok(FolderCleared { removed, preserved })
+    })
+    .await
+    .map_err(|e| Error::Config(format!("clearing the folder did not finish: {e}")))?
+}
+
+/// Which folders a git scan may look in.
+///
+/// Every source of the named job, or of every job when none is named. The
+/// roots come from the stored configuration and never from the request, which
+/// is what keeps a scan — which spawns processes — from being pointed at an
+/// arbitrary part of the disk by a client.
+fn git_roots(
+    config: &superbackup_core::model::Config,
+    job: Option<&str>,
+) -> Result<Vec<PathBuf>> {
+    let jobs: Vec<&superbackup_core::model::Job> = match job {
+        Some(needle) => vec![resolve_job(config, needle)?],
+        None => config.jobs.iter().collect(),
+    };
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for job in jobs {
+        for source in &job.sources {
+            // Two jobs backing up the same tree is normal, and scanning it
+            // twice would list every repository in it twice.
+            if !roots.contains(&source.path) {
+                roots.push(source.path.clone());
+            }
+        }
+    }
+    if roots.is_empty() {
+        return Err(Error::Validation(
+            "no job has any source folders yet, so there is nothing to look in".into(),
+        ));
+    }
+    Ok(roots)
+}
+
 fn is_object_id(candidate: &str) -> bool {
     let Some(rest) = candidate.strip_prefix('k') else { return false };
     rest.len() > 32 && rest.chars().all(|c| c.is_ascii_hexdigit())
@@ -1310,6 +1482,170 @@ impl Handler for DaemonHandler {
                 Error::Validation(format!("destination {id} vanished during update"))
             })?),
         })
+    }
+
+    /// Erase the repository at a destination so the location can be reused.
+    ///
+    /// This destroys backups, so it is fenced three ways: the caller must type
+    /// the destination's name back, only the destination's own folder or key
+    /// prefix is touched, and the whole thing is recorded as an event.
+    ///
+    /// When the location *cannot* be emptied — an S3 bucket under Object Lock
+    /// in compliance mode will refuse every delete until retention expires, by
+    /// design and for everyone — this does not simply fail. Failing would
+    /// leave the user with a destination that can never become a copy and
+    /// nothing to do about it. Instead it comes back with a prefix that is
+    /// free, and the exact location to remove by hand if the old data really
+    /// has to go.
+    async fn git_inventory(
+        &self,
+        _ctx: &RequestContext,
+        job: Option<String>,
+        check_remotes: bool,
+        max_depth: Option<u32>,
+    ) -> Result<GitInventoryReply> {
+        let config = self.config().await;
+        let roots = git_roots(&config, job.as_deref())?;
+        let options = superbackup_core::git::ScanOptions {
+            check_remotes,
+            // Clamped rather than trusted. Depth is exponential in a source
+            // tree, and a client asking for 40 would turn a scan into a walk
+            // of the whole drive.
+            max_depth: max_depth.unwrap_or(4).clamp(1, 8) as usize,
+            ..Default::default()
+        };
+        let inventory = superbackup_core::git::inventory(&roots, &options).await?;
+        Ok(GitInventoryReply { inventory: Box::new(inventory) })
+    }
+
+    async fn git_pull(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
+        let path = self.git_target(&path).await?;
+        let outcome = superbackup_core::git::pull(&path).await?;
+        self.record_git(&outcome);
+        Ok(GitActionReply { outcome })
+    }
+
+    async fn git_commit(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        message: String,
+        include_untracked: bool,
+    ) -> Result<GitActionReply> {
+        let path = self.git_target(&path).await?;
+        let outcome =
+            superbackup_core::git::commit(&path, &message, include_untracked).await?;
+        self.record_git(&outcome);
+        Ok(GitActionReply { outcome })
+    }
+
+    async fn git_push(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
+        let path = self.git_target(&path).await?;
+        let outcome = superbackup_core::git::push(&path).await?;
+        self.record_git(&outcome);
+        Ok(GitActionReply { outcome })
+    }
+
+    async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
+        let path = self.git_target(&path).await?;
+        let outcome = superbackup_core::git::trust(&path).await?;
+        self.record_git(&outcome);
+        Ok(GitActionReply { outcome })
+    }
+
+    async fn clear_repository(
+        &self,
+        _ctx: &RequestContext,
+        destination: String,
+        confirm: String,
+    ) -> Result<ClearedReply> {
+        self.require_unlocked().await?;
+        let config = self.config().await;
+        let target = resolve_destination(&config, &destination)?.clone();
+
+        if confirm.trim() != target.name {
+            return Err(Error::Validation(format!(
+                "to erase the backups at \"{}\", type its name back exactly. This cannot be \
+                 undone.",
+                target.name
+            )));
+        }
+
+        let location = gui_location(&target);
+        let outcome = match &target.kind {
+            superbackup_core::model::DestinationKind::S3 { bucket, prefix, provider_id, .. } => {
+                let provider = config.provider(provider_id).cloned().ok_or_else(|| {
+                    Error::Validation(format!(
+                        "\"{}\" names a storage provider that no longer exists",
+                        target.name
+                    ))
+                })?;
+                let keys = self.provider_keys(&provider).await?;
+                let client = superbackup_core::s3::S3Client::new()?;
+                match client.delete_prefix(&provider, &keys, bucket, prefix).await {
+                    Ok(removed) => ClearedReply {
+                        removed: removed as u64,
+                        location,
+                        preserved: Vec::new(),
+                        blocked: None,
+                    },
+                    Err(e) => ClearedReply {
+                        removed: 0,
+                        location: location.clone(),
+                        preserved: Vec::new(),
+                        blocked: Some(blocked_with_alternative(
+                            &e.message(),
+                            Some(bucket.clone()),
+                            &location,
+                            &suggest_free_prefix(prefix),
+                        )),
+                    },
+                }
+            }
+            _ => {
+                let Some(path) = target.kind.local_path() else {
+                    return Err(Error::Validation(
+                        "a folder mirror holds plain files and has no repository to erase".into(),
+                    ));
+                };
+                match clear_repository_folder(path).await {
+                    Ok(cleared) => ClearedReply {
+                        removed: cleared.removed,
+                        location,
+                        preserved: cleared.preserved,
+                        blocked: None,
+                    },
+                    // "There is no repository here" is not something a
+                    // different folder would fix, so it is an error rather
+                    // than a suggestion to move. Only a refusal to delete —
+                    // a read-only volume, a file held open — is.
+                    Err(e @ Error::Validation(_)) => return Err(e),
+                    Err(e) => ClearedReply {
+                        removed: 0,
+                        location: location.clone(),
+                        preserved: Vec::new(),
+                        blocked: Some(blocked_with_alternative(
+                            &e.to_string(),
+                            None,
+                            &location,
+                            &format!("{}-2", path.display()),
+                        )),
+                    },
+                }
+            }
+        };
+
+        if outcome.blocked.is_none() {
+            self.runtime.record_event(Event::warn(
+                "dest.cleared",
+                format!(
+                    "The repository at \"{}\" was erased ({} items). Any backups it held are \
+                     gone.",
+                    target.name, outcome.removed
+                ),
+            ));
+        }
+        Ok(outcome)
     }
 
     async fn delete_destination(
@@ -2979,6 +3315,76 @@ impl Handler for DaemonHandler {
 // ---------------------------------------------------------------------------
 
 impl DaemonHandler {
+    /// Resolve a client-supplied repository path, or refuse it.
+    ///
+    /// **This is the security boundary for every git action.** The `elevated`
+    /// contract in the protocol says that nothing takes a path from a caller
+    /// and acts on it with the daemon's privilege — and running `git` in a
+    /// folder is emphatically acting on it: git reads that repository's own
+    /// configuration, and `core.fsmonitor` there names a program git will
+    /// execute. In the service instance the daemon is SYSTEM, so an
+    /// unconstrained path would let any local user get code running as SYSTEM
+    /// by leaving a repository somewhere and asking us to look at it.
+    ///
+    /// So the path is only ever accepted when it lies inside a folder the
+    /// stored configuration already names as a job source — which is a set the
+    /// caller can only change through `job.update`, itself gated. Symlinks are
+    /// resolved before the comparison, because `sources/link -> C:\Windows`
+    /// would otherwise pass a textual prefix check.
+    async fn git_target(&self, path: &str) -> Result<PathBuf> {
+        let config = self.config().await;
+        let requested = PathBuf::from(path);
+        if requested.as_os_str().is_empty() {
+            return Err(Error::Validation("no folder was named".into()));
+        }
+        let resolved = std::fs::canonicalize(&requested).map_err(|e| {
+            Error::io(format!("{} cannot be opened", requested.display()), e)
+        })?;
+
+        let mut sources = Vec::new();
+        for job in &config.jobs {
+            for source in &job.sources {
+                if let Ok(root) = std::fs::canonicalize(&source.path) {
+                    if resolved.starts_with(&root) {
+                        return Ok(resolved);
+                    }
+                    sources.push(root);
+                }
+            }
+        }
+        Err(Error::Validation(format!(
+            "{} is not inside any folder a job backs up. Superbackup only acts on repositories              it has been asked to protect{}.",
+            requested.display(),
+            if sources.is_empty() {
+                String::from(", and no job has any sources yet")
+            } else {
+                String::new()
+            }
+        )))
+    }
+
+    /// Put a git action in the activity log.
+    ///
+    /// Commits and pushes change the user's repositories and their remotes;
+    /// an action that changed something and left no trace is the kind of thing
+    /// that makes a tool feel untrustworthy the first time somebody wonders
+    /// where a commit came from.
+    fn record_git(&self, outcome: &superbackup_core::git::ActionOutcome) {
+        let where_ = outcome.path.display().to_string();
+        let event = if outcome.ok {
+            Event::info(
+                format!("git.{}", outcome.action),
+                format!("{} in {}: {}", outcome.action, where_, outcome.detail),
+            )
+        } else {
+            Event::warn(
+                format!("git.{}", outcome.action),
+                format!("{} failed in {}: {}", outcome.action, where_, outcome.detail),
+            )
+        };
+        self.runtime.record_event(event);
+    }
+
     /// React to `use_os_keychain` being switched on or off.
     ///
     /// Turning it off is destructive and immediate: the cache is the thing the
@@ -3290,6 +3696,92 @@ fn copy_buckets_visible(count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The names in a real repository — read off one on disk, not guessed —
+    /// against the names that live beside it. `_superbackup` holds the machine
+    /// identities and must outlive the repository next to it; a user's own
+    /// folders must survive too.
+    #[test]
+    fn clearing_a_repository_leaves_what_is_not_kopias() {
+        for kopias in [
+            ".shards",
+            "kopia.repository.f",
+            "kopia.blobcfg.f",
+            "kopia.maintenance.f",
+            "p00",
+            "q4e",
+            "s3f",
+            "xn0",
+            "xe1",
+            "_lo",
+            "xe1.f",
+            "xw1788377916.f",
+        ] {
+            assert!(is_kopia_blob_name(kopias), "{kopias} is kopia's own");
+        }
+        for theirs in [
+            "_superbackup",
+            "notes",
+            "music",
+            "photos",
+            "projects",
+            "node_modules",
+            "package.json",
+            "Documents",
+            "README.txt",
+            "",
+        ] {
+            assert!(!is_kopia_blob_name(theirs), "{theirs} is not kopia's to delete");
+        }
+    }
+
+    /// The gate that makes this command safe to point at anything: without a
+    /// `kopia.repository` in the folder it deletes nothing at all, so a
+    /// destination misconfigured to a documents folder cannot empty it.
+    #[tokio::test]
+    async fn a_folder_that_is_not_a_repository_is_never_cleared() {
+        let dir = scratch_dir("not-a-repo");
+        // Shaped exactly like shard directories, and not to be touched.
+        for name in ["pdf", "src", "q4e"] {
+            std::fs::create_dir(dir.join(name)).expect("create");
+        }
+        let err = clear_repository_folder(&dir).await.expect_err("must refuse");
+        assert!(matches!(err, Error::Validation(_)), "{err:?}");
+        for name in ["pdf", "src", "q4e"] {
+            assert!(dir.join(name).exists(), "{name} was deleted anyway");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// And inside a real repository root, the blobs go and everything else —
+    /// the identity folder above all — stays and is named in the answer.
+    #[tokio::test]
+    async fn clearing_a_repository_reports_what_it_kept() {
+        let dir = scratch_dir("clear-repo");
+        std::fs::write(dir.join("kopia.repository.f"), b"{}").expect("write");
+        std::fs::write(dir.join("xe1.f"), b"blob").expect("write");
+        for name in ["p00", "q4e", "_lo"] {
+            std::fs::create_dir(dir.join(name)).expect("create");
+            std::fs::write(dir.join(name).join("84f"), b"blob").expect("write");
+        }
+        std::fs::create_dir(dir.join("_superbackup")).expect("create");
+        std::fs::write(dir.join("_superbackup").join("README.txt"), b"hi").expect("write");
+
+        let cleared = clear_repository_folder(&dir).await.expect("cleared");
+        assert_eq!(cleared.removed, 5, "kopia.repository.f, xe1.f, p00, q4e, _lo");
+        assert_eq!(cleared.preserved, vec!["_superbackup".to_string()]);
+        assert!(dir.join("_superbackup/README.txt").exists(), "the identities survive");
+        assert!(!dir.join("p00").exists());
+        assert!(!dir.join("kopia.repository.f").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("sb-{tag}-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).expect("create scratch");
+        dir
+    }
 
     /// The restore browser addresses an *object*, and passing a manifest id
     /// is what stopped it ever listing anything: kopia answered `invalid

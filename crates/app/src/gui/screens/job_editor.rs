@@ -1233,9 +1233,22 @@ impl App {
             ui.horizontal(|ui| {
                 ui.add_space(28.0);
                 ui.vertical(|ui| {
-                    bandwidth_row(ui, copy::job::BANDWIDTH_UPLOAD, &mut bandwidth.upload_kbps);
-                    ui.add_space(space::M);
-                    bandwidth_row(ui, copy::job::BANDWIDTH_DOWNLOAD, &mut bandwidth.download_kbps);
+                    // The same control Settings uses. This screen kept its own
+                    // plain number box when the slider was added, so a limit
+                    // set here was still typed rather than dragged.
+                    widgets::bandwidth_control(
+                        ui,
+                        "job-bw-up",
+                        copy::job::BANDWIDTH_UPLOAD,
+                        &mut bandwidth.upload_kbps,
+                    );
+                    ui.add_space(space::L);
+                    widgets::bandwidth_control(
+                        ui,
+                        "job-bw-down",
+                        copy::job::BANDWIDTH_DOWNLOAD,
+                        &mut bandwidth.download_kbps,
+                    );
                 });
             });
         }
@@ -1336,22 +1349,6 @@ impl App {
             self.open_modal(Modal::Confirm(modals::delete_job_confirm(job.as_ref())));
         }
     }
-}
-
-fn bandwidth_row(ui: &mut Ui, label: &str, value: &mut Option<u32>) {
-    ui.horizontal(|ui| {
-        let mut on = value.is_some();
-        if widgets::checkbox(ui, &mut on, label, None, true).clicked() {
-            *value = if on { Some(2000) } else { None };
-        }
-        if let Some(v) = value {
-            ui.add_space(space::M);
-            widgets::number(ui, v, 1..=10_000_000, copy::job::BANDWIDTH_UNIT, true, label);
-            ui.add_space(space::M);
-            let t = theme::tokens(ui.ctx());
-            widgets::text(ui, format::kbps_as_mbit(*v), Type::Small, t.text_muted);
-        }
-    });
 }
 
 pub fn retention_grid(ui: &mut Ui, policy: &mut RetentionPolicy) {

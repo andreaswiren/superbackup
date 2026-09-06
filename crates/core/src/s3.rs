@@ -971,6 +971,11 @@ pub struct ObjectSummary {
     pub last_modified: Option<DateTime<Utc>>,
 }
 
+/// How many keys to list per round when clearing a prefix. Small enough that a
+/// failure part-way leaves a comprehensible amount done, large enough not to
+/// round-trip once per object.
+const MAX_DELETE_BATCH: u32 = 200;
+
 /// One page of `ListObjectsV2`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ObjectListing {
@@ -1190,6 +1195,85 @@ impl S3Client {
         )
         .await
         .map(|_| ())
+    }
+
+    /// Delete every object under one prefix, and report how many went.
+    ///
+    /// # Why this exists, and what fences it
+    ///
+    /// `repository sync-to` refuses a destination that already holds a
+    /// *different* repository, and the error tells the user to empty it —
+    /// which superbackup then gave them no way to do. This is that way.
+    ///
+    /// It is the most dangerous call in this module, so:
+    ///
+    /// * **A prefix is required.** An empty one addresses the whole bucket,
+    ///   and "delete the entire bucket" is never what a caller of this means.
+    ///   It is refused rather than interpreted.
+    /// * **Only keys the server itself listed under that prefix are deleted**,
+    ///   one DELETE per key, each path built from the key S3 returned. No
+    ///   pattern is constructed here, so nothing outside the prefix can be
+    ///   named by accident — and a key that comes back outside it anyway stops
+    ///   the whole operation.
+    /// * **It stops at the first failure** and reports how far it got, rather
+    ///   than pressing on and returning a count that overstates what happened.
+    ///
+    /// Establishing that the user meant it is the caller's job, not this
+    /// function's.
+    pub async fn delete_prefix(
+        &self,
+        provider: &StorageProvider,
+        keys: &S3Keys,
+        bucket: &str,
+        prefix: &str,
+    ) -> std::result::Result<u32, S3Error> {
+        let bucket = bucket.trim();
+        validate_bucket(bucket)?;
+        let prefix = prefix.trim();
+        if prefix.is_empty() {
+            return Err(S3Error::Configuration {
+                detail: "refusing to clear a bucket with no prefix: an empty prefix means every \
+                         object in it"
+                    .to_string(),
+            });
+        }
+
+        let endpoint = S3Endpoint::from_provider(provider)?;
+        let (host, base) = self.address(&endpoint, bucket);
+
+        let mut deleted = 0u32;
+        loop {
+            let listing =
+                self.list_objects_v2(provider, keys, bucket, prefix, MAX_DELETE_BATCH).await?;
+            if listing.keys.is_empty() {
+                return Ok(deleted);
+            }
+            for object in &listing.keys {
+                if !object.key.starts_with(prefix) {
+                    return Err(S3Error::Malformed {
+                        detail: "the bucket listed a key outside the prefix that was asked for; \
+                                 nothing further was deleted"
+                            .to_string(),
+                    });
+                }
+                let path = format!("{base}/{}", object.key);
+                self.send(
+                    "DELETE",
+                    &endpoint,
+                    &host,
+                    &path,
+                    &[],
+                    Vec::new(),
+                    keys,
+                    "delete from this bucket",
+                )
+                .await?;
+                deleted += 1;
+            }
+            if !listing.truncated {
+                return Ok(deleted);
+            }
+        }
     }
 
     /// The host and path prefix a bucket is addressed by.

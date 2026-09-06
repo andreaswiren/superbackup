@@ -77,6 +77,13 @@ pub enum Intent {
     /// itself — deliberately, so a client cannot overwrite a job by guessing
     /// one — so the wizard's draft id names nothing that exists.
     SaveJobAndRun(String),
+    /// A git scan. One at a time — the screen disables its own button while
+    /// one is in flight, so a second reply can only be a stale one.
+    GitInventory,
+    /// A pull, commit, push or trust. The path is not carried: the screen
+    /// already knows which repository it asked about, and the reply carries it
+    /// back anyway.
+    GitAction,
     Snapshots(uuid::Uuid),
     Browse(uuid::Uuid, String),
     Restore,

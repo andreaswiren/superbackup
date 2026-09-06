@@ -163,7 +163,24 @@ fn sample_requests() -> Vec<Request> {
         Request::DestinationCreate { destination: Box::new(destination()) },
         Request::DestinationUpdate { destination: Box::new(destination()) },
         Request::DestinationDelete { destination: "drive".into(), force: false },
+        Request::GitInventory {
+            job: Some("docs".into()),
+            check_remotes: false,
+            max_depth: Some(4),
+        },
+        Request::GitPull { path: "/w/thing".into() },
+        Request::GitCommit {
+            path: "/w/thing".into(),
+            message: "save the work".into(),
+            include_untracked: true,
+        },
+        Request::GitPush { path: "/w/thing".into() },
+        Request::GitTrust { path: "/w/thing".into() },
         Request::DestinationTest { destination: "drive".into() },
+        Request::DestinationClearRepository {
+            destination: "drive".into(),
+            confirm: "drive".into(),
+        },
         Request::DestinationCheckKey {
             destination: "drive".into(),
             key: Some(SecretString::from_string("a candidate key".into())),

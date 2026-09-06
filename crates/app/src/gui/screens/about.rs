@@ -1,11 +1,11 @@
 //! `AB-1`. One centred 560px column. The Kopia attribution is mandatory and
 //! appears here, in the onboarding welcome, and in the diagnostic bundle.
 
-use egui::{Align, Layout, Sense, Ui, Vec2};
+use egui::{Align, Layout, Ui, Vec2};
 
 use crate::gui::app::App;
 use crate::gui::copy;
-use crate::gui::icons::{self, Icon};
+use crate::gui::icons::Icon;
 use crate::gui::theme::{self, space, Type};
 use crate::gui::widgets::{self, Button};
 
@@ -42,15 +42,7 @@ impl App {
                 Layout::top_down(Align::Center),
                 |ui| {
                     ui.add_space(space::H2);
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
-                    icons::health_mark(
-                        ui.painter(),
-                        rect,
-                        superbackup_core::state::Health::Idle,
-                        t.accent,
-                        None,
-                        0.0,
-                    );
+                    widgets::app_logo(ui, 96.0);
                     ui.add_space(space::XL);
                     widgets::text(ui, copy::APP_NAME, Type::Display, t.text_primary);
                     ui.add_space(space::XS);
