@@ -19,6 +19,13 @@ use crate::gui::theme::{self, radius, size, space, Type};
 use crate::gui::viewmodel::{self, CardState};
 use crate::gui::widgets::{self, Button};
 
+/// Width of the per-destination statistics line.
+///
+/// Wide enough for the longest realistic line — files, uploaded, unchanged and
+/// a transfer rate — because this is the column the text is elided to, and
+/// eliding it too hard is how the numbers stop being readable.
+const STATS_W: f32 = 320.0;
+
 impl App {
     pub(crate) fn dashboard_actions(&mut self, ui: &mut Ui) {
         let gate = self.data.gate(Action::RunJob);
@@ -98,9 +105,19 @@ impl App {
                 ui.add_space(space::XL);
             }
 
-            let count = self.data.jobs.len();
+            // Jobs already shown above are not shown again. "Running now" and
+            // "Jobs" were rendering the same job twice, with two progress bars
+            // reporting the same run — the second one strictly less
+            // informative than the first. The sections answer different
+            // questions (what is happening; what is set up), and a job only
+            // belongs to one of them at a time.
+            let running: std::collections::HashSet<uuid::Uuid> =
+                self.data.active_runs().iter().map(|r| r.job_id).collect();
+            let idle: Vec<Job> =
+                self.data.jobs.iter().filter(|j| !running.contains(&j.id)).cloned().collect();
+
             let mut new_job = false;
-            widgets::section_header(ui, copy::dash::JOBS_TITLE, Some(count), |ui| {
+            widgets::section_header(ui, copy::dash::JOBS_TITLE, Some(idle.len()), |ui| {
                 if Button::ghost(copy::dash::JOBS_NEW).icon(Icon::Plus).compact().show(ui).clicked()
                 {
                     new_job = true;
@@ -111,9 +128,14 @@ impl App {
                 self.open_modal(Modal::Wizard(Box::new(wizard)));
             }
             ui.add_space(space::L);
-            self.job_grid(ui, now);
+            if idle.is_empty() {
+                // Every job is running. Saying so is better than an empty
+                // space where a list was a moment ago.
+                widgets::paragraph(ui, copy::dash::JOBS_ALL_RUNNING, Type::Small, t.text_muted);
+            } else {
+                self.job_grid(ui, now, &idle);
+            }
             ui.add_space(space::XL);
-            let _ = t;
         });
     }
 
@@ -500,7 +522,10 @@ impl App {
             let bytes_done: u64 = run.destinations.iter().map(|d| d.progress.bytes_processed).sum();
             let bytes_total: u64 =
                 run.destinations.iter().filter_map(|d| d.progress.bytes_total).sum();
-            let rate: f64 = run.destinations.iter().map(|d| d.progress.bytes_per_second).sum();
+            // Transfer, not scan: a job showing 5.3 GB/s beside 21 MB
+            // uploaded is not describing anybody's connection.
+            let rate: f64 =
+                run.destinations.iter().map(|d| d.progress.upload_bytes_per_second).sum();
             let skipped: u64 = run.destinations.iter().map(|d| d.progress.errors_ignored).sum();
             let fill = if skipped > 0 { t.progress_fill_warn } else { t.progress_fill };
             let a11y = match fraction {
@@ -640,7 +665,7 @@ impl App {
             // one element here that reads fine at any width. Widening it
             // without moving it out of the bar's budget pushed the row past
             // the window edge at 1100px.
-            let bytes_w = if narrow { 0.0 } else { 260.0 };
+            let bytes_w = if narrow { 0.0 } else { STATS_W };
             let bar_w =
                 (ui.available_width() - badge_w - bytes_w - 40.0 - space::L * 3.0).max(60.0);
             let fraction = viewmodel::displayed_fraction(destination);
@@ -678,16 +703,22 @@ impl App {
                 // you how far in you are, how fast it is going, or how much of
                 // that 6 GB was new. The engine tracks files, totals, cached
                 // and throughput already — none of it was being shown.
+                //
+                // Elided to the box it was given. `widgets::text` draws its
+                // whole string regardless of the space allocated, and in a
+                // right-to-left layout it grows *leftwards* — so a line like
+                // "608/608 files · 21 MB up · 136,068 unchanged · 8 MB/s up"
+                // ran back over the percentage and the bar, and the row read
+                // as two strings printed on top of each other.
                 ui.allocate_ui_with_layout(
-                    Vec2::new(260.0, 20.0),
+                    Vec2::new(STATS_W, 20.0),
                     Layout::right_to_left(Align::Center),
                     |ui| {
-                        widgets::text(
-                            ui,
-                            viewmodel::destination_progress_line(&destination.progress),
-                            Type::MonoSmall,
-                            t.text_muted,
-                        );
+                        let line = viewmodel::destination_progress_line(&destination.progress);
+                        let response =
+                            widgets::elided(ui, &line, Type::MonoSmall, t.text_muted, STATS_W, false);
+                        // What was cut is still reachable, rather than lost.
+                        response.on_hover_text(line);
                     },
                 );
             }
@@ -703,7 +734,7 @@ impl App {
 
     // -- job grid -----------------------------------------------------------
 
-    fn job_grid(&mut self, ui: &mut Ui, now: chrono::DateTime<Utc>) {
+    fn job_grid(&mut self, ui: &mut Ui, now: chrono::DateTime<Utc>, jobs: &[Job]) {
         let two_columns = ui.available_width() >= 800.0;
         let gutter = space::XL;
         let card_width = if two_columns {
@@ -712,7 +743,7 @@ impl App {
             ui.available_width()
         };
 
-        let jobs: Vec<Job> = self.data.jobs.clone();
+        let jobs = jobs.to_vec();
         let mut index = 0;
         while index < jobs.len() {
             ui.horizontal_top(|ui| {
@@ -1009,7 +1040,10 @@ impl App {
             }
         }
         if open {
-            self.go(Route::JobEditor(job.id));
+            // The status page, not the settings. Somebody clicking a job card
+            // is asking what it has been doing, not how it is configured —
+            // settings are a button away on the page they land on.
+            self.go(Route::JobDetail(job.id));
         }
         match menu_action {
             Some("run") => self.request_run(job),

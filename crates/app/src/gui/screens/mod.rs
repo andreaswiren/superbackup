@@ -11,6 +11,7 @@ pub mod dashboard;
 pub mod destination_editor;
 pub mod destinations;
 pub mod git;
+pub mod job_detail;
 pub mod job_editor;
 pub mod jobs;
 pub mod locked;

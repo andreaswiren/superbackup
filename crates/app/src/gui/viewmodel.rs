@@ -198,7 +198,9 @@ pub fn job_view(data: &Data, job: &Job, now: DateTime<Utc>) -> JobView {
                 status: RunStatus::Queued,
             };
         }
-        let rate: f64 = run.destinations.iter().map(|d| d.progress.bytes_per_second).sum();
+        // Transfer, not scan. See `destination_progress_line`.
+        let rate: f64 =
+            run.destinations.iter().map(|d| d.progress.upload_bytes_per_second).sum();
         return JobView {
             state: CardState::Running { fraction: run.overall_fraction(), rate },
             badge: RunStatus::Running.title().to_string(),
@@ -1078,8 +1080,13 @@ pub fn destination_progress_line(progress: &superbackup_core::state::Progress) -
     if progress.files_cached > 0 {
         parts.push(format!("{} unchanged", format::count(progress.files_cached)));
     }
-    if progress.bytes_per_second > 1.0 {
-        parts.push(format::rate(progress.bytes_per_second));
+    // The *transfer* rate, never the scan rate. `bytes_per_second` counts
+    // bytes merely looked at, and on a re-run where everything is unchanged
+    // that reads in the gigabytes per second — which put "5.3 GB/s" on the
+    // dashboard next to "21 MB up". A run that is sending nothing has no
+    // speed to report, and saying nothing is the honest version of that.
+    if progress.upload_bytes_per_second > 1.0 {
+        parts.push(format!("{} up", format::rate(progress.upload_bytes_per_second)));
     }
     if progress.errors_ignored > 0 {
         parts.push(format!("{} skipped", format::count(progress.errors_ignored)));

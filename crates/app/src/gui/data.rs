@@ -425,7 +425,10 @@ impl Data {
                 // reading cannot distinguish steady progress from a number
                 // that stopped changing.
                 let series = self.throughput.entry(run_id).or_default();
-                series.push_back(progress.bytes_per_second);
+                // The graph plots what is crossing the wire, so its shape
+                // answers "is it still moving?" rather than "is it still
+                // stat-ing files?".
+                series.push_back(progress.upload_bytes_per_second);
                 while series.len() > THROUGHPUT_SAMPLES {
                     series.pop_front();
                 }
@@ -565,7 +568,9 @@ mod tests {
                     destination_id: Uuid::new_v4(),
                     status: superbackup_core::state::RunStatus::Running,
                     progress: Box::new(superbackup_core::state::Progress {
-                        bytes_per_second: i as f64,
+                        // The graph plots the *transfer* rate, not the scan
+                        // rate: see `destination_progress_line`.
+                        upload_bytes_per_second: i as f64,
                         ..Default::default()
                     }),
                     job_id: Uuid::new_v4(),

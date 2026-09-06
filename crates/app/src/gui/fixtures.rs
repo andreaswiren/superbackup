@@ -245,6 +245,7 @@ fn destination_run(
             bytes_total: total,
             bytes_uploaded: uploaded,
             bytes_per_second: 19_100_000.0,
+            upload_bytes_per_second: 8_400_000.0,
             files_cached: 71_090,
             errors_ignored: 0,
             current_path: None,

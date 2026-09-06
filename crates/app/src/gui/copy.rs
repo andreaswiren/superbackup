@@ -73,6 +73,8 @@ pub mod state {
 
 pub mod badge {
     pub const WARNINGS_SHORT: &str = "Warnings";
+    pub const GONE: &str = "That job no longer exists";
+    pub const GONE_BODY: &str = "It was deleted, or the configuration was replaced.";
     pub const NEVER_RUN: &str = "Never run";
     pub const DISABLED: &str = "Disabled";
 }
@@ -507,6 +509,7 @@ pub mod dash {
     pub const JOBS_TITLE: &str = "Jobs";
     pub const JOBS_RUN_ALL: &str = "Run all now";
     pub const JOBS_DISABLE_ALL: &str = "Disable all jobs";
+    pub const JOBS_ALL_RUNNING: &str = "Every job is running; they are listed above.";
     pub const JOBS_NEW: &str = "New job…";
     pub const VIEW_ERROR: &str = "View error";
 }
@@ -1512,6 +1515,29 @@ pub mod git {
     pub const SUMMARY_TOTAL: &str = "repositories";
     pub const STALE_NOTE: &str =
         "Ahead and behind come from the last fetch. Turn on \"Ask each remote where it is\" to check for real.";
+}
+
+/// One job's status page.
+pub mod job_detail {
+    pub const GONE: &str = "That job no longer exists";
+    pub const GONE_BODY: &str = "It was deleted, or the configuration was replaced.";
+    pub const NEVER_RUN: &str = "Never run";
+    pub const DISABLED: &str = "Disabled";
+    pub const SCHEDULE: &str = "Schedule";
+    pub const NEXT_RUN: &str = "Next run";
+    pub const NOT_SCHEDULED: &str = "Not scheduled";
+    pub const LAST_RUN: &str = "Last run";
+    pub const SOURCES: &str = "Backs up";
+    pub const NO_SOURCES: &str = "No source folders, so this job would copy nothing.";
+    pub const DESTINATIONS: &str = "Writes to";
+    pub const NO_DESTINATIONS: &str = "No destinations, so this job has nowhere to write.";
+    pub const MISSING_DEST: &str = "This destination no longer exists.";
+    pub const RUNS: &str = "Recent runs";
+    pub const NO_RUNS: &str = "This job has not run yet.";
+    pub const ALL_RUNS: &str = "See every run in Activity";
+    pub const ACTIVITY: &str = "What this job reported";
+    pub const NO_ACTIVITY: &str = "Nothing logged for this job yet.";
+    pub const ALL_ACTIVITY: &str = "Open the full activity log";
 }
 
 pub mod restore {

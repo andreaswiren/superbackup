@@ -122,7 +122,21 @@ pub struct Progress {
     /// Bytes actually uploaded after dedup and compression — the number that
     /// matters for a metered or slow link.
     pub bytes_uploaded: u64,
+    /// Bytes *considered* per second: hashed plus cached, over elapsed time.
+    ///
+    /// This is a scan rate, not a transfer rate, and it is enormous on a
+    /// re-run — a folder whose 136,000 files are all unchanged is "processed"
+    /// at gigabytes a second without a single byte leaving the machine. It
+    /// matches the denominator the percentage and the ETA use, which is what
+    /// it is for. It is **not** what to show a person as a speed; see
+    /// [`Self::upload_bytes_per_second`].
     pub bytes_per_second: f64,
+    /// Bytes actually crossing the wire per second.
+    ///
+    /// The number a person means by "how fast is it going". Zero on a run that
+    /// is entirely deduplicated, which is the truth: nothing is being sent.
+    #[serde(default)]
+    pub upload_bytes_per_second: f64,
     pub files_cached: u64,
     pub errors_ignored: u64,
     /// Path currently being read, for the "scanning …" line in the GUI.

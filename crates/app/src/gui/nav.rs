@@ -155,6 +155,9 @@ impl SettingsSection {
 pub enum Route {
     Dashboard,
     Jobs,
+    /// One job's status page: what it backs up, what it did, and what it has
+    /// said for itself. Where a job card goes when clicked.
+    JobDetail(Uuid),
     /// The five-tab editor. `None` is a job that no longer exists, which the
     /// editor renders as an error state rather than a blank screen.
     JobEditor(Uuid),
@@ -183,7 +186,9 @@ impl Route {
     pub fn section(&self) -> Section {
         match self {
             Route::Dashboard => Section::Dashboard,
-            Route::Jobs | Route::JobEditor(_) | Route::Preview(_) => Section::Jobs,
+            Route::Jobs | Route::JobDetail(_) | Route::JobEditor(_) | Route::Preview(_) => {
+                Section::Jobs
+            }
             Route::Destinations | Route::DestinationEditor(_) | Route::NewDestination => {
                 Section::Destinations
             }
@@ -200,7 +205,8 @@ impl Route {
     pub fn is_sub_screen(&self) -> bool {
         matches!(
             self,
-            Route::JobEditor(_)
+            Route::JobDetail(_)
+                | Route::JobEditor(_)
                 | Route::DestinationEditor(_)
                 | Route::NewDestination
                 | Route::ProviderEditor(_)

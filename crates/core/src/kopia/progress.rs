@@ -377,10 +377,13 @@ fn parse_bytes_per_second(s: &str) -> Option<f64> {
 pub struct ProgressTracker {
     progress: Progress,
     started: Instant,
-    /// `(when, bytes_processed)` of the previous sample, for the rate.
+    /// `(when, bytes_processed)` of the previous sample, for the scan rate.
     last_sample: Option<(Instant, u64)>,
-    /// Smoothed rate, so the GUI number does not flicker between samples.
+    /// `(when, bytes_uploaded)` of the previous sample, for the transfer rate.
+    last_upload_sample: Option<(Instant, u64)>,
+    /// Smoothed rates, so the GUI numbers do not flicker between samples.
     smoothed_bps: f64,
+    smoothed_upload_bps: f64,
 }
 
 impl Default for ProgressTracker {
@@ -395,7 +398,9 @@ impl ProgressTracker {
             progress: Progress::default(),
             started: Instant::now(),
             last_sample: None,
+            last_upload_sample: None,
             smoothed_bps: 0.0,
+            smoothed_upload_bps: 0.0,
         }
     }
 
@@ -498,9 +503,18 @@ impl ProgressTracker {
     fn apply(&mut self, line: &ProgressLine, now: Instant) {
         let processed = line.hashed_bytes.saturating_add(line.cached_bytes);
 
-        // Rate is measured on processed bytes, not uploaded bytes, so that it
-        // matches the denominator the percentage and ETA use. A run that is
-        // 100% deduplicated still shows honest scan throughput.
+        // Two rates, because they answer different questions and only one of
+        // them is a speed.
+        //
+        // `bytes_per_second` is measured on processed bytes so that it matches
+        // the denominator the percentage and the ETA use. It is a scan rate:
+        // on a second run of the same folder it reads in the gigabytes per
+        // second, because "processing" an unchanged file costs a stat call.
+        //
+        // `upload_bytes_per_second` is measured on what actually left the
+        // machine. That is the one to put in front of a person — a backup
+        // reporting 5.3 GB/s beside "21 MB uploaded" is not telling them
+        // anything true about their connection.
         if let Some((prev_at, prev_bytes)) = self.last_sample {
             let dt = now.saturating_duration_since(prev_at).as_secs_f64();
             if dt >= 0.25 {
@@ -523,12 +537,40 @@ impl ProgressTracker {
             self.last_sample = Some((now, processed));
         }
 
+        // The same maths on uploaded bytes. Decays towards zero rather than
+        // holding its last value, so a run that finishes hashing and stops
+        // sending reads as stopped instead of as still moving at the speed it
+        // managed a minute ago.
+        let uploaded = line.uploaded_bytes;
+        match self.last_upload_sample {
+            Some((prev_at, prev_bytes)) => {
+                let dt = now.saturating_duration_since(prev_at).as_secs_f64();
+                if dt >= 0.25 {
+                    let instant = uploaded.saturating_sub(prev_bytes) as f64 / dt;
+                    self.smoothed_upload_bps = if self.smoothed_upload_bps == 0.0 {
+                        instant
+                    } else {
+                        0.7 * self.smoothed_upload_bps + 0.3 * instant
+                    };
+                    self.last_upload_sample = Some((now, uploaded));
+                }
+            }
+            None => {
+                let elapsed = now.saturating_duration_since(self.started).as_secs_f64();
+                if elapsed > 0.0 {
+                    self.smoothed_upload_bps = uploaded as f64 / elapsed;
+                }
+                self.last_upload_sample = Some((now, uploaded));
+            }
+        }
+
         self.progress.files_processed = line.hashed_files.saturating_add(line.cached_files);
         self.progress.files_cached = line.cached_files;
         self.progress.bytes_processed = processed;
         self.progress.bytes_uploaded = line.uploaded_bytes;
         self.progress.errors_ignored = line.ignored_errors;
         self.progress.bytes_per_second = self.smoothed_bps;
+        self.progress.upload_bytes_per_second = self.smoothed_upload_bps;
         if let Some(total) = line.estimated_total_bytes {
             self.progress.bytes_total = Some(total);
         }
@@ -680,6 +722,59 @@ mod tests {
         assert_eq!(p.files_cached, 1201);
         assert_eq!(p.bytes_total, Some(11_200_000_000));
         assert_eq!(p.estimated_seconds_remaining, Some(130));
+    }
+
+    /// The bug this split exists for.
+    ///
+    /// A second run of a folder whose files are all unchanged "processes"
+    /// gigabytes in a couple of seconds — a stat call each — while nothing at
+    /// all leaves the machine. Reporting that as a speed put **5.3 GB/s** on
+    /// the dashboard beside "21 MB up", which is not a claim about anybody's
+    /// connection.
+    #[test]
+    fn a_run_that_uploads_nothing_reports_no_transfer_speed() {
+        let mut t = ProgressTracker::new();
+        let t0 = Instant::now();
+        t.apply(&ProgressLine::default(), t0);
+
+        // 15 GB "processed", every byte of it cached, none uploaded.
+        let cached = ProgressLine {
+            cached_bytes: 15_000_000_000,
+            cached_files: 136_068,
+            uploaded_bytes: 0,
+            ..ProgressLine::default()
+        };
+        t.apply(&cached, t0 + Duration::from_secs(3));
+
+        let p = t.progress();
+        assert!(p.bytes_per_second > 1_000_000_000.0, "the scan rate is genuinely huge");
+        assert_eq!(
+            p.upload_bytes_per_second, 0.0,
+            "nothing crossed the wire, so there is no transfer speed to report"
+        );
+    }
+
+    /// And when bytes really are being sent, the transfer rate reflects those
+    /// and not the much larger number of bytes merely looked at.
+    #[test]
+    fn the_transfer_rate_counts_only_what_left_the_machine() {
+        let mut t = ProgressTracker::new();
+        let t0 = Instant::now();
+        t.apply(&ProgressLine::default(), t0);
+
+        let sending = ProgressLine {
+            hashed_bytes: 1_000_000_000,
+            cached_bytes: 9_000_000_000,
+            uploaded_bytes: 8_000_000,
+            ..ProgressLine::default()
+        };
+        t.apply(&sending, t0 + Duration::from_secs(1));
+
+        let p = t.progress();
+        assert!((p.upload_bytes_per_second - 8_000_000.0).abs() < 1.0, "{p:?}");
+        // The scan rate is a thousand times larger, which is exactly why the
+        // two must not be the same number.
+        assert!(p.bytes_per_second > p.upload_bytes_per_second * 100.0, "{p:?}");
     }
 
     #[test]

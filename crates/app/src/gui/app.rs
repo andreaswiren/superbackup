@@ -1585,6 +1585,7 @@ impl App {
         match self.nav.current().clone() {
             Route::Dashboard => self.show_dashboard(ui),
             Route::Jobs => self.show_jobs(ui),
+            Route::JobDetail(id) => self.show_job_detail(ui, id),
             Route::JobEditor(id) => self.show_job_editor(ui, id),
             Route::Destinations => self.show_destinations(ui),
             Route::DestinationEditor(id) => self.show_destination_editor(ui, Some(id)),
@@ -1606,6 +1607,7 @@ impl App {
         match self.nav.current().clone() {
             Route::Dashboard => self.dashboard_actions(ui),
             Route::Jobs => self.jobs_actions(ui),
+            Route::JobDetail(id) => self.job_detail_actions(ui, id),
             Route::JobEditor(id) => self.job_editor_actions(ui, id),
             Route::Destinations => self.destinations_actions(ui),
             Route::Providers => self.providers_actions(ui),

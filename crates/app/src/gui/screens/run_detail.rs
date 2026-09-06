@@ -286,7 +286,7 @@ impl App {
             widgets::kv(
                 ui,
                 copy::run::DETAIL_THROUGHPUT_LABEL,
-                &copy::run_detail_throughput(destination.progress.bytes_per_second),
+                &copy::run_detail_throughput(destination.progress.upload_bytes_per_second),
                 false,
             );
 
