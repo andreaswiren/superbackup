@@ -1105,6 +1105,7 @@ impl Handler for MockHandler {
         _ctx: &RequestContext,
         destination: String,
         confirm: String,
+        dry_run: bool,
     ) -> Result<ClearedReply> {
         let _guard = self.enter("dest.clear_repository").await?;
         // The mock enforces the confirmation too, so a test that forgets it
@@ -1116,6 +1117,8 @@ impl Handler for MockHandler {
             removed: 0,
             location: format!("mock://{destination}"),
             preserved: Vec::new(),
+            dry_run,
+            sample: Vec::new(),
             blocked: None,
         })
     }

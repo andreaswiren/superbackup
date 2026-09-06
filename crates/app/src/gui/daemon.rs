@@ -79,6 +79,12 @@ pub enum Intent {
     SaveJobAndRun(String),
     /// A git scan. One at a time — the screen disables its own button while
     /// one is in flight, so a second reply can only be a stale one.
+    /// A rehearsal of clearing one destination's repository: it deletes
+    /// nothing and comes back with what is there, which is what the
+    /// confirmation is then built from.
+    ClearPreview(uuid::Uuid),
+    /// The clearing itself.
+    ClearRepository(uuid::Uuid),
     GitInventory,
     /// A pull, commit, push or trust. The path is not carried: the screen
     /// already knows which repository it asked about, and the reply carries it

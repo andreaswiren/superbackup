@@ -862,6 +862,14 @@ pub struct ClearedReply {
     /// for "emptied" by someone who then reuses the location.
     #[serde(default)]
     pub preserved: Vec<String>,
+    /// Nothing was deleted: this is what *would* go. `removed` is then a count
+    /// of what was found, and for S3 a floor rather than a total.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// A sample of the names that would go, so the caller can recognise the
+    /// place before agreeing to empty it. Never the whole listing.
+    #[serde(default)]
+    pub sample: Vec<String>,
     /// Set when the location could not be emptied. See [`ClearBlocked`].
     #[serde(default)]
     pub blocked: Option<ClearBlocked>,
@@ -1968,6 +1976,7 @@ protocol! {
             params {
                 destination: String = "Destination id, or a unique prefix of its name.",
                 confirm: String = "The destination's exact name, typed back. Anything else is refused.",
+                dry_run: bool = "List what would be erased and delete nothing. The confirmation is still required, so a rehearsal cannot be turned into the real thing by dropping an argument.",
             }
 
         "git.inventory" GitInventory => git_inventory -> GitInventory(GitInventoryReply)

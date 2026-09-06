@@ -528,7 +528,15 @@ impl App {
                     crate::gui::modals::GitCommitState {
                         path: repo.path.clone(),
                         name: repo.name.clone(),
-                        message: String::new(),
+                        // Pre-filled and fully editable. An empty box is what
+                        // produces "wip" and "changes"; a suggestion that says
+                        // what happened, and that superbackup made it, is
+                        // something the user can accept, edit or replace.
+                        message: superbackup_core::git::suggested_commit_message(
+                            &repo.name,
+                            repo.staged + repo.unstaged + repo.untracked + repo.conflicted,
+                            now,
+                        ),
                         include_untracked: true,
                         changes: repo.staged + repo.unstaged + repo.untracked + repo.conflicted,
                     },

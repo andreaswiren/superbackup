@@ -632,6 +632,8 @@ fn is_kopia_blob_name(name: &str) -> bool {
 struct FolderCleared {
     removed: u64,
     preserved: Vec<String>,
+    /// The first few names that went, so a rehearsal can show what it found.
+    sample: Vec<String>,
 }
 
 /// Remove a kopia repository's files from a folder, leaving anything else.
@@ -643,7 +645,7 @@ struct FolderCleared {
 /// worst case is a repository root that also holds something shaped like a
 /// shard directory — and those names come back in `preserved` either way, so
 /// the answer says what survived rather than leaving it to be discovered.
-async fn clear_repository_folder(path: &std::path::Path) -> Result<FolderCleared> {
+async fn clear_repository_folder(path: &std::path::Path, dry_run: bool) -> Result<FolderCleared> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let is_repository = ["kopia.repository.f", "kopia.repository"]
@@ -659,12 +661,20 @@ async fn clear_repository_folder(path: &std::path::Path) -> Result<FolderCleared
 
         let mut removed = 0u64;
         let mut preserved = Vec::new();
+        let mut sample: Vec<String> = Vec::new();
         let entries = std::fs::read_dir(&path)
             .map_err(|e| Error::io(format!("reading {}", path.display()), e))?;
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if !is_kopia_blob_name(&name) {
                 preserved.push(name);
+                continue;
+            }
+            if sample.len() < 12 {
+                sample.push(name);
+            }
+            removed += 1;
+            if dry_run {
                 continue;
             }
             let target = entry.path();
@@ -674,10 +684,10 @@ async fn clear_repository_folder(path: &std::path::Path) -> Result<FolderCleared
                 std::fs::remove_file(&target)
             };
             result.map_err(|e| Error::io(format!("removing {}", target.display()), e))?;
-            removed += 1;
         }
         preserved.sort();
-        Ok(FolderCleared { removed, preserved })
+        sample.sort();
+        Ok(FolderCleared { removed, preserved, sample })
     })
     .await
     .map_err(|e| Error::Config(format!("clearing the folder did not finish: {e}")))?
@@ -1558,6 +1568,7 @@ impl Handler for DaemonHandler {
         _ctx: &RequestContext,
         destination: String,
         confirm: String,
+        dry_run: bool,
     ) -> Result<ClearedReply> {
         self.require_unlocked().await?;
         let config = self.config().await;
@@ -1582,17 +1593,21 @@ impl Handler for DaemonHandler {
                 })?;
                 let keys = self.provider_keys(&provider).await?;
                 let client = superbackup_core::s3::S3Client::new()?;
-                match client.delete_prefix(&provider, &keys, bucket, prefix).await {
-                    Ok(removed) => ClearedReply {
-                        removed: removed as u64,
+                match client.delete_prefix(&provider, &keys, bucket, prefix, dry_run).await {
+                    Ok(removal) => ClearedReply {
+                        removed: removal.count as u64,
                         location,
                         preserved: Vec::new(),
+                        dry_run,
+                        sample: removal.keys,
                         blocked: None,
                     },
                     Err(e) => ClearedReply {
                         removed: 0,
                         location: location.clone(),
                         preserved: Vec::new(),
+                        dry_run,
+                        sample: Vec::new(),
                         blocked: Some(blocked_with_alternative(
                             &e.message(),
                             Some(bucket.clone()),
@@ -1608,11 +1623,13 @@ impl Handler for DaemonHandler {
                         "a folder mirror holds plain files and has no repository to erase".into(),
                     ));
                 };
-                match clear_repository_folder(path).await {
+                match clear_repository_folder(path, dry_run).await {
                     Ok(cleared) => ClearedReply {
                         removed: cleared.removed,
                         location,
                         preserved: cleared.preserved,
+                        dry_run,
+                        sample: cleared.sample,
                         blocked: None,
                     },
                     // "There is no repository here" is not something a
@@ -1624,6 +1641,8 @@ impl Handler for DaemonHandler {
                         removed: 0,
                         location: location.clone(),
                         preserved: Vec::new(),
+                        dry_run,
+                        sample: Vec::new(),
                         blocked: Some(blocked_with_alternative(
                             &e.to_string(),
                             None,
@@ -3745,7 +3764,7 @@ mod tests {
         for name in ["pdf", "src", "q4e"] {
             std::fs::create_dir(dir.join(name)).expect("create");
         }
-        let err = clear_repository_folder(&dir).await.expect_err("must refuse");
+        let err = clear_repository_folder(&dir, false).await.expect_err("must refuse");
         assert!(matches!(err, Error::Validation(_)), "{err:?}");
         for name in ["pdf", "src", "q4e"] {
             assert!(dir.join(name).exists(), "{name} was deleted anyway");
@@ -3767,7 +3786,18 @@ mod tests {
         std::fs::create_dir(dir.join("_superbackup")).expect("create");
         std::fs::write(dir.join("_superbackup").join("README.txt"), b"hi").expect("write");
 
-        let cleared = clear_repository_folder(&dir).await.expect("cleared");
+        // A rehearsal first: it must find exactly what the real run will
+        // delete, and leave every one of them in place. A dry run that got
+        // this wrong would be worse than none — it is the evidence the user
+        // agrees on before the irreversible half.
+        let rehearsal = clear_repository_folder(&dir, true).await.expect("dry run");
+        assert_eq!(rehearsal.removed, 5, "the rehearsal counts what the real run would take");
+        assert_eq!(rehearsal.preserved, vec!["_superbackup".to_string()]);
+        assert!(dir.join("kopia.repository.f").exists(), "a dry run deletes nothing");
+        assert!(dir.join("p00").exists(), "including directories");
+        assert!(rehearsal.sample.contains(&"p00".to_string()), "{:?}", rehearsal.sample);
+
+        let cleared = clear_repository_folder(&dir, false).await.expect("cleared");
         assert_eq!(cleared.removed, 5, "kopia.repository.f, xe1.f, p00, q4e, _lo");
         assert_eq!(cleared.preserved, vec!["_superbackup".to_string()]);
         assert!(dir.join("_superbackup/README.txt").exists(), "the identities survive");

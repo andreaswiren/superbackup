@@ -365,6 +365,7 @@ async fn every_command_answers_or_refuses_cleanly() {
         Request::DestinationClearRepository {
             destination: mirror_id.to_string(),
             confirm: "not-the-name".into(),
+            dry_run: true,
         }
     );
 

@@ -24,7 +24,7 @@ use super::daemon::{self, Bridge, Daemon, Incoming, Intent};
 use super::data::{Action, Data, Gate};
 use super::format;
 use super::icons::Icon;
-use super::modals::{self, Modal};
+use super::modals::{self, Confirm, ConfirmAction, Modal};
 use super::nav::{Nav, Route, Section, SettingsSection};
 use super::screens;
 use super::theme::{self, radius, size, space, Tokens, Type};
@@ -419,6 +419,55 @@ impl App {
                     self.toasts.success(copy::toast_repo_created(&name));
                 }
                 self.screens.destination_editor.repository_done(repo.clone());
+                self.ask(Intent::Destinations, Request::DestinationList {});
+            }
+            (Intent::ClearPreview(id), Reply::Cleared(cleared)) => {
+                self.screens.destination_editor.clearing = None;
+                let name =
+                    self.data.destination(id).map(|d| d.name.clone()).unwrap_or_default();
+                if let Some(blocked) = &cleared.blocked {
+                    // Object Lock or a retention policy: nobody can delete
+                    // these, including us, so the answer is the way round it
+                    // rather than a retry.
+                    let mut confirm = Confirm::new(
+                        copy::dest::CLEAR_BLOCKED_TITLE,
+                        blocked.reason.clone(),
+                        copy::action::CLOSE,
+                    )
+                    .safe()
+                    .bullet(format!("Use instead: {}", blocked.suggested_location))
+                    .bullet(format!("Delete by hand: {}", blocked.delete_by_hand));
+                    if let Some(bucket) = &blocked.bucket {
+                        confirm = confirm.bullet(format!("Bucket: {bucket}"));
+                    }
+                    if blocked.reupload_required {
+                        confirm = confirm
+                            .danger_bullet(copy::dest::CLEAR_REUPLOAD);
+                    }
+                    self.modal = Some(Modal::Confirm(confirm.action(ConfirmAction::Nothing)));
+                } else if cleared.removed == 0 {
+                    self.toasts.info(copy::dest::CLEAR_EMPTY);
+                } else {
+                    // The names the rehearsal found become the bullets, so
+                    // what is agreed to is a list of real objects rather than
+                    // the idea of a prefix.
+                    let mut confirm = Confirm::new(
+                        copy::dest::CLEAR_TITLE,
+                        copy::dest::CLEAR_BODY,
+                        copy::dest::CLEAR_VERB,
+                    )
+                    .bullet(format!("{} in {}", cleared.removed, cleared.location))
+                    .typed_confirmation(name.clone());
+                    for object in cleared.sample.iter().take(6) {
+                        confirm = confirm.danger_bullet(object.clone());
+                    }
+                    self.modal = Some(Modal::Confirm(
+                        confirm.action(ConfirmAction::ClearRepository { id: *id, name }),
+                    ));
+                }
+            }
+            (Intent::ClearRepository(_), Reply::Cleared(cleared)) => {
+                self.toasts.success(copy::toast_cleared(cleared.removed, &cleared.location));
                 self.ask(Intent::Destinations, Request::DestinationList {});
             }
             (Intent::GitInventory, Reply::GitInventory(reply)) => {

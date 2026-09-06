@@ -51,6 +51,10 @@ pub enum ConfirmAction {
     /// turns off a security check, and the user is the only one who can say
     /// whether they recognise the folder.
     GitTrust(std::path::PathBuf),
+    /// Erase the repository at a destination so it can become a copy. The
+    /// name is carried because the daemon requires it typed back, and the
+    /// dialog has already made the user type it.
+    ClearRepository { id: Uuid, name: String },
     Nothing,
 }
 
@@ -922,6 +926,16 @@ fn perform(app: &mut App, confirm: &Confirm) {
                 path,
             );
         }
+        ConfirmAction::ClearRepository { id, name } => {
+            app.ask(
+                Intent::ClearRepository(*id),
+                superbackup_core::ipc::protocol::Request::DestinationClearRepository {
+                    destination: id.to_string(),
+                    confirm: name.clone(),
+                    dry_run: false,
+                },
+            );
+        }
         ConfirmAction::Nothing => {}
     }
 }
@@ -1664,9 +1678,14 @@ fn show_git_commit(
                     t.text_secondary,
                 );
                 ui.add_space(space::L);
+                // Multi-line, because the suggestion has a body and a
+                // trailer, and a single-line field would hide both behind a
+                // horizontal scroll the moment it was pre-filled.
                 widgets::Field::new()
                     .label(copy::git::COMMIT_MESSAGE)
-                    .placeholder(copy::git::COMMIT_MESSAGE_HINT)
+                    .helper(copy::git::COMMIT_MESSAGE_HINT)
+                    .placeholder(copy::git::COMMIT_MESSAGE_PLACEHOLDER)
+                    .rows(6)
                     .width(440.0)
                     .show(ui, &mut state.message);
                 ui.add_space(space::L);

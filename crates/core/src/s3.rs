@@ -976,6 +976,23 @@ pub struct ObjectSummary {
 /// round-trip once per object.
 const MAX_DELETE_BATCH: u32 = 200;
 
+/// How many object names a removal reports back.
+///
+/// Enough to recognise the place; far short of a repository's blob count. A
+/// caller wanting the whole listing has `list_objects_v2`.
+const MAX_REPORTED_KEYS: usize = 12;
+
+/// What a [`S3Client::delete_prefix`] removed, or would remove.
+#[derive(Debug, Clone, Default)]
+pub struct Removal {
+    /// Objects deleted — or, for a dry run, objects found on the first page,
+    /// which is a floor rather than a total.
+    pub count: u32,
+    /// The first few keys, so the answer can show *what* is there rather than
+    /// only how much.
+    pub keys: Vec<String>,
+}
+
 /// One page of `ListObjectsV2`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ObjectListing {
@@ -1218,6 +1235,11 @@ impl S3Client {
     /// * **It stops at the first failure** and reports how far it got, rather
     ///   than pressing on and returning a count that overstates what happened.
     ///
+    /// * **`dry_run` lists without deleting.** Nothing about a prefix on a
+    ///   screen proves it is the one the user thinks it is, and the object
+    ///   names are the only evidence available before the fact. A destructive
+    ///   command that cannot be rehearsed is one people run blind.
+    ///
     /// Establishing that the user meant it is the caller's job, not this
     /// function's.
     pub async fn delete_prefix(
@@ -1226,7 +1248,8 @@ impl S3Client {
         keys: &S3Keys,
         bucket: &str,
         prefix: &str,
-    ) -> std::result::Result<u32, S3Error> {
+        dry_run: bool,
+    ) -> std::result::Result<Removal, S3Error> {
         let bucket = bucket.trim();
         validate_bucket(bucket)?;
         let prefix = prefix.trim();
@@ -1242,11 +1265,12 @@ impl S3Client {
         let (host, base) = self.address(&endpoint, bucket);
 
         let mut deleted = 0u32;
+        let mut seen: Vec<String> = Vec::new();
         loop {
             let listing =
                 self.list_objects_v2(provider, keys, bucket, prefix, MAX_DELETE_BATCH).await?;
             if listing.keys.is_empty() {
-                return Ok(deleted);
+                return Ok(Removal { count: deleted, keys: seen });
             }
             for object in &listing.keys {
                 if !object.key.starts_with(prefix) {
@@ -1255,6 +1279,16 @@ impl S3Client {
                                  nothing further was deleted"
                             .to_string(),
                     });
+                }
+                // Capped: a repository holds thousands of blobs and nobody
+                // reads a list of all of them. The point is to recognise the
+                // place before agreeing to empty it, and a handful does that.
+                if seen.len() < MAX_REPORTED_KEYS {
+                    seen.push(object.key.clone());
+                }
+                if dry_run {
+                    deleted += 1;
+                    continue;
                 }
                 let path = format!("{base}/{}", object.key);
                 self.send(
@@ -1271,7 +1305,13 @@ impl S3Client {
                 deleted += 1;
             }
             if !listing.truncated {
-                return Ok(deleted);
+                return Ok(Removal { count: deleted, keys: seen });
+            }
+            if dry_run {
+                // Nothing was removed, so the next listing returns this same
+                // page for ever. One page already answers what a dry run is
+                // for; the count is reported as a floor, not a total.
+                return Ok(Removal { count: deleted, keys: seen });
             }
         }
     }

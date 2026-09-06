@@ -529,6 +529,18 @@ pub enum DestinationCommand {
         destination: String,
     },
 
+    /// Erase the repository stored at a destination.
+    ///
+    /// THIS DESTROYS EVERY BACKUP THERE, and there is no undo. Its one
+    /// intended use is a destination that is to become a copy of another:
+    /// `repository sync-to` refuses a location that already holds a different
+    /// repository, and this is how you empty it.
+    ///
+    /// Rehearse it first with --dry-run, which lists what would go and deletes
+    /// nothing.
+    #[command(name = "clear-repository")]
+    ClearRepository(DestinationClearArgs),
+
     /// Connect to a repository that already exists.
     Connect {
         #[arg(value_name = "DEST")]
@@ -697,6 +709,23 @@ pub enum GitCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct DestinationClearArgs {
+    #[arg(value_name = "DEST")]
+    pub destination: String,
+
+    /// The destination's exact name, typed back. Anything else is refused.
+    ///
+    /// Required even with --dry-run, so that turning a rehearsal into the real
+    /// thing is one flag removed rather than one flag added.
+    #[arg(long, value_name = "NAME")]
+    pub confirm: String,
+
+    /// List what would be erased and delete nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct GitListArgs {
     /// Only look under this job's sources. Default: every job's.
     #[arg(long, value_name = "JOB")]
@@ -729,9 +758,9 @@ pub struct GitCommitArgs {
     #[arg(value_name = "PATH")]
     pub path: String,
 
-    /// The commit message.
+    /// The commit message. Omit it to be shown a suggested one to edit.
     #[arg(short, long, value_name = "MESSAGE")]
-    pub message: String,
+    pub message: Option<String>,
 
     /// Leave files git has never seen out of the commit. They are included by
     /// default, because that is usually where new work is.

@@ -801,6 +801,34 @@ pub struct ActionOutcome {
     pub detail: String,
 }
 
+/// The trailer that says a commit was made from here.
+///
+/// A `Co-authored-by`-style trailer rather than a rewritten author: the commit
+/// is still the *user's*, made with their identity, and claiming otherwise
+/// would put a name they never chose on their history. This records the tool
+/// that pressed the button, which is what someone looking at an unfamiliar
+/// commit six months later actually wants to know.
+pub const COMMIT_TRAILER: &str = "Committed-with: superbackup";
+
+/// A commit message to start from, which the user is expected to edit.
+///
+/// It says what is being committed and why it was offered — a folder whose
+/// work existed nowhere else — because "wip" and "changes" are what get typed
+/// when a box is empty, and neither is any use later. Nothing here is forced:
+/// this is a default in a text field, not a template with holes.
+pub fn suggested_commit_message(repo: &str, changes: u32, at: DateTime<Utc>) -> String {
+    let what = if changes == 1 { "1 change" } else { &format!("{changes} changes") };
+    format!(
+        "Save uncommitted work in {repo}
+
+         {what} committed from superbackup on {}, because this folder held work that existed 
+         nowhere but this machine.
+
+         {COMMIT_TRAILER}",
+        at.format("%-d %B %Y")
+    )
+}
+
 /// `git pull --ff-only`.
 ///
 /// Fast-forward only, always. A plain `pull` on a diverged branch either
@@ -980,6 +1008,7 @@ fn first_line(text: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn repo(name: &str) -> GitRepo {
         GitRepo {
@@ -1153,6 +1182,44 @@ mod tests {
         let mut broken = repo("broken");
         broken.error = Some("index file corrupt".into());
         assert_eq!(broken.state(), RepoState::Unreadable);
+    }
+
+    /// The suggestion is a starting point, and it must say enough to be worth
+    /// keeping: what happened, where, when, and that superbackup made it. A
+    /// message nobody can interpret six months later is what an empty box
+    /// produces, which is the whole reason this exists.
+    #[test]
+    fn the_suggested_message_says_what_happened_and_who_made_it() {
+        let at = Utc.with_ymd_and_hms(2026, 9, 6, 12, 0, 0).single().expect("a date");
+        let message = suggested_commit_message("wasm-openra", 71, at);
+
+        let subject = message.lines().next().expect("a subject");
+        assert!(subject.contains("wasm-openra"), "{subject}");
+        assert!(subject.len() < 72, "a subject line is short: {subject}");
+        assert!(message.contains("71 changes"));
+        assert!(message.contains("2026"));
+        assert!(message.contains(COMMIT_TRAILER), "the trailer records the tool");
+        // A blank line after the subject, or git treats the whole thing as one.
+        assert_eq!(message.lines().nth(1), Some(""), "{message}");
+
+        // Singular reads as English rather than "1 changes".
+        let one = suggested_commit_message("notes", 1, at);
+        assert!(one.contains("1 change committed"), "{one}");
+        assert!(!one.contains("1 changes"), "{one}");
+    }
+
+    /// The trailer names the tool; it must not claim to be the author. The
+    /// commit is the user's, made under their own git identity, and putting a
+    /// name they never chose on their history would be a lie in their log.
+    #[test]
+    fn the_trailer_records_the_tool_rather_than_replacing_the_author() {
+        assert!(COMMIT_TRAILER.contains("superbackup"));
+        for authorship in ["Author:", "Signed-off-by", "Co-authored-by"] {
+            assert!(
+                !COMMIT_TRAILER.contains(authorship),
+                "{COMMIT_TRAILER} must not claim authorship"
+            );
+        }
     }
 
     #[test]

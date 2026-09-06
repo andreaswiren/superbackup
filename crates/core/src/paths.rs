@@ -78,7 +78,20 @@ impl Paths {
     /// A fully self-contained layout under one directory. Used by
     /// `SUPERBACKUP_HOME`, portable installs, and every integration test.
     pub fn rooted_at(root: impl Into<PathBuf>, service_scope: bool) -> Paths {
+        // Absolute, always. `--home dist/demo-home` and the same folder named
+        // in full are one directory, and a client that spelled it the short
+        // way used to hash a different key and report "nothing is listening"
+        // about the daemon it was looking straight at. The daemon also runs
+        // somewhere else entirely — as a service, quite possibly in
+        // `C:\Windows\System32` — where a relative root names a folder that
+        // does not exist.
+        //
+        // `std::path::absolute` rather than `canonicalize`: the root usually
+        // does not exist yet on a first run, and canonicalising a missing path
+        // fails. It also returns Windows' `\?\` form, which then reads back
+        // in error messages as something the user never typed.
         let root = root.into();
+        let root = std::path::absolute(&root).unwrap_or(root);
         Paths {
             config_dir: root.join("config"),
             data_dir: root.join("data"),
@@ -376,6 +389,27 @@ mod tests {
     /// This is not hypothetical: `SUPERBACKUP_HOME=C:/x` from a bash shell and
     /// the same path with backslashes from PowerShell addressed different
     /// pipes, so the CLI reported "nothing is listening" about a daemon it had
+    /// One folder, two spellings, one daemon.
+    ///
+    /// `--home dist/demo-home` from the repository root and the same folder
+    /// named in full are the same place, and a user who typed the short form
+    /// was told nothing was listening on a pipe the daemon was serving.
+    #[test]
+    fn a_relative_home_addresses_the_same_instance_as_the_absolute_one() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let relative = super::Paths::rooted_at("some-home", false);
+        let absolute = super::Paths::rooted_at(cwd.join("some-home"), false);
+        assert_eq!(
+            relative.ipc_endpoint(),
+            absolute.ipc_endpoint(),
+            "the same folder, spelled two ways, must be one daemon"
+        );
+        assert_eq!(relative.config_dir, absolute.config_dir);
+        // And the stored path is the absolute one, because the daemon may be
+        // running from a completely different working directory.
+        assert!(relative.config_dir.is_absolute(), "{:?}", relative.config_dir);
+    }
+
     /// started itself moments earlier.
     #[test]
     fn one_directory_spelled_two_ways_is_one_endpoint() {
@@ -410,18 +444,26 @@ mod tests {
     }
     use super::*;
 
+    /// A root already absolute on this platform, so the test asserts the
+    /// layout rather than accidentally asserting how `absolute` rewrites a
+    /// Unix-shaped path on Windows.
+    fn absolute_root(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
     #[test]
     fn rooted_layout_is_self_contained() {
-        let p = Paths::rooted_at("/tmp/sb-test", false);
-        assert!(p.config_file().starts_with("/tmp/sb-test"));
+        let root = absolute_root("sb-test");
+        let p = Paths::rooted_at(&root, false);
+        assert!(p.config_file().starts_with(&root), "{:?}", p.config_file());
         assert!(p.vault_file().ends_with("config.sbvault"));
-        assert!(p.state_file().starts_with("/tmp/sb-test"));
+        assert!(p.state_file().starts_with(&root), "{:?}", p.state_file());
     }
 
     #[test]
     fn service_endpoint_differs_from_user_endpoint() {
-        let user = Paths::rooted_at("/tmp/sb-a", false);
-        let svc = Paths::rooted_at("/tmp/sb-b", true);
+        let user = Paths::rooted_at(absolute_root("sb-a"), false);
+        let svc = Paths::rooted_at(absolute_root("sb-b"), true);
         assert_ne!(user.ipc_endpoint(), svc.ipc_endpoint());
     }
 

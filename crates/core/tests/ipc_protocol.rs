@@ -180,6 +180,7 @@ fn sample_requests() -> Vec<Request> {
         Request::DestinationClearRepository {
             destination: "drive".into(),
             confirm: "drive".into(),
+            dry_run: true,
         },
         Request::DestinationCheckKey {
             destination: "drive".into(),

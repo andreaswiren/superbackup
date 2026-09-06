@@ -911,6 +911,18 @@ pub mod dest {
     pub const TITLE: &str = "Destinations";
     pub const NEW: &str = "New destination";
     pub const SEARCH: &str = "Search destinations";
+    pub const CLEAR: &str = "Clear repository…";
+    pub const CLEAR_HINT: &str =
+        "Erase the repository stored here so this destination can become a copy. Shows you what is there first.";
+    pub const CLEAR_TITLE: &str = "Erase every backup stored here?";
+    pub const CLEAR_BODY: &str =
+        "A copy is the same repository in a second place, so it has to start empty. This deletes what is there now, and there is no undo.";
+    pub const CLEAR_VERB: &str = "Erase it";
+    pub const CLEAR_BLOCKED_TITLE: &str = "These backups cannot be deleted";
+    pub const CLEAR_REUPLOAD: &str =
+        "The new location is a fresh repository sharing no data with the old one, so the first run after the move uploads everything again.";
+    pub const CLEAR_EMPTY: &str =
+        "There is nothing here to erase — this location is already empty, so the copy can start.";
     pub const FILTER_KIND: &str = "Kind";
     pub const AUTO_FOUND: &str = "Found automatically";
     pub const STATUS_READY: &str = "Ready";
@@ -1478,7 +1490,9 @@ pub mod git {
 
     pub const COMMIT_TITLE: &str = "Commit everything in this repository";
     pub const COMMIT_MESSAGE: &str = "Message";
-    pub const COMMIT_MESSAGE_HINT: &str = "What changed, in a line";
+    pub const COMMIT_MESSAGE_HINT: &str =
+        "Suggested for you, and yours to change. The commit is made under your own git identity;          the trailer only records that superbackup made it.";
+    pub const COMMIT_MESSAGE_PLACEHOLDER: &str = "What changed, and why";
     pub const COMMIT_UNTRACKED: &str = "Include files git has never seen";
     pub const COMMIT_UNTRACKED_HINT: &str =
         "New files are where new work usually is. Anything your .gitignore excludes stays excluded either way.";
@@ -2525,6 +2539,16 @@ pub fn toast_provider_reachable(name: &str, detail: &str) -> String {
         format!("{name} answered.")
     } else {
         format!("{name} answered. {detail}")
+    }
+}
+
+/// What a clear removed, and from where. Naming the place matters: a user who
+/// has two destinations pointed at the same bucket needs to know which one.
+pub fn toast_cleared(removed: u64, location: &str) -> String {
+    match removed {
+        0 => format!("{location} was already empty."),
+        1 => format!("1 object erased from {location}."),
+        n => format!("{n} objects erased from {location}."),
     }
 }
 

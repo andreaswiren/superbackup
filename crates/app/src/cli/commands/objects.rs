@@ -13,7 +13,7 @@ use superbackup_core::model::{
 
 use crate::cli::args::{
     DestinationAddArgs, DestinationCommand, DestinationEditArgs, DestinationMaintainArgs,
-    DestinationRemoveArgs, GitCommand, GitListArgs, JobAddArgs, JobCommand, JobEditArgs,
+    DestinationClearArgs, DestinationRemoveArgs, GitCommand, GitListArgs, JobAddArgs, JobCommand, JobEditArgs,
     JobListArgs, JobPreviewArgs, JobRemoveArgs, JobTemplate, PassphraseMode, ProjectCommand,
     ProviderAddArgs, ProviderCommand, ProviderEditArgs, ProviderFlavour, ProviderRemoveArgs,
 };
@@ -436,6 +436,7 @@ pub fn destination(ctx: &mut Ctx, command: DestinationCommand) -> CliResult<Outc
         DestinationCommand::Edit(args) => destination_edit(ctx, &daemon, args),
         DestinationCommand::Remove(args) => destination_remove(ctx, &daemon, args),
         DestinationCommand::Test { destination } => destination_test(ctx, &daemon, &destination),
+        DestinationCommand::ClearRepository(args) => destination_clear(ctx, &daemon, args),
         DestinationCommand::Connect { destination } => {
             destination_connect(ctx, &daemon, &destination)
         }
@@ -1313,15 +1314,7 @@ pub fn git(ctx: &mut Ctx, command: GitCommand) -> CliResult<Outcome> {
     match command {
         GitCommand::List(args) => git_list(ctx, &daemon, args),
         GitCommand::Pull(args) => git_action(ctx, &daemon, Request::GitPull { path: args.path }),
-        GitCommand::Commit(args) => git_action(
-            ctx,
-            &daemon,
-            Request::GitCommit {
-                path: args.path,
-                message: args.message,
-                include_untracked: !args.tracked_only,
-            },
-        ),
+        GitCommand::Commit(args) => git_commit(ctx, &daemon, args),
         GitCommand::Push(args) => git_action(ctx, &daemon, Request::GitPush { path: args.path }),
         GitCommand::Trust(args) => git_action(ctx, &daemon, Request::GitTrust { path: args.path }),
     }
@@ -1420,6 +1413,45 @@ fn git_list(ctx: &mut Ctx, daemon: &Daemon, args: GitListArgs) -> CliResult<Outc
     Outcome::data(inventory)
 }
 
+/// Commit, with a suggested message when none was given.
+///
+/// The suggestion is offered for editing rather than used silently. A tool
+/// that writes its own text into someone's history without showing it first is
+/// one they stop trusting the day they read it back.
+fn git_commit(ctx: &mut Ctx, daemon: &Daemon, args: crate::cli::args::GitCommitArgs) -> CliResult<Outcome> {
+    let message = match args.message {
+        Some(message) => message,
+        None => {
+            let suggested = superbackup_core::git::suggested_commit_message(
+                std::path::Path::new(&args.path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| args.path.clone())
+                    .as_str(),
+                0,
+                Utc::now(),
+            );
+            // `--no-input` is what scripts and agents set, and a prompt there
+            // looks exactly like a hang. Refuse with the suggestion in the
+            // hint, so the next invocation can paste it.
+            if ctx.global.no_input {
+                return Err(CliError::usage("a commit needs a message")
+                    .with_hint(format!("Try: --message \"{}\"", suggested.lines().next().unwrap_or(""))));
+            }
+            prompt::ask_with_default(ctx, "Commit message", &suggested)?
+        }
+    };
+    git_action(
+        ctx,
+        daemon,
+        Request::GitCommit {
+            path: args.path,
+            message,
+            include_untracked: !args.tracked_only,
+        },
+    )
+}
+
 fn git_action(ctx: &mut Ctx, daemon: &Daemon, request: Request) -> CliResult<Outcome> {
     let outcome = reply!(daemon, request, GitAction)?.outcome;
     if outcome.ok {
@@ -1431,4 +1463,65 @@ fn git_action(ctx: &mut Ctx, daemon: &Daemon, request: Request) -> CliResult<Out
         return Err(CliError::new(ErrorCode::Config, outcome.detail.clone()));
     }
     Outcome::data(outcome)
+}
+
+/// Erase the repository at a destination, or rehearse doing so.
+///
+/// The rehearsal is the point. A prefix on a screen does not prove it is the
+/// one you think it is, and the object names are the only evidence available
+/// before the fact — after it there is none, because the objects are gone.
+fn destination_clear(
+    ctx: &mut Ctx,
+    daemon: &Daemon,
+    args: DestinationClearArgs,
+) -> CliResult<Outcome> {
+    let cleared = reply!(
+        daemon,
+        Request::DestinationClearRepository {
+            destination: args.destination.clone(),
+            confirm: args.confirm.clone(),
+            dry_run: args.dry_run,
+        },
+        Cleared
+    )?;
+
+    if let Some(blocked) = &cleared.blocked {
+        // Object Lock, a retention policy, a read-only volume. Nothing about
+        // retrying helps, so the answer is the way round it.
+        ctx.ui.warn(&blocked.reason);
+        ctx.ui.blank();
+        ctx.ui.line(format!("Use this location instead:  {}", blocked.suggested_location));
+        if let Some(bucket) = &blocked.bucket {
+            ctx.ui.line(format!("Bucket:                     {bucket}"));
+        }
+        ctx.ui.line(format!("Delete by hand:             {}", blocked.delete_by_hand));
+        if blocked.reupload_required {
+            ctx.ui.blank();
+            ctx.ui.note(
+                "The new location is a fresh repository sharing no data with the old one, so the                  first run after the move uploads everything again.",
+            );
+        }
+        return Outcome::negative(cleared);
+    }
+
+    let verb = if cleared.dry_run { "would be erased" } else { "erased" };
+    ctx.ui.line(format!("{} {verb} from {}", cleared.removed, cleared.location));
+    for name in &cleared.sample {
+        ctx.ui.line(format!("  {name}"));
+    }
+    if cleared.sample.len() < cleared.removed as usize {
+        ctx.ui.line(format!("  … and {} more", cleared.removed as usize - cleared.sample.len()));
+    }
+    if !cleared.preserved.is_empty() {
+        ctx.ui.blank();
+        ctx.ui.line("Left in place, because they are not part of the repository:");
+        for name in &cleared.preserved {
+            ctx.ui.line(format!("  {name}"));
+        }
+    }
+    if cleared.dry_run {
+        ctx.ui.blank();
+        ctx.ui.note("Nothing was deleted. Run the same command without --dry-run to do it.");
+    }
+    Outcome::data(cleared)
 }

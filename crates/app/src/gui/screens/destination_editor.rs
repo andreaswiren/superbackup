@@ -88,6 +88,9 @@ pub struct State {
     pub show_errors: bool,
     pub pin_offline: bool,
     pub mirror_prune: bool,
+    /// The destination whose repository is being rehearsed for clearing, so
+    /// the reply can be matched to the request that asked for it.
+    pub clearing: Option<Uuid>,
     /// The destination whose encryption key is being checked right now.
     pub key_check_running: Option<Uuid>,
     /// The last check's outcome, keyed by destination so a stale reply for a
@@ -1796,6 +1799,7 @@ impl App {
         let mut save = false;
         let mut verify = false;
         let mut remove = false;
+        let mut clear = false;
         ui.horizontal(|ui| {
             let mut button = Button::primary(copy::action::SAVE_CHANGES).enabled(report.ok());
             if let Some(summary) = report.summary() {
@@ -1822,6 +1826,23 @@ impl App {
                         .clicked()
                 {
                     remove = true;
+                }
+                // Only for a destination that is meant to be a copy of
+                // another. That is the one situation where emptying a
+                // location is the remedy rather than data loss: `sync-to`
+                // refuses a place holding a different repository, tells the
+                // user to empty it, and until now superbackup gave them no way
+                // to. Elsewhere it would just be a delete button next to the
+                // backups.
+                let is_replica =
+                    existing.map(|d| d.replicate_from.is_some()).unwrap_or(false);
+                if is_replica
+                    && Button::danger_ghost(copy::dest::CLEAR)
+                        .show(ui)
+                        .on_hover_text(copy::dest::CLEAR_HINT)
+                        .clicked()
+                {
+                    clear = true;
                 }
             });
         });
@@ -1852,6 +1873,22 @@ impl App {
                 };
                 self.ask(intent, request);
                 self.go(Route::Destinations);
+            }
+        }
+        if clear {
+            if let Some(destination) = existing {
+                // A rehearsal first, always. The confirmation dialog is built
+                // from what the rehearsal found, so the user agrees to a list
+                // of real object names rather than to the idea of a prefix.
+                self.screens.destination_editor.clearing = Some(destination.id);
+                self.ask(
+                    Intent::ClearPreview(destination.id),
+                    Request::DestinationClearRepository {
+                        destination: destination.id.to_string(),
+                        confirm: destination.name.clone(),
+                        dry_run: true,
+                    },
+                );
             }
         }
         if verify {
