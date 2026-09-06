@@ -530,16 +530,31 @@ impl App {
                 });
         });
 
+        // Whether the panel was opened *this frame*, so it can be scrolled to.
+        // Nineteen repositories is a table taller than the window, and a
+        // details panel that renders below it is a details panel the user
+        // never sees: they click a row near the top and nothing appears to
+        // happen, because the answer is thirteen hundred pixels down.
+        let mut just_opened = false;
         if let Some(path) = expand {
             // Clicking the open repository closes it, which is what a person
             // expects of a row that expanded when they clicked it.
             let already = self.screens.git.expanded.as_ref() == Some(&path);
             self.screens.git.expanded = if already { None } else { Some(path) };
+            just_opened = !already;
         }
         if let Some(path) = self.screens.git.expanded.clone() {
             if let Some(repo) = rows.iter().find(|r| r.path == path).cloned() {
                 ui.add_space(space::M);
+                let before = ui.cursor().top();
                 self.git_details(ui, &repo, now);
+                if just_opened {
+                    let rect = egui::Rect::from_min_max(
+                        egui::pos2(ui.min_rect().left(), before),
+                        egui::pos2(ui.min_rect().right(), ui.cursor().top()),
+                    );
+                    ui.scroll_to_rect(rect, Some(Align::Center));
+                }
             } else {
                 // The repository is no longer in the filtered list — the
                 // filter changed, or a scan dropped it. Close rather than
@@ -619,6 +634,7 @@ impl App {
         let t = theme::tokens(ui.ctx());
         let mut open_url: Option<String> = None;
         let mut set_external: Option<bool> = None;
+        let mut read_document: Option<String> = None;
 
         widgets::card(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -640,6 +656,24 @@ impl App {
                 });
             });
             widgets::text(ui, repo.path.display().to_string(), Type::MonoSmall, t.text_muted);
+
+            if !repo.documents.is_empty() {
+                ui.add_space(space::L);
+                widgets::text(ui, copy::git::DOCUMENTS, Type::H3, t.text_primary);
+                ui.add_space(space::XS);
+                ui.horizontal_wrapped(|ui| {
+                    for document in &repo.documents {
+                        if Button::secondary(&document.name)
+                            .icon(Icon::FileText)
+                            .compact()
+                            .show(ui)
+                            .clicked()
+                        {
+                            read_document = Some(document.name.clone());
+                        }
+                    }
+                });
+            }
 
             ui.add_space(space::L);
             widgets::text(ui, copy::git::REMOTES, Type::H3, t.text_primary);
@@ -756,6 +790,28 @@ impl App {
 
         if let Some(url) = open_url {
             let _ = open::that_detached(&url);
+        }
+        if let Some(document) = read_document {
+            // The modal opens empty and fills in when the daemon answers, so
+            // the click is acknowledged immediately rather than after a disk
+            // read that might be on a network drive.
+            self.modal = Some(crate::gui::modals::Modal::Document(
+                crate::gui::modals::DocumentState {
+                    title: format!("{document} — {}", repo.name),
+                    path: repo.path.join(&document).display().to_string(),
+                    content: String::new(),
+                    truncated: false,
+                    loading: true,
+                    error: None,
+                },
+            ));
+            self.ask(
+                Intent::GitDocument,
+                Request::GitReadDocument {
+                    path: repo.path.display().to_string(),
+                    document,
+                },
+            );
         }
         if let Some(external) = set_external {
             self.screens.git.acting = true;

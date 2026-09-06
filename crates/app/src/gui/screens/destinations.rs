@@ -70,10 +70,20 @@ impl State {
     /// `OkNoRepository` is deliberately included: the destination is fine and
     /// the user still has one step left, which is worth saying — but as
     /// information, not as an error.
+    ///
+    /// So is plain `Ok`. It used to return `None`, and the toast that would
+    /// have said so is suppressed on this very page on the grounds that the
+    /// list "renders this result itself" — which it did for every outcome
+    /// except success. Pressing Verify on a destination that was completely
+    /// fine therefore blinked and reported nothing at all, which reads as a
+    /// button that does not work.
     pub fn probe_message(&self, id: Uuid) -> Option<(widgets::BannerKind, &str)> {
         match self.probes.get(&id) {
             Some(ProbeState::Failed(message)) => Some((widgets::BannerKind::Danger, message)),
             Some(ProbeState::OkNoRepository(message)) => Some((widgets::BannerKind::Info, message)),
+            Some(ProbeState::Ok) => {
+                Some((widgets::BannerKind::Success, copy::dest::VERIFY_OK))
+            }
             _ => None,
         }
     }

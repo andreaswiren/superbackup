@@ -177,6 +177,7 @@ fn sample_requests() -> Vec<Request> {
         Request::GitPush { path: "/w/thing".into() },
         Request::GitTrust { path: "/w/thing".into() },
         Request::GitSetExternal { path: "/w/thing".into(), external: true },
+        Request::GitReadDocument { path: "/w/thing".into(), document: "README.md".into() },
         Request::DestinationTest { destination: "drive".into() },
         Request::DestinationClearRepository {
             destination: "drive".into(),

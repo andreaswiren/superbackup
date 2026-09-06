@@ -258,6 +258,30 @@ impl DaemonHandler {
         }
     }
 
+    /// Record that this destination was reached and written to just now.
+    ///
+    /// `Destination::last_verified_at` existed, was cleared on a key rotation,
+    /// and was set by nothing at all — so every destination read "Last
+    /// verified: never" however many times it had been verified, including
+    /// ones a backup had just successfully written to.
+    ///
+    /// A failure to persist it is swallowed: a bookkeeping timestamp must
+    /// never turn a successful check into a reported failure.
+    async fn mark_destination_verified(&self, id: Uuid) {
+        let now = Utc::now();
+        if let Err(e) = self
+            .commit(move |config| {
+                if let Some(slot) = config.destinations.iter_mut().find(|d| d.id == id) {
+                    slot.last_verified_at = Some(now);
+                }
+                Ok(())
+            })
+            .await
+        {
+            tracing::warn!(error = %e, "could not record the destination check timestamp");
+        }
+    }
+
     /// Reach an S3 destination without a repository key.
     ///
     /// Three facts in at most three round trips: the bucket answers and the
@@ -1625,6 +1649,59 @@ impl Handler for DaemonHandler {
         Ok(GitActionReply { outcome })
     }
 
+    async fn git_read_document(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        document: String,
+    ) -> Result<DocumentReply> {
+        /// A document longer than this is not being read on a panel; the
+        /// beginning of it plus a note is more useful than a wall.
+        const MAX_BYTES: usize = 512 * 1024;
+
+        let root = self.git_target(&path).await?;
+
+        // Bounded by *name* as well as by location. This reads a file the
+        // caller names, so the file name is attacker-controlled input: a
+        // `document` of `../../../.ssh/id_rsa` inside a folder that is
+        // legitimately a job source would otherwise be read and returned. The
+        // name must be one of the four this feature is for, in the root, with
+        // no path separators in it at all.
+        if document.contains('/') || document.contains('\\') || document.contains("..") {
+            return Err(Error::Validation(
+                "a document is a file name in the repository root, not a path".into(),
+            ));
+        }
+        let stem = document
+            .rsplit_once('.')
+            .map(|(stem, _)| stem)
+            .unwrap_or(&document)
+            .to_ascii_uppercase();
+        if !superbackup_core::git::parse::DOCUMENTS.contains(&stem.as_str()) {
+            return Err(Error::Validation(format!(
+                "only a repository's own README, CHANGELOG, LICENSE or CONTRIBUTING can be read \
+                 here, and \"{document}\" is none of them"
+            )));
+        }
+
+        let file = root.join(&document);
+        let bytes = tokio::fs::read(&file)
+            .await
+            .map_err(|e| Error::io(format!("reading {}", file.display()), e))?;
+        let truncated = bytes.len() > MAX_BYTES;
+        let slice = if truncated { &bytes[..MAX_BYTES] } else { &bytes[..] };
+        // Lossy rather than a refusal: a document with one stray byte in it is
+        // still worth reading, and this is not parsing, it is displaying.
+        let content = String::from_utf8_lossy(slice).into_owned();
+
+        Ok(DocumentReply {
+            name: document,
+            path: file.display().to_string(),
+            content,
+            truncated,
+        })
+    }
+
     async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let path = self.git_target(&path).await?;
         let outcome = superbackup_core::git::trust(&path).await?;
@@ -1812,6 +1889,9 @@ impl Handler for DaemonHandler {
 
         if let DestinationKind::S3 { bucket, prefix, .. } = &target.kind {
             let reply = self.probe_s3_destination(&target, bucket, prefix).await;
+            if reply.reachable && reply.writable {
+                self.mark_destination_verified(target.id).await;
+            }
             return Ok(ProbeReply { latency_ms: Some(elapsed()), ..reply });
         }
 
@@ -1843,6 +1923,9 @@ impl Handler for DaemonHandler {
                     "The location could not be reached or written to.".to_string()
                 })),
             };
+        if reachable && writable {
+            self.mark_destination_verified(target.id).await;
+        }
         Ok(ProbeReply {
             reachable,
             writable,
@@ -2584,12 +2667,20 @@ impl Handler for DaemonHandler {
             skip_owners: true,
             ..Default::default()
         };
+        // The file *path*, not the folder. `kopia restore` writes a single
+        // file **at** the target it is given, so passing the directory made it
+        // try to replace the directory with the file:
+        //
+        //   cannot replace "…\cache\preview" with tempfile
+        //   "…\preview612007630": Access is denied.
+        //
+        // which is what every double-click-to-preview had been failing with.
+        let landed = root.join(&name);
         driver
-            .restore(&source, &root, &options, &RunContext::new())
+            .restore(&source, &landed, &options, &RunContext::new())
             .await
             .map_err(kopia_to_error)?;
 
-        let landed = root.join(&name);
         let size_bytes = tokio::fs::metadata(&landed).await.map(|m| m.len()).unwrap_or(0);
         self.runtime.record_event(Event::info(
             "snapshot.previewed",
@@ -2650,6 +2741,41 @@ impl Handler for DaemonHandler {
         let destination_name = dest.name.clone();
         let target_display = target.display().to_string();
         let restore_into = target.clone();
+
+        // Which job wrote this destination. A restore is an event in the life
+        // of the thing that was backed up, so it belongs on that job's page
+        // and not only in a global list — "did anyone ever restore from this?"
+        // is a question asked about a job.
+        //
+        // The first job that writes here: a destination shared by two jobs
+        // cannot say which of them a given file came from without opening the
+        // snapshot, and attributing it to both would be worse than attributing
+        // it to the one that is nearly always right.
+        let job_id = self
+            .config()
+            .await
+            .jobs
+            .iter()
+            .find(|job| job.destination_ids.contains(&destination_id))
+            .map(|job| job.id);
+
+        // Logged when it *starts*, not only when it ends. A restore that hangs
+        // or is killed left no trace at all, so the activity log could not
+        // show that anyone had tried.
+        let mut started_event = Event::info(
+            "restore.started",
+            format!(
+                "Restoring {} from \"{destination_name}\" into {target_display}.",
+                if path.is_empty() { "everything".to_string() } else { path.clone() }
+            ),
+        )
+        .with_destination(destination_id)
+        .with_run(run_id);
+        if let Some(job) = job_id {
+            started_event = started_event.with_job(job);
+        }
+        self.runtime.record_event(started_event);
+
         tokio::spawn(async move {
             let (events, rx) = EventSink::channel(64);
             let (handle, token) = cancellation();
@@ -2708,6 +2834,10 @@ impl Handler for DaemonHandler {
             }
             .with_destination(destination_id)
             .with_run(run_id);
+            let event = match job_id {
+                Some(job) => event.with_job(job),
+                None => event,
+            };
             runtime.record_event(event);
         });
 

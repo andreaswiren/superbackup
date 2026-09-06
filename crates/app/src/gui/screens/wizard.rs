@@ -294,6 +294,13 @@ pub fn show(app: &mut App, ctx: &egui::Context, mut state: WizardState) -> Optio
     Some(state)
 }
 
+/// The height every template card is given.
+///
+/// Chosen for the tallest — an eyebrow, a title, and two wrapped paragraphs —
+/// so the four boxes are the same size rather than each being as tall as its
+/// own text happened to need.
+const TEMPLATE_CARD_H: f32 = 120.0;
+
 fn step_template(ui: &mut Ui, state: &mut WizardState, data: &Data) {
     let t = theme::tokens(ui.ctx());
     let mut chosen: Option<Template> = None;
@@ -305,13 +312,20 @@ fn step_template(ui: &mut Ui, state: &mut WizardState, data: &Data) {
             for template in row {
                 let selected = state.template == *template;
                 ui.allocate_ui_with_layout(
-                    Vec2::new(width, 116.0),
+                    Vec2::new(width, TEMPLATE_CARD_H + 32.0),
                     Layout::top_down(Align::Min),
                     |ui| {
                         let frame =
                             widgets::card_tinted(ui, None, selected.then_some(t.accent), |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.set_height(84.0);
+                                // A floor, not a height: a card whose text
+                                // wraps further grows past it. It was 84, and
+                                // "Development folder" — the only card with an
+                                // eyebrow, and the longest text — grew while
+                                // the other three sat at the floor, so the
+                                // four boxes were visibly different sizes.
+                                // Tall enough for the longest of them now.
+                                ui.set_height(TEMPLATE_CARD_H);
                                 ui.horizontal(|ui| {
                                     let (rect, _) =
                                         ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
@@ -319,6 +333,11 @@ fn step_template(ui: &mut Ui, state: &mut WizardState, data: &Data) {
                                     ui.add_space(space::M);
                                     ui.vertical(|ui| {
                                         ui.spacing_mut().item_spacing.y = space::XXS;
+                                        // The eyebrow's row is reserved on every
+                                        // card, so all four titles sit on the
+                                        // same line instead of one being
+                                        // pushed down by a label the others do
+                                        // not have.
                                         if *template == Template::Development {
                                             widgets::text(
                                                 ui,
@@ -326,6 +345,11 @@ fn step_template(ui: &mut Ui, state: &mut WizardState, data: &Data) {
                                                 Type::SmallStrong,
                                                 t.accent,
                                             );
+                                        } else {
+                                            let height = ui.fonts(|f| {
+                                                f.row_height(&Type::SmallStrong.font())
+                                            });
+                                            ui.add_space(height);
                                         }
                                         widgets::text(
                                             ui,

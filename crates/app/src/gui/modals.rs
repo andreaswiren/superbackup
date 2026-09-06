@@ -258,6 +258,12 @@ pub struct RestoreOptionsState {
     pub typed_overwrite: String,
     pub free_bytes: Option<u64>,
     pub running: bool,
+    /// The run the daemon assigned, so this dialog can recognise its own
+    /// progress on the stream. Without it the dialog had no way to know its
+    /// restore had finished.
+    pub run_id: Option<Uuid>,
+    /// The most recent progress for that run, so the bar moves.
+    pub progress: Option<superbackup_core::state::Progress>,
 }
 
 impl RestoreOptionsState {
@@ -278,6 +284,8 @@ impl RestoreOptionsState {
             typed_overwrite: String::new(),
             free_bytes: None,
             running: false,
+            run_id: None,
+            progress: None,
         }
     }
 
@@ -428,6 +436,23 @@ pub enum Modal {
     /// Committing needs a message, which no confirmation dialog can take, so
     /// this is its own modal rather than a `Confirm` with a field bolted on.
     GitCommit(GitCommitState),
+    /// A repository's README, CHANGELOG, LICENSE or CONTRIBUTING, shown for
+    /// reading. Never editable and never navigable: this displays a file out
+    /// of a repository that may not be the user's.
+    Document(DocumentState),
+}
+
+/// The document being read, and how far it has got.
+#[derive(Debug, Clone)]
+pub struct DocumentState {
+    /// The heading: the file name and the repository it came from.
+    pub title: String,
+    /// The file on disk, so the reader can see what they are looking at.
+    pub path: String,
+    pub content: String,
+    pub truncated: bool,
+    pub loading: bool,
+    pub error: Option<String>,
 }
 
 /// What is being committed, and with what message.
@@ -453,6 +478,7 @@ impl Modal {
             Modal::Rotate(s) => s.verifying,
             Modal::ChangePassphrase(s) => s.busy,
             Modal::ExportKeys(s) => s.busy,
+            Modal::Document(s) => s.loading,
             Modal::RestoreOptions(s) => s.running,
             _ => false,
         }
@@ -660,6 +686,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::CronHelp => show_cron_help(ctx),
         Modal::Export => show_export(app, ctx),
         Modal::GitCommit(state) => show_git_commit(app, ctx, state),
+        Modal::Document(state) => show_document(app, ctx, state),
     }
 }
 
@@ -1728,6 +1755,55 @@ fn show_git_commit(
         None
     } else {
         Some(Modal::GitCommit(state))
+    }
+}
+
+/// One of a repository's own documents, rendered for reading.
+fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-document",
+        ModalSize::Large,
+        &state.title,
+        Some((Icon::FileText, t.accent)),
+        false,
+        |m| {
+            m.body(|ui| {
+                widgets::text(ui, &state.path, Type::MonoSmall, t.text_muted);
+                ui.add_space(space::M);
+                if state.loading {
+                    widgets::spinner(ui, 20.0, t.accent);
+                    return;
+                }
+                if let Some(error) = &state.error {
+                    widgets::paragraph(ui, error.clone(), Type::Body, t.danger.tint_text);
+                    return;
+                }
+                let width = ui.available_width();
+                widgets::scroll_area(ui, "sb-document-body", |ui| {
+                    widgets::markdown(ui, &state.content, width - space::XL);
+                    if state.truncated {
+                        ui.add_space(space::L);
+                        widgets::paragraph(
+                            ui,
+                            copy::git::DOC_TRUNCATED,
+                            Type::Small,
+                            t.warning.tint_text,
+                        );
+                    }
+                });
+            });
+            m.footer(|ui| {
+                let _ = Button::primary(copy::action::CLOSE).show(ui);
+            });
+        },
+    );
+    let _ = app;
+    if close {
+        None
+    } else {
+        Some(Modal::Document(state))
     }
 }
 

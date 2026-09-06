@@ -462,7 +462,9 @@ impl App {
         }
     }
 
-    fn run_panel(
+    /// The live panel for one run. Shared with the job status page, which
+    /// shows the same thing rather than a second, lesser rendering of it.
+    pub(crate) fn run_panel(
         &mut self,
         ui: &mut Ui,
         run: &JobRun,

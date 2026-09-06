@@ -209,11 +209,40 @@ impl App {
         // it is the event that refetches it — along with the destinations,
         // whose "last verified" the run has just moved.
         let mut run_finished = false;
+        let mut restore_ended: Option<std::result::Result<String, String>> = None;
         for message in messages {
             if let Incoming::Stream(item) = &message {
                 if let superbackup_core::ipc::protocol::StreamItem::Event { event } = &**item {
                     if event.kind == "job.finished" {
                         run_finished = true;
+                    }
+                }
+                // A restore reports itself through the same progress stream a
+                // backup does, keyed by the run id the request came back with.
+                // Nothing was listening, so the dialog sat on "Estimating…"
+                // for ever over a restore that had already finished — the
+                // daemon logged `restore.finished` while the window span.
+                if let superbackup_core::ipc::protocol::StreamItem::Progress {
+                    run_id,
+                    status,
+                    progress,
+                    ..
+                } = &**item
+                {
+                    if let Some(Modal::RestoreOptions(state)) = &mut self.modal {
+                        if state.run_id == Some(*run_id) {
+                            state.progress = Some((**progress).clone());
+                            restore_ended = match status {
+                                superbackup_core::state::RunStatus::Succeeded
+                                | superbackup_core::state::RunStatus::SucceededWithWarnings => {
+                                    Some(Ok(state.target.clone()))
+                                }
+                                superbackup_core::state::RunStatus::Failed => {
+                                    Some(Err(copy::restore::PROGRESS_FAILED.to_string()))
+                                }
+                                _ => None,
+                            };
+                        }
                     }
                 }
             }
@@ -223,6 +252,16 @@ impl App {
                 _ => {}
             }
             self.data.apply(message);
+        }
+        if let Some(outcome) = restore_ended {
+            // Close the dialog and say what happened. Leaving it open over a
+            // finished restore is what made the feature look broken.
+            self.modal = None;
+            match outcome {
+                Ok(target) => self.toasts.success(copy::restore_finished_toast(&target)),
+                Err(reason) => self.toasts.danger(copy::restore::PROGRESS_FAILED, reason),
+            }
+            self.ask(Intent::Fire, Request::Status {});
         }
         if run_finished {
             self.ask(Intent::History, Request::JobHistory { job: None, limit: 200 });
@@ -470,6 +509,14 @@ impl App {
                 self.toasts.success(copy::toast_cleared(cleared.removed, &cleared.location));
                 self.ask(Intent::Destinations, Request::DestinationList {});
             }
+            (Intent::GitDocument, Reply::Document(document)) => {
+                if let Some(Modal::Document(state)) = &mut self.modal {
+                    state.loading = false;
+                    state.content = document.content.clone();
+                    state.truncated = document.truncated;
+                    state.path = document.path.clone();
+                }
+            }
             (Intent::GitInventory, Reply::GitInventory(reply)) => {
                 self.screens.git.arrived((*reply.inventory).clone());
             }
@@ -494,8 +541,14 @@ impl App {
             (Intent::Browse(id, path), Reply::Listing(listing)) => {
                 self.screens.restore.listing_arrived(*id, path.clone(), listing.clone());
             }
-            (Intent::Restore, Reply::Started(_)) => {
+            (Intent::Restore, Reply::Started(started)) => {
                 self.screens.restore.restore_started();
+                // The run the daemon assigned. The dialog needs it to
+                // recognise its own progress on the stream, which is the only
+                // way it learns the restore has finished.
+                if let Some(Modal::RestoreOptions(state)) = &mut self.modal {
+                    state.run_id = Some(started.run_id);
+                }
             }
             (Intent::Pause, Reply::Pause(pause)) => {
                 if pause.pause.paused {
@@ -576,6 +629,12 @@ impl App {
                 // whole page is the scan: a toast over an empty table would
                 // leave the user looking at a list that says nothing is here.
                 Intent::GitInventory => self.screens.git.scan_failed(payload.message),
+                Intent::GitDocument => {
+                    if let Some(Modal::Document(state)) = &mut self.modal {
+                        state.loading = false;
+                        state.error = Some(payload.message);
+                    }
+                }
                 Intent::GitAction => {
                     self.screens.git.action_finished();
                     self.toasts.warning(payload.message);

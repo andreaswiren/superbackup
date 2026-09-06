@@ -12,6 +12,10 @@ rather than mangling it.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.4.0] - 2026-09-07
+
 ### Added
 
 - **The Git section is a repository manager.** Clicking a repository opens
@@ -39,6 +43,77 @@ rather than mangling it.
   when a push starts failing. The key's contents, a token's value and a
   stored password are never read, displayed, or asked for. Where ssh's own
   config decides, it says so rather than guessing.
+
+- **Read a repository's own documents in place.** README, CHANGELOG, LICENSE
+  and CONTRIBUTING, when the root has them, shown rendered rather than raw —
+  deciding whether a repository is yours or somebody else's usually starts
+  with reading one. Never editable, never navigable, and no images or HTML:
+  this displays a file out of a repository that may not be yours, and the
+  safe thing for such a file to be able to do is nothing except be read.
+
+- **Live progress on a job's status page.** The same per-destination bars,
+  counts and throughput graph the dashboard shows, rather than a second
+  lesser rendering of the same run — a job page that went quiet the moment
+  the job started would be the one page you would want open at that moment.
+
+### Fixed
+
+- **Verify reported nothing when it worked.** The destinations list renders
+  a probe's result in place for a failure and for "reachable but no
+  repository yet", and returned nothing at all for plain success — while the
+  toast that would have said so is suppressed on that very page on the
+  grounds that the list shows it. Pressing Verify on a destination that was
+  completely fine therefore blinked and reported nothing, which reads as a
+  button that does not work.
+
+- **"Last verified: never", forever.** `Destination::last_verified_at` was
+  cleared on a key rotation and set by nothing at all, so every destination
+  claimed it had never been checked however many times it had been —
+  including ones a backup had just written to. A successful reach-and-write
+  now records it, as the provider check already did.
+
+- **A long label pushed the whole page off the left edge.** `kv` draws its
+  label right-aligned in a fixed 160px column, so a destination named
+  `onedrive-superbackup-awpc34` grew *leftwards* out of its box, out of its
+  card, and under the navigation rail — taking the rest of the page with it.
+  The label is elided to its column now, with the full text on hover.
+
+- **The repository details panel opened where you could not see it.**
+  Nineteen repositories is a table taller than the window, so clicking a row
+  near the top appeared to do nothing: the answer was rendered thirteen
+  hundred pixels below. The panel is scrolled into view when it opens.
+
+- **Restores never finished, on screen.** The dialog said "Estimating…" and
+  span for ever over a restore the daemon had already completed and logged.
+  The daemon publishes progress and completion on the same stream a backup
+  uses, keyed by the run id the request returns — and nothing was listening.
+  The dialog now recognises its own run, shows real progress, and closes
+  when it is done, saying where the files went.
+
+- **Double-clicking a file to preview it always failed.** `kopia restore`
+  writes a single file *at* the target path it is given, and it was given the
+  cache directory — so it tried to replace the directory with the file and
+  was refused: "cannot replace …\cache\preview with tempfile … Access is
+  denied".
+
+- **Restores were not in the activity log**, and are now — when they start,
+  not only when they finish, so an attempt that hangs or is killed still
+  leaves a trace. They are attributed to the job that writes the destination
+  as well, because "did anyone ever restore from this?" is a question asked
+  about a job.
+
+- **The four job templates were four different heights.** Only one has a
+  "Recommended for developers" line, and the card height was a floor rather
+  than a height, so that one grew and the others sat at the minimum. Every
+  card reserves the eyebrow's row now, so the titles line up too.
+
+- **Cron schedules read as sentences.** `Cron: 0 8-17 * * 1-5` is exact and
+  tells nobody when the job runs; it now reads "Hourly, 08:00 to 17:00,
+  Monday to Friday", with the expression itself on hover. An expression whose
+  shape cannot be paraphrased honestly is still shown as written — a wrong
+  sentence about when a backup runs would be worse than no sentence.
+
+
 
 
 ## [0.3.0] - 2026-09-06

@@ -353,7 +353,11 @@ async fn every_command_answers_or_refuses_cleanly() {
     );
     run!("git.push", Request::GitPush { path: outside.clone() });
     run!("git.trust", Request::GitTrust { path: outside.clone() });
-    run!("git.set_external", Request::GitSetExternal { path: outside, external: true });
+    run!("git.set_external", Request::GitSetExternal { path: outside.clone(), external: true });
+    run!(
+        "git.read_document",
+        Request::GitReadDocument { path: outside, document: "README.md".into() }
+    );
 
     // -- clearing a destination -------------------------------------------
     // The confirmation is deliberately wrong. This command erases every
@@ -1157,4 +1161,81 @@ fn make_repo_with_change(dir: &std::path::Path) -> bool {
     run(&["commit", "-m", "first"]);
     std::fs::write(dir.join("README.md"), b"edited\n").expect("write");
     true
+}
+
+/// Reading a document takes a file name from the caller, so the name is
+/// attacker-controlled input and the location check alone is not enough.
+///
+/// A job source is a whole tree — `C:\Users\Andreas\workspace` on the machine
+/// this was written on — so a `document` of `../../.ssh/id_rsa` would sit
+/// inside it and pass `git_target` happily. The name is therefore bounded
+/// twice: no separators and no `..` in it at all, and it must be one of the
+/// four documents this feature exists for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_document_name_cannot_escape_the_repository_root() {
+    let mut source = None;
+    let mut harness = Harness::start("gitdocs", |config, home| {
+        let sources = seed_tree(home, 1);
+        source = Some(sources.clone());
+        let destination = mirror("copy", home.join("mirror"));
+        config.jobs.push(job("docs", sources, vec![destination.id]));
+        config.destinations.push(destination);
+    })
+    .await;
+    let source = source.expect("a source");
+    // A secret one directory above the repository, inside the same job source.
+    std::fs::write(source.join("secret.txt"), b"not for reading").expect("write");
+    let repo = source.join("project");
+    std::fs::create_dir_all(&repo).expect("create");
+    std::fs::write(repo.join("README.md"), b"# Fine\n").expect("write");
+
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    for escape in [
+        "../secret.txt",
+        r"..\secret.txt",
+        "../../../../../../Windows/win.ini",
+        "subdir/README.md",
+    ] {
+        let err = client
+            .request(Request::GitReadDocument {
+                path: repo.display().to_string(),
+                document: escape.to_string(),
+            })
+            .await
+            .expect_err("must be refused");
+        assert!(
+            err.to_string().contains("file name") || err.to_string().contains("none of them"),
+            "{escape}: {err}"
+        );
+    }
+
+    // A name with no separators is still refused when it is not one of the
+    // four: the location check would have allowed any file in the root.
+    let err = client
+        .request(Request::GitReadDocument {
+            path: repo.display().to_string(),
+            document: "secret.txt".into(),
+        })
+        .await
+        .expect_err("only the four documents");
+    assert!(err.to_string().contains("none of them"), "{err}");
+
+    // And the thing it is for does work.
+    let Reply::Document(document) = client
+        .request(Request::GitReadDocument {
+            path: repo.display().to_string(),
+            document: "README.md".into(),
+        })
+        .await
+        .expect("README reads")
+    else {
+        panic!("expected a document")
+    };
+    assert_eq!(document.content, "# Fine\n");
+    assert!(!document.truncated);
+
+    drop(client);
+    harness.shutdown().await.expect("clean shutdown");
 }

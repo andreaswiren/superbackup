@@ -75,6 +75,7 @@ impl App {
         widgets::scroll_area(ui, "job-detail", |ui| {
             self.job_detail_summary(ui, &job, now);
             ui.add_space(space::XL);
+            self.job_detail_running(ui, id, now);
             self.job_detail_runs(ui, id, now);
             ui.add_space(space::XL);
             self.job_detail_events(ui, id, now);
@@ -122,7 +123,13 @@ impl App {
             }
 
             ui.add_space(space::L);
-            widgets::kv(ui, copy::job_detail::SCHEDULE, &crate::gui::viewmodel::schedule_string(&job.schedule), false);
+            // The sentence, with the expression itself on hover: a paraphrase
+            // of when a backup runs is a thing you want to be able to check.
+            let schedule = crate::gui::viewmodel::schedule_string(&job.schedule);
+            let row = widgets::kv(ui, copy::job_detail::SCHEDULE, &schedule, false);
+            if let superbackup_core::model::Schedule::Cron { expression } = &job.schedule {
+                row.on_hover_text(expression.clone());
+            }
             widgets::kv(
                 ui,
                 copy::job_detail::NEXT_RUN,
@@ -174,7 +181,17 @@ impl App {
             for id in &job.destination_ids {
                 match self.data.destination(id) {
                     Some(destination) => {
-                        let location = crate::gui::viewmodel::destination_location(destination);
+                        // The full address, endpoint included: `s3://bucket/…`
+                        // does not say whose S3 it is, and StorJ, Wasabi and
+                        // AWS look identical in that form.
+                        let provider = destination
+                            .kind
+                            .provider_id()
+                            .and_then(|id| self.data.provider(id));
+                        let location = crate::gui::viewmodel::destination_location_full(
+                            destination,
+                            provider,
+                        );
                         widgets::kv(ui, &destination.name, &location, true);
                     }
                     // A dangling id is the state that makes a job fail with
@@ -185,6 +202,30 @@ impl App {
                 }
             }
         });
+    }
+
+    /// The live panel, while this job is running.
+    ///
+    /// The same one the dashboard shows — per-destination bars, the file and
+    /// byte counts, the throughput graph — rather than a second, lesser
+    /// rendering of the same run. A job page that went quiet the moment the
+    /// job started would be the one page you would want open at that moment.
+    fn job_detail_running(&mut self, ui: &mut Ui, id: Uuid, now: DateTime<Utc>) {
+        let running: Vec<superbackup_core::state::JobRun> =
+            self.data.active_runs().iter().filter(|r| r.job_id == id).cloned().collect();
+        if running.is_empty() {
+            return;
+        }
+        let mut stop: Option<(Uuid, String)> = None;
+        for run in &running {
+            self.run_panel(ui, run, now, &mut stop);
+            ui.add_space(space::XL);
+        }
+        if let Some((run_id, name)) = stop {
+            self.open_modal(crate::gui::modals::Modal::Confirm(
+                crate::gui::modals::stop_run_confirm(run_id, &name),
+            ));
+        }
     }
 
     /// The last few runs, newest first.

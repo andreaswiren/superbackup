@@ -12,7 +12,7 @@
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
-use superbackup_core::model::{Destination, Job, Schedule};
+use superbackup_core::model::{Destination, Job, ProviderKind, Schedule, StorageProvider};
 use superbackup_core::state::{DestinationRun, Event, JobRun, JobSummary, RunStatus, Severity};
 
 use super::copy;
@@ -24,6 +24,149 @@ use super::format;
 // ---------------------------------------------------------------------------
 
 /// Rendered identically in the job list, on cards, and in the wizard.
+/// Turn a cron expression into a sentence, where its shape allows one.
+///
+/// `Cron: 0 8-17 * * 1-5` is a correct rendering of what the user typed and a
+/// useless answer to "when does this run". Almost every schedule people
+/// actually write is one of a handful of shapes, and those are worth reading
+/// properly; anything genuinely exotic falls back to the expression, which is
+/// at least exact.
+///
+/// The raw expression is still shown on hover wherever this is used, because a
+/// paraphrase of a schedule is a thing you want to be able to check.
+pub fn cron_sentence(expression: &str) -> Option<String> {
+    let fields: Vec<&str> = expression.split_whitespace().collect();
+    if fields.len() != 5 {
+        return None;
+    }
+    let (minute, hour, dom, month, dow) = (fields[0], fields[1], fields[2], fields[3], fields[4]);
+
+    // Anything touching the month field is rare enough not to guess at.
+    if month != "*" {
+        return None;
+    }
+
+    let when = cron_time(minute, hour)?;
+    let days = cron_days(dom, dow)?;
+    Some(match days {
+        Some(days) => format!("{when}, {days}"),
+        None => when,
+    })
+}
+
+/// The minute and hour fields as a phrase.
+fn cron_time(minute: &str, hour: &str) -> Option<String> {
+    // `*/15 * * * *`
+    if let Some(step) = minute.strip_prefix("*/") {
+        if hour != "*" {
+            return None;
+        }
+        let step: u32 = step.parse().ok()?;
+        return Some(match step {
+            1 => "Every minute".to_string(),
+            n => format!("Every {n} minutes"),
+        });
+    }
+    let minute: u32 = minute.parse().ok()?;
+    if minute > 59 {
+        return None;
+    }
+
+    // `0 * * * *`
+    if hour == "*" {
+        return Some(if minute == 0 {
+            "Every hour, on the hour".to_string()
+        } else {
+            format!("Every hour, at {minute} past")
+        });
+    }
+    // `0 */3 * * *`
+    if let Some(step) = hour.strip_prefix("*/") {
+        let step: u32 = step.parse().ok()?;
+        return Some(format!("Every {step} hours, at {minute} past"));
+    }
+    // `0 8-17 * * *`
+    if let Some((from, to)) = hour.split_once('-') {
+        let (from, to): (u32, u32) = (from.parse().ok()?, to.parse().ok()?);
+        if from > 23 || to > 23 {
+            return None;
+        }
+        return Some(format!("Hourly, {from:02}:{minute:02} to {to:02}:{minute:02}"));
+    }
+    // `0 2 * * *`
+    let hour: u32 = hour.parse().ok()?;
+    if hour > 23 {
+        return None;
+    }
+    Some(format!("At {hour:02}:{minute:02}"))
+}
+
+/// The day-of-month and day-of-week fields, or `None` for "every day".
+fn cron_days(dom: &str, dow: &str) -> Option<Option<String>> {
+    match (dom, dow) {
+        ("*", "*") => Some(Some("every day".to_string())),
+        // A day of the month, which people write for monthly jobs.
+        (day, "*") => {
+            let day: u32 = day.parse().ok()?;
+            if day == 0 || day > 31 {
+                return None;
+            }
+            Some(Some(format!("on the {} of each month", ordinal(day))))
+        }
+        ("*", days) => Some(Some(cron_weekdays(days)?)),
+        // Both set at once means "either", which is a cron subtlety nobody
+        // means on purpose and this will not paraphrase.
+        _ => None,
+    }
+}
+
+/// `1-5`, `1,3,5`, `0`, `mon-fri`.
+fn cron_weekdays(field: &str) -> Option<String> {
+    // cron counts Sunday as 0; `7` is also Sunday.
+    const NAMES: [&str; 7] =
+        ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    let name = |n: u32| NAMES.get((n % 7) as usize).copied();
+
+    if let Some((from, to)) = field.split_once('-') {
+        let (from, to): (u32, u32) = (from.parse().ok()?, to.parse().ok()?);
+        if from > 7 || to > 7 {
+            return None;
+        }
+        // The one everybody writes.
+        if (from, to) == (1, 5) {
+            return Some("Monday to Friday".to_string());
+        }
+        return Some(format!("{} to {}", name(from)?, name(to)?));
+    }
+    let mut named = Vec::new();
+    for part in field.split(',') {
+        let n: u32 = part.trim().parse().ok()?;
+        if n > 7 {
+            return None;
+        }
+        named.push(name(n)?);
+    }
+    match named.len() {
+        0 => None,
+        1 => Some(format!("on {}", named[0])),
+        _ => {
+            let last = named.pop()?;
+            Some(format!("on {} and {last}", named.join(", ")))
+        }
+    }
+}
+
+fn ordinal(n: u32) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
 pub fn schedule_string(schedule: &Schedule) -> String {
     match schedule {
         Schedule::Manual => copy::job::SCHEDULE_MANUAL.to_string(),
@@ -46,7 +189,11 @@ pub fn schedule_string(schedule: &Schedule) -> String {
             }
             format!("{} at {}", format::weekdays(&days), times_list(times))
         }
-        Schedule::Cron { expression } => format!("Cron: {expression}"),
+        // A sentence where the shape allows one, and the expression itself
+        // where it does not. "Cron: 0 8-17 * * 1-5" is exact and useless.
+        Schedule::Cron { expression } => {
+            cron_sentence(expression).unwrap_or_else(|| format!("Cron: {expression}"))
+        }
         Schedule::OnChange { debounce_seconds, min_interval_minutes } => {
             let quiet = if *debounce_seconds >= 60 {
                 format!("{} min quiet", debounce_seconds / 60)
@@ -1109,9 +1256,93 @@ pub fn destination_location(destination: &Destination) -> String {
     }
 }
 
+/// The same, but naming the endpoint an S3 bucket actually lives behind.
+///
+/// `s3://awpc34-workspace/superbackup/awpc34-8d3608d4/` says which bucket and
+/// which prefix, and nothing at all about *whose* S3 that is. Two providers
+/// can hold buckets of the same name, and StorJ, Wasabi, Backblaze and AWS all
+/// look identical in that form — so a person checking where their offsite copy
+/// goes cannot tell from it. With the provider to hand, this gives the address
+/// they could paste into a browser or an `aws --endpoint-url` flag.
+pub fn destination_location_full(
+    destination: &Destination,
+    provider: Option<&StorageProvider>,
+) -> String {
+    use superbackup_core::model::DestinationKind as K;
+    match (&destination.kind, provider) {
+        (K::S3 { bucket, prefix, .. }, Some(provider)) => {
+            let ProviderKind::S3 { endpoint, .. } = &provider.kind;
+            let endpoint = endpoint.trim().trim_end_matches('/');
+            if endpoint.is_empty() {
+                return destination_location(destination);
+            }
+            // Scheme-less endpoints are how a provider is usually configured;
+            // https is the only sensible assumption and matches what the
+            // driver does with the same value.
+            let base = if endpoint.contains("://") {
+                endpoint.to_string()
+            } else {
+                format!("https://{endpoint}")
+            };
+            format!("{base}/{bucket}/{prefix}")
+        }
+        _ => destination_location(destination),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The schedule on this machine, and the other shapes people actually
+    /// write. `Cron: 0 8-17 * * 1-5` is exact and tells nobody when the job
+    /// runs.
+    #[test]
+    fn a_cron_expression_reads_as_a_sentence() {
+        let cases = [
+            ("0 8-17 * * 1-5", "Hourly, 08:00 to 17:00, Monday to Friday"),
+            ("0 2 * * *", "At 02:00, every day"),
+            ("*/15 * * * *", "Every 15 minutes, every day"),
+            ("0 3 * * 1-5", "At 03:00, Monday to Friday"),
+            ("30 1 1 * *", "At 01:30, on the 1st of each month"),
+            ("0 * * * *", "Every hour, on the hour, every day"),
+            ("15 * * * *", "Every hour, at 15 past, every day"),
+            ("0 */3 * * *", "Every 3 hours, at 0 past, every day"),
+            ("0 9 * * 0", "At 09:00, on Sunday"),
+            ("0 9 * * 1,3,5", "At 09:00, on Monday, Wednesday and Friday"),
+            ("30 2 22 * *", "At 02:30, on the 22nd of each month"),
+            ("0 4 3 * *", "At 04:00, on the 3rd of each month"),
+        ];
+        for (expression, expected) in cases {
+            assert_eq!(
+                cron_sentence(expression).as_deref(),
+                Some(expected),
+                "{expression}"
+            );
+        }
+    }
+
+    /// Anything it cannot paraphrase honestly falls back to the expression,
+    /// which is at least exact. A wrong sentence about when a backup runs
+    /// would be worse than no sentence.
+    #[test]
+    fn an_expression_it_cannot_read_is_left_alone() {
+        for exotic in [
+            "0 0 1 1 *",       // a month field, which is rare and not guessed
+            "0 0 1 * 1",       // day-of-month and day-of-week together: cron ORs them
+            "0 0 * * MON",     // names rather than numbers
+            "bad",             // not five fields
+            "0 0 0 0 0 0",     // six fields
+            "99 99 * * *",     // out of range
+            "",
+        ] {
+            assert_eq!(cron_sentence(exotic), None, "{exotic} must not be paraphrased");
+        }
+        // And the caller falls back to showing it.
+        let schedule = Schedule::Cron { expression: "0 0 1 1 *".into() };
+        assert_eq!(schedule_string(&schedule), "Cron: 0 0 1 1 *");
+    }
+
     use std::collections::BTreeMap;
     use superbackup_core::model::TimeOfDay;
     use superbackup_core::state::{DestinationRun, Health, Progress, StatusSnapshot, Trigger};
@@ -1333,9 +1564,17 @@ mod tests {
             schedule_string(&Schedule::Weekly { weekdays: vec![0, 2, 4], times: vec![t(2, 0)] }),
             "Mon, Wed, Fri at 02:00"
         );
+        // The spec table said "Cron: <expression>", which is exact and tells
+        // nobody when the job runs. A shape this common is paraphrased; see
+        // `a_cron_expression_reads_as_a_sentence`.
         assert_eq!(
             schedule_string(&Schedule::Cron { expression: "0 2 * * *".into() }),
-            "Cron: 0 2 * * *"
+            "At 02:00, every day"
+        );
+        assert_eq!(
+            schedule_string(&Schedule::Cron { expression: "0 0 1 1 *".into() }),
+            "Cron: 0 0 1 1 *",
+            "and one it cannot read honestly is still shown as written"
         );
         assert_eq!(
             schedule_string(&Schedule::OnChange {

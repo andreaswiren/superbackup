@@ -1031,16 +1031,34 @@ pub fn show_options(
         |m| {
             m.body(|ui| {
                 if state.running {
+                    // Real progress once the daemon is sending it. It used to
+                    // read "Estimating…" for the whole restore and for ever
+                    // afterwards, because nothing ever replaced it.
+                    let progress = state.progress.clone().unwrap_or_default();
+                    let fraction = progress.fraction();
                     widgets::progress_bar(
                         ui,
                         ui.available_width(),
                         8.0,
-                        None,
+                        fraction,
                         t.progress_fill,
-                        &copy::a11y_progress_restore(0, 0, 0),
+                        &copy::a11y_progress_restore(
+                            fraction.map(|f| (f * 100.0) as i64).unwrap_or(0),
+                            progress.files_processed,
+                            progress.files_total.unwrap_or(0),
+                        ),
                     );
                     ui.add_space(space::M);
-                    widgets::text(ui, copy::state::ESTIMATING, Type::MonoSmall, t.text_secondary);
+                    let line = if progress.files_processed == 0 && progress.bytes_processed == 0 {
+                        copy::state::ESTIMATING.to_string()
+                    } else {
+                        format!(
+                            "{} · {}",
+                            copy::restore::PROGRESS_RESTORING,
+                            crate::gui::viewmodel::destination_progress_line(&progress)
+                        )
+                    };
+                    widgets::text(ui, line, Type::MonoSmall, t.text_secondary);
                     return;
                 }
 

@@ -85,6 +85,8 @@ pub enum Intent {
     ClearPreview(uuid::Uuid),
     /// The clearing itself.
     ClearRepository(uuid::Uuid),
+    /// One of a repository's own documents, for the reading panel.
+    GitDocument,
     GitInventory,
     /// A pull, commit, push or trust. The path is not carried: the screen
     /// already knows which repository it asked about, and the reply carries it

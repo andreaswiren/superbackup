@@ -567,6 +567,60 @@ pub fn web_url(location: &RemoteLocation) -> Option<String> {
     Some(format!("https://{}/{}", location.host, location.path))
 }
 
+/// The documents worth offering to read, in the order people look for them.
+///
+/// Matched case-insensitively and with either extension, because `README.md`,
+/// `readme.md`, `Readme.MD` and a plain `LICENSE` with no extension at all are
+/// the same file to everyone but a string comparison.
+pub const DOCUMENTS: &[&str] = &["README", "CHANGELOG", "LICENSE", "CONTRIBUTING"];
+
+/// A document found in a repository's root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Document {
+    /// The file as it is actually named on disk.
+    pub name: String,
+    /// Which of [`DOCUMENTS`] it is, for ordering and labelling.
+    pub kind: String,
+    pub bytes: u64,
+}
+
+/// Find the documents in a repository root.
+///
+/// The root only: a `README.md` three directories down belongs to a component,
+/// and listing forty of them would bury the one that describes the project.
+pub fn documents(root: &std::path::Path) -> Vec<Document> {
+    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut found: Vec<Document> = Vec::new();
+
+    for entry in entries.flatten() {
+        let Ok(metadata) = entry.metadata() else { continue };
+        if !metadata.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let stem = name
+            .rsplit_once('.')
+            .map(|(stem, _)| stem)
+            .unwrap_or(&name)
+            .to_ascii_uppercase();
+        let Some(kind) = DOCUMENTS.iter().find(|d| **d == stem) else { continue };
+        // A second `README.rst` beside a `README.md` is one document as far as
+        // this list is concerned; the first one found wins.
+        if found.iter().any(|d| d.kind == *kind) {
+            continue;
+        }
+        found.push(Document {
+            name,
+            kind: (*kind).to_string(),
+            bytes: metadata.len(),
+        });
+    }
+
+    // The order in DOCUMENTS, not the order the filesystem happened to return.
+    found.sort_by_key(|d| DOCUMENTS.iter().position(|k| *k == d.kind).unwrap_or(usize::MAX));
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,6 +723,50 @@ u UU N... 100644 100644 100644 100644 3333 4444 5555 conflict.rs
         let single = parse_worktrees("worktree /w/p\nHEAD abc\nbranch refs/heads/main\n");
         assert_eq!(single.len(), 1);
         assert!(single[0].main);
+    }
+
+    /// The four documents, however they happen to be spelled, from the root
+    /// only — and nothing else.
+    #[test]
+    fn only_a_repositorys_own_documents_are_offered() {
+        let dir = std::env::temp_dir()
+            .join(format!("sb-docs-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).expect("create");
+        for name in [
+            "readme.md",
+            "CHANGELOG.md",
+            "LICENSE",
+            "Contributing.MD",
+            "notes.md",
+            "package.json",
+            "src",
+        ] {
+            if name == "src" {
+                std::fs::create_dir(dir.join(name)).expect("dir");
+            } else {
+                std::fs::write(dir.join(name), b"x").expect("write");
+            }
+        }
+
+        let found = documents(&dir);
+        let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
+        // The order of DOCUMENTS, not whatever the filesystem returned.
+        assert_eq!(names, vec!["readme.md", "CHANGELOG.md", "LICENSE", "Contributing.MD"]);
+        // Case is irrelevant, and a LICENSE with no extension still counts.
+        assert_eq!(found[3].kind, "CONTRIBUTING");
+        assert_eq!(found[2].kind, "LICENSE");
+        // Nothing else is offered, including a directory named like one.
+        assert!(!names.contains(&"notes.md"));
+        assert!(!names.contains(&"package.json"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A folder with none of them offers none, and a folder that cannot be
+    /// read is empty rather than a panic.
+    #[test]
+    fn a_repository_without_documents_offers_none() {
+        assert!(documents(std::path::Path::new("no-such-folder-anywhere")).is_empty());
     }
 
     #[test]

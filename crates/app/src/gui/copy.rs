@@ -1514,10 +1514,13 @@ pub mod git {
     pub const EXTERNAL_HINT: &str =
         "For a repository you cloned to read and will never commit to. It stays backed up; it \
          just stops being counted among the folders holding work you could lose.";
+    pub const DOCUMENTS: &str = "Documents";
+    pub const DOC_TRUNCATED: &str =
+        "This is the beginning of the file; it was too long to show in full. Open it in an editor to read the rest.";
     pub const COMMIT_TITLE: &str = "Commit everything in this repository";
     pub const COMMIT_MESSAGE: &str = "Message";
     pub const COMMIT_MESSAGE_HINT: &str =
-        "Suggested for you, and yours to change. The commit is made under your own git identity;          the trailer only records that superbackup made it.";
+        "Suggested for you, and yours to change. The commit is made under your own git identity; the trailer only records that superbackup made it.";
     pub const COMMIT_MESSAGE_PLACEHOLDER: &str = "What changed, and why";
     pub const COMMIT_UNTRACKED: &str = "Include files git has never seen";
     pub const COMMIT_UNTRACKED_HINT: &str =
@@ -1612,6 +1615,8 @@ pub mod restore {
     pub const OPTIONS_BUTTON_DANGER: &str = "Overwrite and restore";
 
     pub const PROGRESS_CANCEL: &str = "Cancel restore";
+    pub const PROGRESS_FAILED: &str = "The restore did not finish";
+    pub const PROGRESS_RESTORING: &str = "Restoring…";
     pub const CANCEL_TITLE: &str = "Cancel this restore?";
     pub const CANCEL_BODY: &str = "Files already written stay where they are. Nothing is put back.";
     pub const CANCEL_BUTTON: &str = "Cancel restore";
@@ -1661,6 +1666,13 @@ pub fn restore_browse_restore_n(count: usize) -> String {
         format!("Restore {count} items")
     }
 }
+/// What was restored and where it went. The location matters most: a restore
+/// that went somewhere other than where the user expected is the failure they
+/// find out about days later.
+pub fn restore_finished_toast(target: &str) -> String {
+    format!("Restore finished into {target}.")
+}
+
 pub fn restore_options_title(count: usize) -> String {
     format!("Restore {count} items")
 }

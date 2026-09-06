@@ -282,6 +282,11 @@ pub struct GitRepo {
     /// be quietly wrong about the thing this page is for.
     #[serde(default)]
     pub worktrees: Vec<parse::Worktree>,
+    /// README, CHANGELOG, LICENSE and CONTRIBUTING, when the repository root
+    /// has them. Offered to read in place, because deciding whether a
+    /// repository is yours or somebody else's usually starts with reading one.
+    #[serde(default)]
+    pub documents: Vec<parse::Document>,
     /// Marked by the user as somebody else's: a plain clone they read and
     /// never commit to. Excluded from the at-risk count, because "you have
     /// not pushed your changes" is not true of a repository you have no
@@ -579,6 +584,7 @@ async fn examine(git: &Git, path: &Path, root: &Path, check_remotes: bool) -> Gi
         last_commit_author: None,
         remotes: Vec::new(),
         remote_check: None,
+        documents: parse::documents(path),
         branches: Vec::new(),
         worktrees: Vec::new(),
         external: false,
@@ -1192,6 +1198,7 @@ mod tests {
                 auth: parse::AuthMethod::SshKey { key_path: None, user: Some("git".into()) },
             }],
             remote_check: None,
+            documents: Vec::new(),
             branches: Vec::new(),
             worktrees: Vec::new(),
             external: false,

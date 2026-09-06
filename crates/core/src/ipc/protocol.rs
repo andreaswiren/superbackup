@@ -831,6 +831,17 @@ pub struct ConfigDocumentReply {
     pub size_bytes: u64,
 }
 
+/// One of a repository's own documents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentReply {
+    pub name: String,
+    pub path: String,
+    pub content: String,
+    /// The file was longer than the cap and this is the beginning of it.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
 /// The git repositories found under a job's sources.
 ///
 /// The whole point is the states, not the list: a developer machine has forty
@@ -1417,6 +1428,8 @@ replies! {
         "The git repositories under a job's sources, and whether their work exists anywhere else."
     "git_action" GitAction(GitActionReply)
         "What a pull, commit, push or trust did."
+    "document" Document(DocumentReply)
+        "The text of one of a repository's own documents."
     "preview" Preview(PreviewReply)
         "One file restored for inspection, and where it was put."
     "config_document" ConfigDocument(ConfigDocumentReply)
@@ -2017,6 +2030,14 @@ protocol! {
             params {
                 path: String = "The repository's root folder, inside a configured job source.",
                 external: bool = "True to mark it as external, false to treat it as your own again.",
+            }
+
+        "git.read_document" GitReadDocument => git_read_document -> Document(DocumentReply)
+            flags []
+            doc "Read one of a repository's own documents — README, CHANGELOG, LICENSE or CONTRIBUTING — so it can be shown in place. Only those four, only from the repository's root folder, and only inside a configured job source: this reads a file the caller names, so what it can be pointed at is bounded by name as well as by location. Text only, and truncated if the file is enormous."
+            params {
+                path: String = "The repository's root folder, inside a configured job source.",
+                document: String = "The file name, which must be one the inventory reported for this repository.",
             }
 
         "git.trust" GitTrust => git_trust -> GitAction(GitActionReply)

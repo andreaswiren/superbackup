@@ -1105,6 +1105,21 @@ impl Handler for MockHandler {
         Ok(Self::git_did("set_external", &path))
     }
 
+    async fn git_read_document(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        document: String,
+    ) -> Result<DocumentReply> {
+        let _guard = self.enter("git.read_document").await?;
+        Ok(DocumentReply {
+            name: document.clone(),
+            path: format!("{path}/{document}"),
+            content: "# The mock has nothing to read\n".into(),
+            truncated: false,
+        })
+    }
+
     async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let _guard = self.enter("git.trust").await?;
         Ok(Self::git_did("trust", &path))
