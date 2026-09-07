@@ -448,6 +448,21 @@ pub enum Modal {
     KeyBundle(KeyBundleState),
     /// Turning a folder into a repository, and optionally putting it on a host.
     GitInit(Box<GitInitState>),
+    /// Making a new SSH key pair.
+    NewKey(NewKeyState),
+}
+
+/// What key to make, and whether to open it straight away.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NewKeyState {
+    pub name: String,
+    pub comment: String,
+    /// RSA rather than the Ed25519 default.
+    pub rsa: bool,
+    /// Load it into the agent as soon as it exists.
+    pub load_into_agent: bool,
+    pub busy: bool,
+    pub error: Option<String>,
 }
 
 /// What is about to be initialised, and how far it should go.
@@ -528,6 +543,7 @@ impl Modal {
             Modal::Document(s) => s.loading,
             Modal::KeyBundle(s) => s.busy,
             Modal::GitInit(s) => s.busy,
+            Modal::NewKey(s) => s.busy,
             Modal::RestoreOptions(s) => s.running,
             _ => false,
         }
@@ -739,6 +755,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::GitRepo(repo) => show_git_repo(app, ctx, repo),
         Modal::KeyBundle(state) => show_key_bundle(app, ctx, state),
         Modal::GitInit(state) => show_git_init(app, ctx, state),
+        Modal::NewKey(state) => show_new_key(app, ctx, state),
     }
 }
 
@@ -2141,6 +2158,104 @@ fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState
         None
     } else {
         Some(Modal::GitInit(state))
+    }
+}
+
+/// Making a new key pair.
+///
+/// Says plainly, before anything is made, that the key will have no
+/// passphrase. That is not a limitation to bury: it is the whole reason the
+/// key can be opened at boot without being asked for, and it is a real
+/// property of the file that ends up on disk.
+fn show_new_key(app: &mut App, ctx: &egui::Context, mut state: NewKeyState) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let mut make = false;
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-new-key",
+        ModalSize::Medium,
+        copy::cred::NEW_TITLE,
+        Some((Icon::KeyRound, t.accent)),
+        state.busy,
+        |m| {
+            m.body(|ui| {
+                let mut kind = usize::from(state.rsa);
+                widgets::segmented(ui, &mut kind, &[copy::cred::NEW_ED25519, copy::cred::NEW_RSA]);
+                state.rsa = kind == 1;
+                ui.add_space(space::XS);
+                widgets::paragraph(
+                    ui,
+                    if state.rsa { copy::cred::NEW_RSA_HINT } else { copy::cred::NEW_ED25519_HINT },
+                    Type::Small,
+                    t.text_muted,
+                );
+
+                ui.add_space(space::L);
+                widgets::Field::new()
+                    .label(copy::cred::NEW_NAME)
+                    .helper(copy::cred::NEW_NAME_HINT)
+                    .width(320.0)
+                    .show(ui, &mut state.name);
+                ui.add_space(space::L);
+                widgets::Field::new()
+                    .label(copy::cred::NEW_COMMENT)
+                    .helper(copy::cred::NEW_COMMENT_HINT)
+                    .width(320.0)
+                    .show(ui, &mut state.comment);
+
+                ui.add_space(space::XL);
+                widgets::banner(
+                    ui,
+                    widgets::BannerKind::Info,
+                    copy::cred::NEW_NO_PASSPHRASE,
+                    Some(copy::cred::NEW_NO_PASSPHRASE_BODY),
+                    |_| {},
+                );
+
+                ui.add_space(space::L);
+                widgets::checkbox(
+                    ui,
+                    &mut state.load_into_agent,
+                    copy::cred::NEW_AUTO_OPEN,
+                    Some(copy::cred::NEW_AUTO_OPEN_HINT),
+                    true,
+                );
+
+                if let Some(error) = &state.error {
+                    ui.add_space(space::L);
+                    widgets::paragraph(ui, error.clone(), Type::Small, t.danger.tint_text);
+                }
+            });
+            m.footer(|ui| {
+                if Button::primary(copy::cred::NEW_CONFIRM)
+                    .enabled(!state.name.trim().is_empty() && !state.busy)
+                    .show(ui)
+                    .clicked()
+                {
+                    make = true;
+                }
+                let _ = Button::ghost(copy::action::CANCEL).show(ui);
+            });
+        },
+    );
+
+    if make {
+        state.busy = true;
+        state.error = None;
+        app.ask(
+            Intent::GenerateKey(state.load_into_agent),
+            Request::CredentialGenerate {
+                name: state.name.trim().to_string(),
+                key_type: if state.rsa { "rsa4096".into() } else { "ed25519".into() },
+                comment: state.comment.trim().to_string(),
+            },
+        );
+        return Some(Modal::NewKey(state));
+    }
+    if close {
+        None
+    } else {
+        Some(Modal::NewKey(state))
     }
 }
 

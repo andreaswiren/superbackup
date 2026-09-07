@@ -99,6 +99,12 @@ pub enum Intent {
     GitInit(Box<crate::gui::modals::GitInitState>),
     /// A repository being created on a host, after a successful init.
     GitCreateRemote,
+    /// Which agent is running and what it holds.
+    AgentStatus,
+    /// A key being loaded into the agent.
+    AgentAdd,
+    /// A key pair being made. Carries whether to open it once it exists.
+    GenerateKey(bool),
     GitDocument,
     GitInventory,
     /// A pull, commit, push or trust. The path is not carried: the screen

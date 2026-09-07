@@ -179,6 +179,13 @@ fn sample_requests() -> Vec<Request> {
         Request::GitSetExternal { path: "/w/thing".into(), external: true },
         Request::GitReadDocument { path: "/w/thing".into(), document: "README.md".into() },
         Request::CredentialList {},
+        Request::CredentialGenerate {
+            name: "id_ed25519".into(),
+            key_type: "ed25519".into(),
+            comment: "me@here".into(),
+        },
+        Request::CredentialAgentStatus {},
+        Request::CredentialAgentAdd { path: "/home/a/.ssh/id_ed25519".into() },
         Request::CredentialSetRole {
             path: "/home/a/.ssh/id_ed25519".into(),
             backed_up: true,

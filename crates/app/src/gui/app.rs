@@ -565,6 +565,31 @@ impl App {
                 ));
                 self.scan_git();
             }
+            (Intent::AgentStatus, Reply::AgentStatus(reply)) => {
+                self.screens.credentials.agent = Some(reply.status.clone());
+            }
+            (Intent::AgentAdd, Reply::Ack(_)) => {
+                // Re-ask rather than assuming: the agent is the authority on
+                // what it is holding, and a page that decided for itself would
+                // be showing a promise nothing is keeping.
+                self.ask(Intent::AgentStatus, Request::CredentialAgentStatus {});
+                self.toasts.success(copy::cred::AGENT_ADDED);
+            }
+            (Intent::GenerateKey(open_it), Reply::GeneratedKey(made)) => {
+                self.modal = None;
+                // The public key stays on screen. Pasting it into a forge is
+                // the very next thing anybody does, and a toast that scrolls
+                // away would mean going to find the file.
+                self.screens.credentials.last_public_key = Some(made.public_key.clone());
+                self.toasts.success(copy::cred_key_made(&made.private_path));
+                if *open_it {
+                    self.ask(
+                        Intent::AgentAdd,
+                        Request::CredentialAgentAdd { path: made.private_path.clone() },
+                    );
+                }
+                self.scan_credentials();
+            }
             (Intent::Credentials, Reply::Credentials(reply)) => {
                 self.screens
                     .credentials
@@ -711,6 +736,20 @@ impl App {
                 // leave the user looking at a list that says nothing is here.
                 Intent::GitInventory => self.screens.git.scan_failed(payload.message),
                 Intent::Credentials => self.screens.credentials.failed(payload.message),
+                // The agent is optional; a machine without one is not an
+                // error state, it just cannot open keys unattended.
+                Intent::AgentStatus => self.screens.credentials.agent = None,
+                Intent::AgentAdd => self.toasts.warning(payload.message),
+                Intent::GenerateKey(_) => {
+                    // The dialog stays open with the reason on it: a name that
+                    // is already taken should be retyped, not restarted.
+                    if let Some(Modal::NewKey(state)) = &mut self.modal {
+                        state.busy = false;
+                        state.error = Some(payload.message);
+                    } else {
+                        self.toasts.warning(payload.message);
+                    }
+                }
                 Intent::GitInit(_) | Intent::GitCreateRemote => {
                     // The dialog stays open with the reason on it: the folder
                     // may now be a repository even though the host step

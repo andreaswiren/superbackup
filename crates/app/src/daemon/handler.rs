@@ -2050,6 +2050,78 @@ impl Handler for DaemonHandler {
         })
     }
 
+    async fn credential_generate(
+        &self,
+        _ctx: &RequestContext,
+        name: String,
+        key_type: String,
+        comment: String,
+    ) -> Result<GeneratedKeyReply> {
+        use superbackup_core::credentials::keygen;
+
+        let key_type = match key_type.trim().to_ascii_lowercase().as_str() {
+            "ed25519" | "" => keygen::KeyType::Ed25519,
+            "rsa4096" | "rsa" => keygen::KeyType::Rsa4096,
+            other => {
+                return Err(Error::Validation(format!(
+                    "\"{other}\" is not a key type this makes. Use `ed25519`, or `rsa4096` for a \
+                     host too old to accept it."
+                )))
+            }
+        };
+        let Some(dir) = superbackup_core::credentials::ssh::ssh_dir() else {
+            return Err(Error::Config("this account has no home directory".into()));
+        };
+        let spec = keygen::NewKey { name, key_type, comment };
+        let made = keygen::generate(&dir, &spec).await?;
+
+        // Worth logging: a key that appears in `~/.ssh` without explanation is
+        // exactly the thing a careful person investigates.
+        self.runtime.record_event(Event::info(
+            "cred.generated",
+            format!(
+                "A new {} key was created at {}. It has no passphrase, so it can be loaded at \
+                 boot without being asked for.",
+                key_type.label(),
+                made.private_path.display()
+            ),
+        ));
+        Ok(GeneratedKeyReply {
+            private_path: made.private_path.display().to_string(),
+            public_path: made.public_path.display().to_string(),
+            fingerprint: made.fingerprint,
+            public_key: made.public_key,
+        })
+    }
+
+    async fn credential_agent_status(&self, _ctx: &RequestContext) -> Result<AgentStatusReply> {
+        Ok(AgentStatusReply { status: superbackup_core::credentials::agent::status().await })
+    }
+
+    async fn credential_agent_add(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+    ) -> Result<AckReply> {
+        // Must be one of this machine's own keys. The path comes from a
+        // client, and `ssh-add` on an arbitrary path would read a file of the
+        // caller's choosing with the daemon's privilege.
+        let target = std::path::PathBuf::from(&path);
+        let known = tokio::task::spawn_blocking(superbackup_core::credentials::ssh::discover)
+            .await
+            .map_err(|e| Error::Internal(format!("looking for keys did not finish: {e}")))?;
+        let Some(key) = known.into_iter().find(|k| k.private_path == target) else {
+            return Err(Error::Validation(format!(
+                "{path} is not one of the keys found in this machine's key folder"
+            )));
+        };
+
+        let detail =
+            superbackup_core::credentials::agent::add(&key.private_path, key.encrypted).await?;
+        self.runtime.record_event(Event::info("cred.agent_add", detail));
+        Ok(AckReply {})
+    }
+
     async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let path = self.git_target(&path).await?;
         let outcome = superbackup_core::git::trust(&path).await?;

@@ -1219,6 +1219,44 @@ impl Handler for MockHandler {
         })
     }
 
+    async fn credential_generate(
+        &self,
+        _ctx: &RequestContext,
+        name: String,
+        _key_type: String,
+        comment: String,
+    ) -> Result<GeneratedKeyReply> {
+        let _guard = self.enter("cred.generate").await?;
+        Ok(GeneratedKeyReply {
+            private_path: format!("/mock/.ssh/{name}"),
+            public_path: format!("/mock/.ssh/{name}.pub"),
+            fingerprint: None,
+            public_key: format!("ssh-ed25519 AAAAmock {comment}"),
+        })
+    }
+
+    async fn credential_agent_status(&self, _ctx: &RequestContext) -> Result<AgentStatusReply> {
+        let _guard = self.enter("cred.agent_status").await?;
+        Ok(AgentStatusReply {
+            status: crate::credentials::agent::AgentStatus {
+                kind: crate::credentials::agent::AgentKind::None,
+                running: false,
+                loaded: Vec::new(),
+                persists_across_reboot: false,
+                note: "the mock runs no agent".into(),
+            },
+        })
+    }
+
+    async fn credential_agent_add(
+        &self,
+        _ctx: &RequestContext,
+        _path: String,
+    ) -> Result<AckReply> {
+        let _guard = self.enter("cred.agent_add").await?;
+        Ok(AckReply {})
+    }
+
     async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let _guard = self.enter("git.trust").await?;
         Ok(Self::git_did("trust", &path))

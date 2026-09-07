@@ -16,7 +16,7 @@
 //! that off, because a plaintext option exists to be chosen by whoever is
 //! least able to judge the consequence.
 
-use egui::{Sense, Ui, Vec2};
+use egui::{Align, Layout, Sense, Ui, Vec2};
 
 use superbackup_core::credentials::{Credential, CredentialKind};
 use superbackup_core::ipc::protocol::Request;
@@ -39,6 +39,11 @@ pub struct State {
     /// that scrolls away — this is the one page where "which files moved
     /// where" is worth being able to re-read.
     pub last_bundle: Option<String>,
+    /// Which agent is running and what it holds.
+    pub agent: Option<superbackup_core::credentials::agent::AgentStatus>,
+    /// The public key of the pair just made, kept on screen because pasting it
+    /// into a forge is the very next thing anybody does.
+    pub last_public_key: Option<String>,
 }
 
 impl State {
@@ -59,6 +64,19 @@ impl State {
 
 impl App {
     pub(crate) fn credentials_actions(&mut self, ui: &mut Ui) {
+        if Button::primary(copy::cred::NEW_KEY).icon(Icon::Plus).show(ui).clicked() {
+            let machine = self.data.machine_label();
+            self.modal = Some(crate::gui::modals::Modal::NewKey(
+                crate::gui::modals::NewKeyState {
+                    name: "id_ed25519".to_string(),
+                    comment: format!("{}@{machine}", account_name()),
+                    // Opening it is the point of making it here rather than in
+                    // a terminal, so it is on by default.
+                    load_into_agent: true,
+                    ..Default::default()
+                },
+            ));
+        }
         if Button::secondary(copy::cred::RESCAN)
             .icon(Icon::RefreshCw)
             .enabled(!self.screens.credentials.loading)
@@ -73,6 +91,7 @@ impl App {
         self.screens.credentials.loading = true;
         self.screens.credentials.asked = true;
         self.ask(Intent::Credentials, Request::CredentialList {});
+        self.ask(Intent::AgentStatus, Request::CredentialAgentStatus {});
     }
 
     pub(crate) fn show_credentials(&mut self, ui: &mut Ui) {
@@ -126,6 +145,22 @@ impl App {
                 );
             }
 
+            // The public half of a key just made, kept where it can be copied
+            // rather than as a toast that has already gone.
+            if let Some(public_key) = self.screens.credentials.last_public_key.clone() {
+                widgets::card(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    widgets::text(ui, copy::cred::NEW_MADE, Type::H3, t.text_primary);
+                    ui.add_space(space::S);
+                    if widgets::code_block(ui, &public_key, 120.0, None) {
+                        self.toasts.success(copy::toast::COPIED_CLIPBOARD);
+                    }
+                });
+                ui.add_space(space::XL);
+            }
+
+            ui.add_space(space::XL);
+            self.credentials_agent_section(ui, &credentials, &t);
             ui.add_space(space::XL);
             self.credentials_sync_section(ui, &credentials, &t);
         });
@@ -257,6 +292,92 @@ impl App {
         change
     }
 
+    /// Which agent is running, and whether it holds this machine's keys.
+    ///
+    /// The heading everybody actually wants answered is "will it ask me for
+    /// this key again", and the honest answer depends on which agent is
+    /// running — so the agent is named rather than assumed.
+    fn credentials_agent_section(
+        &mut self,
+        ui: &mut Ui,
+        credentials: &[Credential],
+        t: &theme::Tokens,
+    ) {
+        let Some(status) = self.screens.credentials.agent.clone() else { return };
+
+        widgets::section_header(ui, copy::cred::AGENT_TITLE, None, |_| {});
+        ui.add_space(space::M);
+        widgets::banner(
+            ui,
+            if status.persists_across_reboot {
+                widgets::BannerKind::Success
+            } else if status.running {
+                widgets::BannerKind::Info
+            } else {
+                widgets::BannerKind::Warning
+            },
+            if status.persists_across_reboot {
+                copy::cred::AGENT_PERSISTS
+            } else if status.running {
+                copy::cred::AGENT_RUNNING
+            } else {
+                copy::cred::AGENT_NONE
+            },
+            Some(&status.note),
+            |_| {},
+        );
+        ui.add_space(space::M);
+
+        // Which of this machine's keys the agent is actually holding —
+        // matched by fingerprint, which is the only thing the two lists have
+        // in common.
+        let mut load: Option<String> = None;
+        for credential in credentials {
+            let CredentialKind::SshKey(key) = &credential.kind else { continue };
+            let Some(fingerprint) = &key.fingerprint else { continue };
+            let held = status.holds(fingerprint);
+
+            ui.horizontal(|ui| {
+                ui.set_min_height(28.0);
+                if held {
+                    widgets::badge(ui, t.success, Some(Icon::Check), copy::cred::AGENT_LOADED)
+                        .on_hover_text(if status.persists_across_reboot {
+                            copy::cred::AGENT_LOADED_PERSISTS
+                        } else {
+                            copy::cred::AGENT_LOADED_SESSION
+                        });
+                } else {
+                    widgets::neutral_badge(ui, copy::cred::AGENT_NOT_LOADED, None);
+                }
+                ui.add_space(space::M);
+                widgets::text(ui, &credential.name, Type::Body, t.text_primary);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if held {
+                        return;
+                    }
+                    // A key with its own passphrase cannot be loaded from
+                    // here, and the button says so rather than failing when
+                    // pressed.
+                    let protected = key.encrypted == Some(true);
+                    let mut button = Button::secondary(copy::cred::AGENT_LOAD).compact();
+                    if protected {
+                        button = button.disabled_because(copy::cred::AGENT_PROTECTED);
+                    } else if !status.running {
+                        button = button.disabled_because(copy::cred::AGENT_NONE_HINT);
+                    }
+                    if button.show(ui).clicked() {
+                        load = Some(credential.id.clone());
+                    }
+                });
+            });
+        }
+
+        if let Some(path) = load {
+            self.ask(Intent::AgentAdd, Request::CredentialAgentAdd { path });
+        }
+    }
+
     /// Where the shared bundle goes, and the two buttons that move it.
     fn credentials_sync_section(
         &mut self,
@@ -330,4 +451,11 @@ impl App {
             }
         }
     }
+}
+
+/// The account name, for a key comment. Not important enough to fail over.
+fn account_name() -> String {
+    std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "superbackup".to_string())
 }

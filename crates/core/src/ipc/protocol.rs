@@ -856,6 +856,23 @@ pub struct DocumentReply {
     pub truncated: bool,
 }
 
+/// A key pair that now exists.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneratedKeyReply {
+    pub private_path: String,
+    pub public_path: String,
+    pub fingerprint: Option<String>,
+    /// The public key line, ready to paste into a forge — which is the very
+    /// next thing anybody does after making a key.
+    pub public_key: String,
+}
+
+/// Which agent is running and what it holds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStatusReply {
+    pub status: crate::credentials::agent::AgentStatus,
+}
+
 /// The keys and tokens this machine signs in with. Never any key material.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialsReply {
@@ -1478,6 +1495,10 @@ replies! {
         "What was erased from a destination, and from where."
     "git_inventory" GitInventory(GitInventoryReply)
         "The git repositories under a job's sources, and whether their work exists anywhere else."
+    "generated_key" GeneratedKey(GeneratedKeyReply)
+        "A key pair that now exists."
+    "agent_status" AgentStatus(AgentStatusReply)
+        "Which SSH agent is running and what it holds."
     "credentials" Credentials(CredentialsReply)
         "The keys and tokens this machine signs in with."
     "key_bundle" KeyBundle(KeyBundleReply)
@@ -2157,6 +2178,27 @@ protocol! {
                 private: bool = "Private. Pass false deliberately to make it public.",
                 description: Option<String> = "An optional one-line description.",
                 credential: Option<String> = "Which stored credential to use, from `cred.list`. Omit to use the GitHub CLI.",
+            }
+
+        "cred.generate" CredentialGenerate => credential_generate -> GeneratedKey(GeneratedKeyReply)
+            flags [mutating, elevated]
+            doc "Make a new SSH key pair in this account's key folder, using ssh-keygen. THE KEY HAS NO PASSPHRASE, deliberately and unavoidably: ssh-keygen takes one only in an argument or from a terminal, and an argument is readable by every process on the machine. A key with no passphrase is also what loading it at boot without being asked requires. Add one afterwards with `ssh-keygen -p -f <key>` in your own terminal. An existing file is never replaced."
+            params {
+                name: String = "The file name in the key folder, e.g. `id_work_ed25519`. Not a path.",
+                key_type: String = "`ed25519` (the right answer for almost everyone) or `rsa4096` for a host too old to accept it.",
+                comment: String = "The trailing comment, usually user@machine. It is how people recognise their own keys.",
+            }
+
+        "cred.agent_status" CredentialAgentStatus => credential_agent_status -> AgentStatus(AgentStatusReply)
+            flags []
+            doc "Which SSH agent is running, what it is holding, and whether that survives a reboot. On Windows this deliberately asks the ssh-agent *service* rather than whichever ssh-add is first on PATH — Git for Windows ships a second one talking to a different agent, and only the service keeps keys across restarts."
+            params {}
+
+        "cred.agent_add" CredentialAgentAdd => credential_agent_add -> Ack(AckReply)
+            flags [mutating, elevated]
+            doc "Load a key into the agent so it is not asked for again. On Windows the service agent keeps it encrypted in the registry and reloads it at every boot. A key protected by its own passphrase is refused with the command to run instead: superbackup will not put a passphrase on a command line."
+            params {
+                path: String = "The private key's path, as `cred.list` reported it.",
             }
 
         "git.trust" GitTrust => git_trust -> GitAction(GitActionReply)

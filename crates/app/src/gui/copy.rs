@@ -1639,6 +1639,34 @@ pub mod cred {
     pub const SHARE_HINT: &str = "Seal this key into a bundle in a shared folder, so another machine can unseal it with the master passphrase.";
     pub const GH_BODY: &str = "The GitHub CLI is signed in on this machine, and superbackup borrows that rather than holding a token of its own. Nothing is stored here, and you revoke it where you granted it.";
     pub const ACCOUNT: &str = "Account";
+    pub const AGENT_TITLE: &str = "Opening keys without being asked";
+    pub const AGENT_PERSISTS: &str = "Keys stay open across restarts";
+    pub const AGENT_RUNNING: &str = "An agent is running";
+    pub const AGENT_NONE: &str = "No agent is running";
+    pub const AGENT_NONE_HINT: &str = "There is no agent to load a key into.";
+    pub const AGENT_LOADED: &str = "Open";
+    pub const AGENT_NOT_LOADED: &str = "Not open";
+    pub const AGENT_LOADED_PERSISTS: &str = "The agent is holding this key and will load it again at every boot, so nothing asks for it.";
+    pub const AGENT_LOADED_SESSION: &str = "The agent is holding this key for now. Agents reached this way usually end with the session.";
+    pub const AGENT_LOAD: &str = "Open it";
+    pub const AGENT_PROTECTED: &str = "This key has its own passphrase. Superbackup will not put a passphrase on a command line, so run ssh-add once in a terminal instead; the agent then keeps it.";
+    pub const NEW_KEY: &str = "New key pair…";
+    pub const NEW_TITLE: &str = "Make a new SSH key pair";
+    pub const NEW_ED25519: &str = "Ed25519";
+    pub const NEW_RSA: &str = "RSA 4096";
+    pub const NEW_ED25519_HINT: &str = "Short, fast, and accepted by every current server. Choose this unless something has refused it.";
+    pub const NEW_RSA_HINT: &str = "For a host too old to accept Ed25519. Larger and slower, and still perfectly secure at this size.";
+    pub const NEW_NAME: &str = "File name";
+    pub const NEW_NAME_HINT: &str = "In your key folder. The pair is named after the private half.";
+    pub const NEW_COMMENT: &str = "Comment";
+    pub const NEW_COMMENT_HINT: &str = "Goes into the public key and into the agent listing. It is how you recognise this key later.";
+    pub const NEW_NO_PASSPHRASE: &str = "This key will have no passphrase";
+    pub const NEW_NO_PASSPHRASE_BODY: &str = "ssh-keygen takes a passphrase only in an argument or from a terminal, and an argument is readable by every process on the machine — so superbackup does not set one. A key with no passphrase is also what opening it at boot without being asked requires. To add one afterwards, run ssh-keygen -p -f followed by the key path, in a terminal.";
+    pub const NEW_AUTO_OPEN: &str = "Open it automatically from now on";
+    pub const NEW_AUTO_OPEN_HINT: &str = "Load it into the SSH agent as soon as it is made. On Windows the agent keeps it across reboots, so nothing asks for it again.";
+    pub const NEW_CONFIRM: &str = "Make the key";
+    pub const AGENT_ADDED: &str = "The key is open. Nothing will ask for it again.";
+    pub const NEW_MADE: &str = "Public key — paste this into your git host";
     pub const SYNC_TITLE: &str = "Shared with your other machines";
     pub const SYNC_NONE: &str = "No keys are marked for sharing. Tick one above to put it in a bundle other machines can open.";
     pub const SYNC_FOLDER: &str = "Shared folder";
@@ -1825,6 +1853,12 @@ pub fn prov_last_write(bytes: u64) -> String {
 
 /// What was sealed, and where it went. The location matters: the whole point
 /// is that the user knows which folder now holds the bundle.
+/// Where the new key landed. The path matters: the next step is pasting its
+/// public half somewhere, and knowing which file that is.
+pub fn cred_key_made(private_path: &str) -> String {
+    format!("Key pair created at {private_path}.")
+}
+
 pub fn cred_sealed(files: usize, path: &str) -> String {
     format!("{files} key files sealed into {path}. The folder holds no usable key.")
 }

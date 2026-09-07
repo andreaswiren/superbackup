@@ -359,6 +359,24 @@ async fn every_command_answers_or_refuses_cleanly() {
     // Reading the list touches only this machine's own key folder and returns
     // no key material, so it runs for real.
     run!("cred.list", Request::CredentialList {});
+    // Asking the agent touches nothing and is safe to run for real.
+    run!("cred.agent_status", Request::CredentialAgentStatus {});
+    // A path that is not one of this machine's keys must be refused before
+    // `ssh-add` is handed a file of the caller's choosing.
+    run!(
+        "cred.agent_add",
+        Request::CredentialAgentAdd { path: "/not/a/key/on/this/machine".into() }
+    );
+    // A name that would escape the key folder is refused without ssh-keygen
+    // ever being run.
+    run!(
+        "cred.generate",
+        Request::CredentialGenerate {
+            name: "../escape".into(),
+            key_type: "ed25519".into(),
+            comment: "should never happen".into(),
+        }
+    );
     // A path that is not one of this machine's keys must be refused, or the
     // configuration accumulates entries for files that do not exist and the
     // key backup silently protects nothing.

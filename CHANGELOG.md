@@ -12,6 +12,38 @@ rather than mangling it.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.5.0] - 2026-09-07
+
+- **Make a new SSH key pair**, from the Credentials page. Ed25519 by default,
+  RSA 4096 for a host too old to take one, with the public half kept on screen
+  afterwards because pasting it into a forge is the very next thing anybody
+  does.
+
+  The key has **no passphrase**, and the dialog says so before you press the
+  button. `ssh-keygen` accepts one only in an argument or from a terminal, and
+  an argument is readable by every process on the machine — the same leak the
+  kopia driver argv rule exists to prevent, and it would be strange to hold
+  repository passphrases to that standard and not SSH keys. A key with no
+  passphrase is also exactly what opening it at boot unattended requires. To
+  add one, `ssh-keygen -p -f <key>` in your own terminal, once.
+
+- **Open keys without being asked.** The Credentials page shows which agent is
+  running, which of your keys it is holding — matched by fingerprint — and
+  whether that survives a restart, with a button to load the ones that are not.
+
+  On Windows this deliberately asks the `ssh-agent` **service** rather than
+  whichever `ssh-add` is first on PATH. Git for Windows ships a second one
+  talking to a different agent, both are on PATH, Git's is usually first, and
+  they give opposite answers about the same key on the same machine. Only the
+  service keeps keys across reboots, which is what "open it at every boot"
+  means here.
+
+  A key with its own passphrase is not loaded from the interface: superbackup
+  will not put a passphrase on a command line, so the button says so and gives
+  you the one command to run instead.
+
 - **A Credentials page.** The SSH keys this machine signs in with, found in
   `~/.ssh` and reported from their *public* half, their name and their
   permissions — algorithm, comment, and the `SHA256:` fingerprint a forge

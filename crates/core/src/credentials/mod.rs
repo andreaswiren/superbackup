@@ -23,6 +23,8 @@
 //! That is not a policy that can be turned off in settings. A plaintext option
 //! would exist to be chosen by the person least able to judge the consequence.
 
+pub mod agent;
+pub mod keygen;
 pub mod ssh;
 
 use serde::{Deserialize, Serialize};
