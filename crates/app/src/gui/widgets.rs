@@ -1972,6 +1972,60 @@ fn link_at(chars: &[char], open: usize) -> Option<(String, String, usize)> {
     Some((text, url, end + 1))
 }
 
+/// Resample a polyline into a smooth curve through the same points.
+///
+/// Centripetal-ish Catmull-Rom: the curve passes through every sample rather
+/// than being pulled off them the way a Bézier control polygon would, which
+/// matters because these *are* the measurements and a line that misses them is
+/// a line that lies about them.
+///
+/// The ends are handled by reflecting the first and last points outwards, so
+/// the curve starts and finishes at the real data instead of drifting.
+/// Overshoot — Catmull-Rom can bulge past a local maximum — is clamped to the
+/// band the caller gives, because a throughput graph that dips below zero or
+/// escapes its own box looks broken rather than smooth.
+pub fn smooth_curve(points: &[Pos2], per_segment: usize, min_y: f32, max_y: f32) -> Vec<Pos2> {
+    if points.len() < 3 || per_segment < 2 {
+        return points.to_vec();
+    }
+    let at = |i: isize| -> Pos2 {
+        let last = points.len() as isize - 1;
+        if i < 0 {
+            // Reflect: p(-1) = 2*p0 - p1.
+            let (a, b) = (points[0], points[1]);
+            Pos2::new(2.0 * a.x - b.x, 2.0 * a.y - b.y)
+        } else if i > last {
+            let (a, b) = (points[last as usize], points[(last - 1) as usize]);
+            Pos2::new(2.0 * a.x - b.x, 2.0 * a.y - b.y)
+        } else {
+            points[i as usize]
+        }
+    };
+
+    let mut out = Vec::with_capacity(points.len() * per_segment);
+    for i in 0..points.len() - 1 {
+        let (p0, p1, p2, p3) =
+            (at(i as isize - 1), at(i as isize), at(i as isize + 1), at(i as isize + 2));
+        for step in 0..per_segment {
+            let t = step as f32 / per_segment as f32;
+            let (t2, t3) = (t * t, t * t * t);
+            let x = 0.5
+                * ((2.0 * p1.x)
+                    + (-p0.x + p2.x) * t
+                    + (2.0 * p0.x - 5.0 * p1.x + 4.0 * p2.x - p3.x) * t2
+                    + (-p0.x + 3.0 * p1.x - 3.0 * p2.x + p3.x) * t3);
+            let y = 0.5
+                * ((2.0 * p1.y)
+                    + (-p0.y + p2.y) * t
+                    + (2.0 * p0.y - 5.0 * p1.y + 4.0 * p2.y - p3.y) * t2
+                    + (-p0.y + 3.0 * p1.y - 3.0 * p2.y + p3.y) * t3);
+            out.push(Pos2::new(x, y.clamp(min_y, max_y)));
+        }
+    }
+    out.push(*points.last().expect("points is not empty"));
+    out
+}
+
 /// A filled line graph of recent transfer rates.
 ///
 /// Answers the question a single "89 MB/s" cannot: *is it still moving?* A
@@ -1984,6 +2038,12 @@ fn link_at(chars: &[char], open: usize) -> Option<(String, String, usize)> {
 /// a shared scale would flatten one of them into a straight line. The peak is
 /// labelled so the shape cannot be mistaken for an absolute reading.
 ///
+/// Drawn as a gradient mesh under a smoothed curve. The fill used to be
+/// `Shape::convex_polygon`, and a throughput curve is not convex — egui
+/// triangulates that assuming it is, which produced the crossing slabs and
+/// stray wedges the graph was full of. A triangle strip is correct for any
+/// shape, and lets the fill fade out downwards instead of being a flat block.
+///
 /// Returns the peak it scaled to, so a caller can label it consistently.
 pub fn throughput_graph(
     ui: &mut Ui,
@@ -1993,9 +2053,10 @@ pub fn throughput_graph(
 ) -> f64 {
     let t = theme::tokens(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-    let painter = ui.painter();
+    let radius = CornerRadius::same(6);
+    let painter = ui.painter().with_clip_rect(rect);
 
-    painter.rect_filled(rect, CornerRadius::same(4), t.bg_rail);
+    painter.rect_filled(rect, radius, t.bg_rail);
     let peak = samples.iter().copied().fold(0.0_f64, f64::max);
     // Below a byte a second there is nothing to draw and no sensible scale.
     if samples.len() < 2 || peak <= 1.0 {
@@ -2004,32 +2065,57 @@ pub fn throughput_graph(
         return peak;
     }
 
+    let inset = 6.0;
+    let top = rect.top() + inset;
+    let bottom = rect.bottom() - 1.0;
     let n = samples.len();
     let x_at = |i: usize| rect.left() + rect.width() * (i as f32 / (n - 1) as f32);
-    let y_at = |v: f64| {
-        // One pixel of headroom, so the peak sample is visibly inside the box
-        // rather than merged into its top edge.
-        let frac = (v / peak).clamp(0.0, 1.0) as f32;
-        rect.bottom() - 1.0 - (rect.height() - 2.0) * frac
-    };
+    let y_at = |v: f64| bottom - (bottom - top) * (v / peak).clamp(0.0, 1.0) as f32;
 
-    // Fill first, line over it: the fill carries the sense of volume and the
-    // line keeps the most recent value readable when the fill is short.
-    let mut fill: Vec<Pos2> = Vec::with_capacity(n + 2);
-    fill.push(Pos2::new(rect.left(), rect.bottom()));
-    for (i, v) in samples.iter().enumerate() {
-        fill.push(Pos2::new(x_at(i), y_at(*v)));
+    // A quarter and a half line, so the height of the shape can be read
+    // against something. Faint enough to stay behind the data.
+    for fraction in [0.5_f32, 0.25] {
+        let y = bottom - (bottom - top) * fraction;
+        painter.hline(
+            rect.left()..=rect.right(),
+            y,
+            Stroke::new(1.0_f32, t.border_subtle.gamma_multiply(0.5)),
+        );
     }
-    fill.push(Pos2::new(rect.right(), rect.bottom()));
-    painter.add(egui::Shape::convex_polygon(fill, t.accent.gamma_multiply(0.20), Stroke::NONE));
 
-    let line: Vec<Pos2> =
-        samples.iter().enumerate().map(|(i, v)| Pos2::new(x_at(i), y_at(*v))).collect();
-    painter.add(egui::Shape::line(line, Stroke::new(1.5_f32, t.accent)));
+    let raw: Vec<Pos2> = samples.iter().enumerate().map(|(i, v)| Pos2::new(x_at(i), y_at(*v))).collect();
+    let curve = smooth_curve(&raw, 12, top, bottom);
+
+    // The fill: a triangle strip from the curve down to the baseline, fading
+    // out as it goes, so the shape reads as volume without becoming a slab.
+    let mut mesh = egui::Mesh::default();
+    for (index, point) in curve.iter().enumerate() {
+        let i = mesh.vertices.len() as u32;
+        mesh.colored_vertex(*point, t.accent.gamma_multiply(0.38));
+        mesh.colored_vertex(Pos2::new(point.x, bottom), t.accent.gamma_multiply(0.02));
+        if index > 0 {
+            mesh.add_triangle(i - 2, i - 1, i);
+            mesh.add_triangle(i - 1, i, i + 1);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+
+    painter.add(egui::Shape::line(
+        curve.clone(),
+        Stroke::new(1.75_f32, t.accent),
+    ));
+
+    // Where the latest reading is. On a graph whose right edge is "now", the
+    // eye needs somewhere to land — and when the rate has just dropped to
+    // zero, the dot sitting on the baseline says so unmistakably.
+    if let Some(last) = curve.last() {
+        painter.circle_filled(*last, 3.0, t.accent);
+        painter.circle_filled(*last, 1.25, t.bg_rail);
+    }
 
     // The peak, so the shape is not mistaken for an absolute scale.
     let g = galley(ui, super::format::rate(peak), Type::MonoSmall, t.text_muted);
-    painter.galley(Pos2::new(rect.right() - g.size().x - 4.0, rect.top() + 2.0), g, t.text_muted);
+    painter.galley(Pos2::new(rect.right() - g.size().x - 6.0, rect.top() + 3.0), g, t.text_muted);
     peak
 }
 
@@ -2998,6 +3084,62 @@ pub fn menu_item_danger(ui: &mut Ui, label: &str, enabled: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// The curve has to pass through the readings, not near them: these *are*
+    /// the measurements, and a line that misses them is a line that lies.
+    #[test]
+    fn the_smoothed_curve_still_passes_through_every_reading() {
+        let points = vec![
+            Pos2::new(0.0, 40.0),
+            Pos2::new(10.0, 10.0),
+            Pos2::new(20.0, 30.0),
+            Pos2::new(30.0, 0.0),
+        ];
+        let curve = smooth_curve(&points, 12, 0.0, 40.0);
+        assert!(curve.len() > points.len() * 8, "it is actually subdivided");
+
+        for p in &points {
+            let hit = curve
+                .iter()
+                .any(|q| (q.x - p.x).abs() < 0.01 && (q.y - p.y).abs() < 0.01);
+            assert!(hit, "{p:?} is not on the curve");
+        }
+        // The ends are the real first and last readings, not a drift towards
+        // some imagined neighbour.
+        assert_eq!(curve.first().copied(), Some(points[0]));
+        assert_eq!(curve.last().copied(), Some(points[3]));
+    }
+
+    /// Catmull-Rom bulges past a local maximum. On a graph that means a curve
+    /// leaving its own box, or a transfer rate drawn below zero — both of
+    /// which read as broken rather than smooth.
+    #[test]
+    fn overshoot_is_clamped_to_the_band_it_was_given() {
+        // A spike that will make the interpolation overshoot on both sides.
+        let points = vec![
+            Pos2::new(0.0, 50.0),
+            Pos2::new(10.0, 50.0),
+            Pos2::new(20.0, 0.0),
+            Pos2::new(30.0, 50.0),
+            Pos2::new(40.0, 50.0),
+        ];
+        let curve = smooth_curve(&points, 16, 0.0, 50.0);
+        for p in &curve {
+            assert!(p.y >= 0.0 && p.y <= 50.0, "{p:?} escaped the band");
+        }
+    }
+
+    /// Too few points to interpolate, or a degenerate subdivision, gives the
+    /// input back rather than an empty graph.
+    #[test]
+    fn too_little_data_is_returned_unchanged() {
+        let two = vec![Pos2::new(0.0, 1.0), Pos2::new(1.0, 2.0)];
+        assert_eq!(smooth_curve(&two, 12, 0.0, 10.0), two);
+        assert_eq!(smooth_curve(&[], 12, 0.0, 10.0), Vec::<Pos2>::new());
+
+        let three = vec![Pos2::new(0.0, 1.0), Pos2::new(1.0, 2.0), Pos2::new(2.0, 1.0)];
+        assert_eq!(smooth_curve(&three, 1, 0.0, 10.0), three, "no subdivision to do");
+    }
+
 
     /// The interface shows megabits and stores kilobytes. Anything typed into
     /// the box has to survive the round trip, or a limit set to 50 reopens as

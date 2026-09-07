@@ -40,9 +40,6 @@ pub struct State {
     /// The repository a modal is about, by path — not by index, which changes
     /// under the modal the moment a scan finishes.
     pub acting_on: Option<std::path::PathBuf>,
-    /// The repository whose details are open, by path — an index would move
-    /// under the panel the moment a scan finished.
-    pub expanded: Option<std::path::PathBuf>,
     /// Set while an action is in flight, so its button cannot be pressed twice
     /// and a second commit cannot be started on top of the first.
     pub acting: bool,
@@ -530,36 +527,17 @@ impl App {
                 });
         });
 
-        // Whether the panel was opened *this frame*, so it can be scrolled to.
-        // Nineteen repositories is a table taller than the window, and a
-        // details panel that renders below it is a details panel the user
-        // never sees: they click a row near the top and nothing appears to
-        // happen, because the answer is thirteen hundred pixels down.
-        let mut just_opened = false;
+        // A dialog, not a panel below the table.
+        //
+        // Nineteen repositories make a table taller than the window, so a
+        // panel underneath it was a panel nobody saw: you clicked a row near
+        // the top and the answer rendered thirteen hundred pixels down.
+        // Scrolling to it helped and still meant losing your place in the
+        // list. A dialog appears where you are already looking, and closing it
+        // leaves the table exactly as you left it.
         if let Some(path) = expand {
-            // Clicking the open repository closes it, which is what a person
-            // expects of a row that expanded when they clicked it.
-            let already = self.screens.git.expanded.as_ref() == Some(&path);
-            self.screens.git.expanded = if already { None } else { Some(path) };
-            just_opened = !already;
-        }
-        if let Some(path) = self.screens.git.expanded.clone() {
             if let Some(repo) = rows.iter().find(|r| r.path == path).cloned() {
-                ui.add_space(space::M);
-                let before = ui.cursor().top();
-                self.git_details(ui, &repo, now);
-                if just_opened {
-                    let rect = egui::Rect::from_min_max(
-                        egui::pos2(ui.min_rect().left(), before),
-                        egui::pos2(ui.min_rect().right(), ui.cursor().top()),
-                    );
-                    ui.scroll_to_rect(rect, Some(Align::Center));
-                }
-            } else {
-                // The repository is no longer in the filtered list — the
-                // filter changed, or a scan dropped it. Close rather than
-                // leaving a panel about something not on screen.
-                self.screens.git.expanded = None;
+                self.modal = Some(crate::gui::modals::Modal::GitRepo(Box::new(repo)));
             }
         }
 
@@ -630,7 +608,66 @@ impl App {
     /// lists, and a list does not fit in a table cell. It opens on click, so
     /// the table stays a table for the forty repositories nobody is currently
     /// interested in.
-    fn git_details(&mut self, ui: &mut Ui, repo: &GitRepo, now: chrono::DateTime<chrono::Utc>) {
+    /// Apply whatever the details panel asked for.
+    ///
+    /// The panel itself is a free function that only *reports* what was
+    /// clicked, so it can be rendered inside a modal — where borrowing the
+    /// whole `App` mutably is not available — as well as on a page.
+    pub(crate) fn git_detail_action(&mut self, repo: &GitRepo, action: GitDetailAction) {
+        match action {
+            GitDetailAction::OpenUrl(url) => {
+                let _ = open::that_detached(&url);
+            }
+            GitDetailAction::ReadDocument(document) => {
+                // The dialog opens empty and fills in when the daemon answers,
+                // so the click is acknowledged immediately rather than after a
+                // disk read that might be on a network drive.
+                self.modal = Some(crate::gui::modals::Modal::Document(
+                    crate::gui::modals::DocumentState {
+                        title: format!("{document} — {}", repo.name),
+                        path: repo.path.join(&document).display().to_string(),
+                        content: String::new(),
+                        truncated: false,
+                        loading: true,
+                        error: None,
+                    },
+                ));
+                self.ask(
+                    Intent::GitDocument,
+                    Request::GitReadDocument {
+                        path: repo.path.display().to_string(),
+                        document,
+                    },
+                );
+            }
+            GitDetailAction::SetExternal(external) => {
+                self.screens.git.acting = true;
+                self.ask(
+                    Intent::GitAction,
+                    Request::GitSetExternal {
+                        path: repo.path.display().to_string(),
+                        external,
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// What the details panel was asked to do.
+#[derive(Debug, Clone)]
+pub enum GitDetailAction {
+    OpenUrl(String),
+    SetExternal(bool),
+    ReadDocument(String),
+}
+
+/// Everything about one repository, as a body that can be put anywhere.
+pub fn git_details(
+    ui: &mut Ui,
+    repo: &GitRepo,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<GitDetailAction> {
         let t = theme::tokens(ui.ctx());
         let mut open_url: Option<String> = None;
         let mut set_external: Option<bool> = None;
@@ -789,39 +826,18 @@ impl App {
         });
 
         if let Some(url) = open_url {
-            let _ = open::that_detached(&url);
+            return Some(GitDetailAction::OpenUrl(url));
         }
         if let Some(document) = read_document {
-            // The modal opens empty and fills in when the daemon answers, so
-            // the click is acknowledged immediately rather than after a disk
-            // read that might be on a network drive.
-            self.modal = Some(crate::gui::modals::Modal::Document(
-                crate::gui::modals::DocumentState {
-                    title: format!("{document} — {}", repo.name),
-                    path: repo.path.join(&document).display().to_string(),
-                    content: String::new(),
-                    truncated: false,
-                    loading: true,
-                    error: None,
-                },
-            ));
-            self.ask(
-                Intent::GitDocument,
-                Request::GitReadDocument {
-                    path: repo.path.display().to_string(),
-                    document,
-                },
-            );
+            return Some(GitDetailAction::ReadDocument(document));
         }
         if let Some(external) = set_external {
-            self.screens.git.acting = true;
-            self.ask(
-                Intent::GitAction,
-                Request::GitSetExternal { path: repo.path.display().to_string(), external },
-            );
+            return Some(GitDetailAction::SetExternal(external));
         }
-    }
+        None
+}
 
+impl App {
     /// Send one action and mark the screen busy until it answers.
     pub(crate) fn git_act(&mut self, request: Request, path: std::path::PathBuf) {
         self.screens.git.acting = true;

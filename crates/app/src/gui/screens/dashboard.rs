@@ -24,7 +24,7 @@ use crate::gui::widgets::{self, Button};
 /// Wide enough for the longest realistic line — files, uploaded, unchanged and
 /// a transfer rate — because this is the column the text is elided to, and
 /// eliding it too hard is how the numbers stop being readable.
-const STATS_W: f32 = 320.0;
+const STATS_W: f32 = 380.0;
 
 impl App {
     pub(crate) fn dashboard_actions(&mut self, ui: &mut Ui) {
@@ -717,8 +717,11 @@ impl App {
                     Layout::right_to_left(Align::Center),
                     |ui| {
                         let line = viewmodel::destination_progress_line(&destination.progress);
+                        // The box it was actually given, not the constant, so
+                        // the two cannot drift apart.
+                        let room = ui.available_width().max(80.0);
                         let response =
-                            widgets::elided(ui, &line, Type::MonoSmall, t.text_muted, STATS_W, false);
+                            widgets::elided(ui, &line, Type::MonoSmall, t.text_muted, room, false);
                         // What was cut is still reachable, rather than lost.
                         response.on_hover_text(line);
                     },

@@ -113,6 +113,24 @@ Nothing yet.
   shape cannot be paraphrased honestly is still shown as written — a wrong
   sentence about when a backup runs would be worse than no sentence.
 
+- **The throughput graph was drawn with `convex_polygon`**, and a throughput
+  curve is not convex — egui triangulates on the assumption that it is, which
+  is where the crossing slabs and stray wedges came from. It is a triangle
+  strip now, correct for any shape, with a gradient that fades downwards, a
+  curve smoothed through the readings rather than straight between them, two
+  faint gridlines to read the height against, and a dot on the latest value
+  so the eye has somewhere to land. The smoothing passes through every
+  measurement — these *are* the readings — and its overshoot is clamped, so a
+  spike cannot draw a rate below zero or a line outside its own box.
+
+- **The repository details are a dialog.** A panel under a table taller than
+  the window is a panel nobody sees; scrolling to it helped and still meant
+  losing your place in the list.
+
+- **Clicking a job on the Jobs page** opens its status page, as it already
+  did from the dashboard.
+
+
 
 
 

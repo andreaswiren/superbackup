@@ -545,7 +545,9 @@ impl App {
             self.request_run(&job);
         }
         if let Some(id) = open {
-            self.go(Route::JobEditor(id));
+            // The status page, not the editor. Clicking a job asks what it has
+            // been doing; "Edit" is a button on the page that answers that.
+            self.go(Route::JobDetail(id));
         }
         if let Some((action, id)) = menu {
             self.job_menu_action(action, id);

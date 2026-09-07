@@ -440,6 +440,10 @@ pub enum Modal {
     /// reading. Never editable and never navigable: this displays a file out
     /// of a repository that may not be the user's.
     Document(DocumentState),
+    /// One repository's full detail. A dialog rather than a panel under the
+    /// table: the table is taller than the window, so anything below it is
+    /// somewhere the reader never looks.
+    GitRepo(Box<superbackup_core::git::GitRepo>),
 }
 
 /// The document being read, and how far it has got.
@@ -687,6 +691,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::Export => show_export(app, ctx),
         Modal::GitCommit(state) => show_git_commit(app, ctx, state),
         Modal::Document(state) => show_document(app, ctx, state),
+        Modal::GitRepo(repo) => show_git_repo(app, ctx, repo),
     }
 }
 
@@ -1804,6 +1809,54 @@ fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Op
         None
     } else {
         Some(Modal::Document(state))
+    }
+}
+
+/// One repository, in full: branches, working trees, remotes and documents.
+fn show_git_repo(
+    app: &mut App,
+    ctx: &egui::Context,
+    repo: Box<superbackup_core::git::GitRepo>,
+) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let now = chrono::Utc::now();
+    let mut action = None;
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-git-repo",
+        ModalSize::Large,
+        &repo.name,
+        Some((Icon::GitBranch, t.accent)),
+        false,
+        |m| {
+            m.body(|ui| {
+                widgets::scroll_area(ui, "sb-git-repo-body", |ui| {
+                    action = super::screens::git::git_details(ui, &repo, now);
+                });
+            });
+            m.footer(|ui| {
+                let _ = Button::primary(copy::action::CLOSE).show(ui);
+            });
+        },
+    );
+
+    if let Some(action) = action {
+        // Some of these open another dialog — reading a document — so this one
+        // gives way rather than stacking on top of it.
+        let opens_another = matches!(
+            action,
+            super::screens::git::GitDetailAction::ReadDocument(_)
+                | super::screens::git::GitDetailAction::SetExternal(_)
+        );
+        app.git_detail_action(&repo, action);
+        if opens_another {
+            return None;
+        }
+    }
+    if close {
+        None
+    } else {
+        Some(Modal::GitRepo(repo))
     }
 }
 
