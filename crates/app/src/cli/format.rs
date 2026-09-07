@@ -13,7 +13,7 @@
 //! dependency this crate does not have, and being one column out on a CJK path
 //! is a cosmetic defect, not a correctness one.
 
-use chrono::{DateTime, Datelike, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 
 /// What a column shows when there is no value. Not an em dash: see the module
 /// note on console code pages.
@@ -187,14 +187,35 @@ pub fn opt_relative(then: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
     then.map(|t| relative(t, now)).unwrap_or_else(|| MISSING.to_string())
 }
 
-/// `29 Aug 14:30`, or `29 Aug 2025 14:30` when the year is not this one.
+/// `2025-08-29 14:30`, in local time.
+///
+/// ISO order, and the year always present. See the note on the window's
+/// `format::absolute`: a date written `<day> <month-name>` is one region's
+/// convention rather than the local one, and a year dropped because the
+/// timestamp happens to fall in the current one is a year missing from
+/// exactly the listing where it decides whether a backup is a year old.
 pub fn absolute_local(t: DateTime<Utc>) -> String {
+    t.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// The same instant with the offset, for output that stands on its own.
+#[allow(dead_code)]
+pub fn absolute_zoned(t: DateTime<Utc>) -> String {
     let local = t.with_timezone(&Local);
-    if local.year() == Local::now().year() {
-        local.format("%-d %b %H:%M").to_string()
+    let offset = local.offset().local_minus_utc();
+    let zone = if offset == 0 {
+        "GMT".to_string()
     } else {
-        local.format("%-d %b %Y %H:%M").to_string()
-    }
+        let sign = if offset < 0 { '-' } else { '+' };
+        let total = offset.abs();
+        let (h, m) = (total / 3600, (total % 3600) / 60);
+        if m == 0 {
+            format!("GMT{sign}{h}")
+        } else {
+            format!("GMT{sign}{h}:{m:02}")
+        }
+    };
+    format!("{} {zone}", local.format("%Y-%m-%d %H:%M"))
 }
 
 /// Full precision, for `--json`-adjacent human output where the exact instant

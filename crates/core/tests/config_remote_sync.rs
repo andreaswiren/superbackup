@@ -76,6 +76,7 @@ fn remote_source(trusted: Vec<String>) -> RemoteConfigSource {
 
 fn job(name: &str, destination_ids: Vec<Uuid>) -> Job {
     Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: name.into(),
         project_id: None,
@@ -97,6 +98,7 @@ fn job(name: &str, destination_ids: Vec<Uuid>) -> Job {
 
 fn destination(name: &str) -> Destination {
     Destination {
+        shared: false,
         id: Uuid::new_v4(),
         name: name.into(),
         kind: DestinationKind::LocalRepository { path: abs("backups/repo") },

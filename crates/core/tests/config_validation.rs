@@ -38,6 +38,7 @@ fn provider(name: &str) -> StorageProvider {
 
 fn local_destination(name: &str, path: PathBuf) -> Destination {
     Destination {
+        shared: false,
         id: Uuid::new_v4(),
         name: name.into(),
         kind: DestinationKind::LocalRepository { path },
@@ -56,6 +57,7 @@ fn local_destination(name: &str, path: PathBuf) -> Destination {
 fn s3_destination(name: &str, provider_id: Uuid, prefix: &str) -> Destination {
     let id = Uuid::new_v4();
     Destination {
+        shared: false,
         id,
         name: name.into(),
         kind: DestinationKind::S3 {
@@ -78,6 +80,7 @@ fn s3_destination(name: &str, provider_id: Uuid, prefix: &str) -> Destination {
 
 fn job(name: &str, sources: Vec<PathBuf>, destinations: Vec<Uuid>) -> Job {
     Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: name.into(),
         project_id: None,

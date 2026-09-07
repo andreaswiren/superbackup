@@ -47,6 +47,8 @@ pub mod power;
 pub mod service;
 pub mod shortcut;
 pub mod single_instance;
+pub mod terminal;
+pub mod wake;
 
 #[cfg(windows)]
 mod win32;
@@ -56,6 +58,7 @@ pub use identity::{list_machines, list_machines_for, write_manifest, MachineReco
 pub use notify::{Notification, NotificationKind, Notifier, NotifyOutcome};
 pub use onedrive::{OneDriveAccount, OneDriveKind, SyncState, Validation, ValidationIssue};
 pub use power::{Metered, PowerSource, PowerStatus, WakeDetector};
+pub use wake::{StayAwake, WakeSupport, WakeTimer};
 pub use service::{ServiceOptions, ServiceScope, ServiceState, ServiceStatus};
 pub use shortcut::ShortcutState;
 pub use single_instance::{InstanceGuard, LockOutcome};

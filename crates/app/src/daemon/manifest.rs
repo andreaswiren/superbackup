@@ -131,6 +131,7 @@ mod tests {
 
     fn destination(kind: DestinationKind) -> Destination {
         Destination {
+            shared: false,
             id: Uuid::new_v4(),
             name: "Archive".into(),
             kind,

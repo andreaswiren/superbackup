@@ -60,6 +60,7 @@ fn abs(tail: &str) -> PathBuf {
 
 fn destination(name: &str, source: PassphraseSource) -> Destination {
     Destination {
+        shared: false,
         id: Uuid::new_v4(),
         name: name.into(),
         kind: DestinationKind::LocalRepository { path: abs(&format!("backups/{name}")) },

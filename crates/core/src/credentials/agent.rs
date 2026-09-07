@@ -71,7 +71,12 @@ impl AgentStatus {
 }
 
 /// `ssh-add`, resolved to the agent that matters rather than to `PATH`.
-fn ssh_add() -> Option<PathBuf> {
+///
+/// Public because the window opens a terminal running this by hand for a key
+/// with its own passphrase, and it must be the same `ssh-add` this module
+/// talks to — otherwise the user types their passphrase into an agent that is
+/// not the one the page is reporting on.
+pub fn ssh_add() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         // The service agent first, deliberately: it is the one whose keys
@@ -248,6 +253,73 @@ pub async fn add(private_key: &std::path::Path, encrypted: Option<bool>) -> Resu
         return Err(Error::Config(reason.to_string()));
     }
     Ok(format!("{} was loaded into the agent.", private_key.display()))
+}
+
+/// Take a key back out of the agent.
+///
+/// # Why this is not the same shape as [`add`]
+///
+/// Loading a key was reversible only by restarting the agent, which on Windows
+/// means restarting a service — so "open this at every boot" was a decision
+/// with no undo in the interface that offered it. That is the wrong way round
+/// for a choice about a credential: the safe direction has to be the easy one.
+///
+/// `ssh-add -d` needs the **public** key, not the private one. Given the
+/// private path it derives `.pub`, and given nothing it falls back to letting
+/// `ssh-add` derive it — which it can, but only for a key whose private half
+/// is still readable. Both are tried, because a key can be in the agent after
+/// the file it came from has been moved, and that is precisely a key somebody
+/// wants out.
+///
+/// Removal is not persistent on its own: the Windows service agent reloads
+/// what it has stored in the registry at the next boot. `-d` deletes the
+/// stored copy too, which is why this is the operation that actually turns
+/// "open automatically" off rather than just clearing it for this session.
+pub async fn remove(private_key: &std::path::Path) -> Result<String> {
+    let tool = ssh_add().ok_or_else(|| {
+        Error::Config("OpenSSH is not installed, so there is no agent to remove keys from.".into())
+    })?;
+
+    let public = private_key.with_extension("pub");
+    let target = if public.is_file() { public } else { private_key.to_path_buf() };
+
+    let mut command = tokio::process::Command::new(&tool);
+    command.arg("-d");
+    command.arg(&target);
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    command.env("SSH_ASKPASS_REQUIRE", "never");
+    command.env("DISPLAY", "");
+    crate::kopia::harden_child(&mut command);
+
+    let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())
+        .await
+        .map_err(|_| Error::Config("the agent did not answer within twenty seconds".into()))?
+        .map_err(|e| Error::io("running ssh-add -d", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("ssh-add -d failed without saying why");
+        // The one failure worth translating: a key the agent does not have is
+        // already in the state being asked for, and reporting that as an error
+        // makes the interface argue with a user who is right.
+        if reason.contains("not found") || reason.contains("Could not remove") {
+            return Ok(format!(
+                "{} was not in the agent, so nothing needed removing.",
+                private_key.display()
+            ));
+        }
+        return Err(Error::Config(reason.to_string()));
+    }
+    Ok(format!(
+        "{} was removed from the agent and will not be loaded at the next boot.",
+        private_key.display()
+    ))
 }
 
 #[cfg(test)]

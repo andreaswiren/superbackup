@@ -220,6 +220,7 @@ fn offer_first_destination(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<()> {
     let path = super::objects::absolute(std::path::Path::new(&answer));
 
     let destination = Destination {
+        shared: false,
         id: uuid::Uuid::new_v4(),
         name: path
             .file_name()
@@ -286,6 +287,7 @@ fn offer_first_job(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<()> {
 
     let all_destinations = destinations(daemon)?;
     let job = superbackup_core::model::Job {
+        content: superbackup_core::model::JobContent::Files,
         id: uuid::Uuid::new_v4(),
         name: name.clone(),
         project_id: None,

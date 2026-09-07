@@ -37,6 +37,7 @@
 //! **Shutdown unwinds in the reverse order.** Stop accepting, stop the engine,
 //! let in-flight runs unwind (or cancel them), flush state, drop the lock.
 
+pub mod content;
 pub mod dryrun;
 pub mod environment;
 pub mod events;
@@ -262,6 +263,9 @@ pub async fn run(
         .clock(clock)
         .environment(Arc::clone(&environment) as Arc<dyn superbackup_core::engine::Environment>)
         .state(Arc::clone(&runtime.persisted))
+        // Vault and key backups build their payload from the unlocked vault,
+        // which lives here rather than in the engine.
+        .content_provider(content::DaemonContent::new(Arc::clone(&runtime)))
         .spawn();
     events::pump_engine_events(Arc::clone(&runtime), scheduler.subscribe());
     runtime.set_scheduler(scheduler.clone());

@@ -74,6 +74,15 @@ use uuid::Uuid;
 /// docs on suspend/resume.
 pub const MAX_SLEEP_SECONDS: i64 = 60;
 
+/// How far before a scheduled run the machine is woken.
+///
+/// A minute. Waking is not instant — disks spin up, the network comes back,
+/// and on Windows the service is resumed rather than started — and a backup
+/// that begins in the middle of that spends its first seconds failing to
+/// reach a destination. Waking early costs a minute of idle, which is
+/// nothing; waking exactly on time costs the run.
+pub const WAKE_LEAD_SECONDS: i64 = 60;
+
 /// Why a scheduled run did not start.
 ///
 /// Every variant produces a [`RunStatus::Skipped`] outcome and a user-facing
@@ -204,6 +213,16 @@ pub struct SchedulerStatus {
     /// The soonest of `next_runs`.
     pub next_scheduled: Option<(Uuid, DateTime<Utc>)>,
     pub max_parallel: u32,
+    /// When the machine is set to wake itself, if it is.
+    ///
+    /// Reported rather than inferred from `wake_for_backups` and
+    /// `next_scheduled`, because the two can disagree: the setting can be on
+    /// and the platform can still have refused the alarm. Showing the user
+    /// "wakes at 01:59" when nothing is armed would be the one wrong thing to
+    /// say here.
+    pub wake_armed_for: Option<DateTime<Utc>>,
+    /// True while superbackup is asking the operating system not to sleep.
+    pub holding_awake: bool,
 }
 
 /// Messages accepted by the scheduler task.
@@ -340,6 +359,17 @@ pub struct Scheduler {
     watchers: HashMap<Uuid, JobWatcher>,
 
     completions: tokio::sync::mpsc::UnboundedSender<Uuid>,
+
+    /// The platform wake alarm, armed for the next scheduled run when
+    /// `wake_for_backups` is on. See [`crate::platform::wake`].
+    wake: crate::platform::wake::WakeTimer,
+    /// Set once the "this machine cannot be woken" warning has been logged,
+    /// so it is said once per daemon rather than once per tick.
+    wake_unsupported_reported: Option<()>,
+    /// Held while anything is running, so a machine this woke up does not go
+    /// straight back to sleep in the middle of the backup. `None` when
+    /// nothing is running: dropping the guard is what lets it sleep again.
+    awake: Option<crate::platform::wake::StayAwake>,
 }
 
 impl Scheduler {
@@ -376,6 +406,9 @@ impl Scheduler {
             queue: VecDeque::new(),
             active: HashMap::new(),
             next_fire: BTreeMap::new(),
+            wake: crate::platform::wake::WakeTimer::new(),
+            wake_unsupported_reported: None,
+            awake: None,
             known_schedules: HashMap::new(),
             caught_up: HashSet::new(),
             watchers: HashMap::new(),
@@ -395,6 +428,7 @@ impl Scheduler {
         self.resync(&command_sender).await;
         loop {
             self.pump(self.clock.now_utc());
+            self.reconcile_power(self.clock.now_utc());
             let deadline = self.next_deadline();
 
             tokio::select! {
@@ -425,6 +459,12 @@ impl Scheduler {
             active.cancel.cancel(CancelReason::Shutdown);
         }
         self.watchers.clear();
+        // A daemon that stopped must not leave the machine unable to sleep,
+        // and must not leave an alarm that wakes it for a backup that will
+        // not happen. Both are released here as well as by `Drop`, because
+        // this is the one place that runs before the process may linger.
+        self.awake = None;
+        self.wake.disarm();
     }
 
     /// Returns true when the loop should end.
@@ -632,6 +672,70 @@ impl Scheduler {
         }
     }
 
+    /// Keep the machine's sleep behaviour matched to what the scheduler is
+    /// doing: awake while a run is in flight, and set to wake for the next one.
+    ///
+    /// Called every tick. Both halves are idempotent — arming for an instant
+    /// already armed is a no-op, and the guard is taken and released on
+    /// transitions rather than repeatedly — so this costs nothing on the
+    /// hundreds of ticks where nothing has changed.
+    ///
+    /// # Why both halves live here
+    ///
+    /// They are two sides of one decision and get them wrong in opposite
+    /// directions when separated. Waking without holding gives a machine that
+    /// wakes at 02:00 and sleeps again at 02:02, half way through the copy,
+    /// leaving a cancelled run every night. Holding without waking gives a
+    /// machine that never sleeps *and* never backs up. This function is the
+    /// only place either is decided.
+    fn reconcile_power(&mut self, now: DateTime<Utc>) {
+        // Awake while anything is running, asleep-able the moment nothing is.
+        //
+        // Deliberately not conditional on `wake_for_backups`: a run happening
+        // right now must finish whether or not this machine was woken for it.
+        // Somebody who started a backup by hand and walked away should come
+        // back to a finished backup, not to a machine that suspended two
+        // minutes in.
+        if self.active.is_empty() {
+            self.awake = None;
+        } else if self.awake.is_none() {
+            let reason = match self.active.len() {
+                1 => "superbackup is running a backup".to_string(),
+                n => format!("superbackup is running {n} backups"),
+            };
+            self.awake = Some(crate::platform::wake::StayAwake::hold(reason));
+        }
+
+        if !self.config.settings.wake_for_backups {
+            self.wake.disarm();
+            return;
+        }
+        // The earliest scheduled run, less a lead so the machine is properly
+        // up by the time the job is due. Waking early costs a minute of idle;
+        // waking exactly on time costs the first seconds of the run to a
+        // machine still bringing its disks and network back.
+        match self.next_fire.values().min().copied() {
+            Some(at) => {
+                let wake_at = at - Duration::seconds(WAKE_LEAD_SECONDS);
+                let armed = self.wake.arm(wake_at, now);
+                if !armed && self.wake_unsupported_reported.is_none() {
+                    // Said once, not once a tick, and only when it was
+                    // actually asked for: a setting that quietly does nothing
+                    // is the failure this whole feature is about.
+                    let support = crate::platform::wake::support();
+                    self.wake_unsupported_reported = Some(());
+                    if !support.available {
+                        let _ = self.events.send(EngineEvent::Log(Box::new(
+                            Event::new(Severity::Warning, "wake.unavailable", support.note)
+                                .with_field("setting", "wake_for_backups"),
+                        )));
+                    }
+                }
+            }
+            None => self.wake.disarm(),
+        }
+    }
+
     /// The destinations a job can actually be written to right now.
     fn resolve_destinations(&self, job: &Job) -> Vec<Arc<Destination>> {
         job.destination_ids
@@ -698,6 +802,8 @@ impl Scheduler {
             next_runs: self.next_fire.clone(),
             next_scheduled,
             max_parallel: self.config.settings.max_parallel_jobs.max(1),
+            wake_armed_for: self.wake.armed_for(),
+            holding_awake: self.awake.as_ref().map(|a| a.is_held()).unwrap_or(false),
         }
     }
 }
@@ -710,6 +816,7 @@ mod tests {
 
     fn job(enabled: bool) -> Job {
         Job {
+            content: crate::model::JobContent::Files,
             id: Uuid::new_v4(),
             name: "test".into(),
             project_id: None,

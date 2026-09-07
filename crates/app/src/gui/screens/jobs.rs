@@ -368,9 +368,17 @@ impl App {
                                 });
                                 if has("sources") {
                                     row.col(|ui| {
+                                        // A prepared job has no folders and
+                                        // never will; "0" would read as a job
+                                        // that backs up nothing.
+                                        let label = if job.content.is_prepared() {
+                                            job.content.label().to_string()
+                                        } else {
+                                            format::count(job.sources.len() as u64)
+                                        };
                                         let response = widgets::text(
                                             ui,
-                                            format::count(job.sources.len() as u64),
+                                            label,
                                             Type::MonoSmall,
                                             t.text_secondary,
                                         );
@@ -379,7 +387,9 @@ impl App {
                                             .iter()
                                             .map(|s| s.path.to_string_lossy().into_owned())
                                             .collect();
-                                        if !paths.is_empty() {
+                                        if job.content.is_prepared() {
+                                            response.on_hover_text(job.content.summary());
+                                        } else if !paths.is_empty() {
                                             response.on_hover_text(paths.join("\n"));
                                         }
                                     });

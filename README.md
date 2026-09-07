@@ -49,10 +49,18 @@ in S3. It knows what a build cache is and skips it.
   settings, a generated 256-bit key, and a write-it-down step you can't skip.
 - **Scheduling that behaves** — cron, daily, weekly, interval, or on-change.
   DST-correct. Catches up *once* after downtime, not once per missed interval.
+- **Wakes the machine for a backup**, optionally — a wake alarm a minute
+  before the run and a hold that keeps it up until the run finishes, then
+  releases so it sleeps on its own. Covers sleep, not hibernation, and says so.
 - **Bandwidth limits and pause** — a ceiling, a lower one during work hours,
   and "pause for 4 hours" in the tray.
 - **Runs without you logged in** — Windows service, systemd unit, or launchd
   daemon, and it says which destinations still work in that mode.
+- **It backs itself up** — two job types for the things a file backup cannot
+  protect: the **vault** that opens every other backup you have, and your
+  **SSH keys**. Both leave the machine encrypted, and both carry a plain-text
+  `RESTORE.txt` saying how to put them back. See
+  [Restoring the vault](#restoring-the-vault).
 - **Encrypted config sync** — share job definitions across machines via Git.
   Only the sealed vault is pushed.
 - **A CLI built for automation** — `--json` everywhere, meaningful exit codes,
@@ -118,6 +126,55 @@ superbackup doctor              # diagnose; non-zero if broken
 **For agents:** every command takes `--json` and returns a stable envelope with
 a machine-readable `error.code`. `superbackup schema --json` emits the entire
 command surface, generated from the parser itself so it cannot drift.
+
+## Restoring the vault
+
+The vault (`config.sbvault`) holds the password of every repository you have.
+Your file backups are intact without it, but nothing can read them — so it is
+worth its own job, and the job is deliberately tiny: the vault is already
+encrypted under your master passphrase, so the backup carries the file as it
+sits, plus a `RESTORE.txt` written in plain text beside it.
+
+Make the job from **Jobs → New job → Superbackup's vault**. Point it at
+whichever destinations you already trust; it is a few kilobytes.
+
+To put it back on a new machine:
+
+```bash
+superbackup restore superbackup-vault --to ~/vault-backup
+superbackup vault restore --from ~/vault-backup --with-config
+```
+
+The second command replaces this machine's vault. Before it does, it refuses
+while superbackup is running (a running instance would write its own vault back
+over yours), asks for the master passphrase and checks that the backed-up file
+actually opens with it, and keeps a dated copy of whatever was there before in
+`vault-backups/`. List those copies with `superbackup vault backups`.
+
+Then start superbackup and unlock it. Your destinations, jobs and stored
+secrets are back.
+
+**Your master passphrase is not in the backup and cannot be recovered.** Keep
+it somewhere other than the folder holding the vault — a password manager, or
+written down.
+
+### SSH keys
+
+The same idea, one layer up. Tick the keys you want protected on
+**Credentials**, then make a **Jobs → New job → Your SSH keys** job. Every
+ticked key is sealed into a single file under your master passphrase *before*
+it leaves the process, so what lands in a bucket or in OneDrive is useless
+without that passphrase. This is not a setting; there is no plaintext option.
+
+To bring them back:
+
+```bash
+superbackup restore ssh-keys --to ~/keys-backup
+superbackup cred unseal --from ~/keys-backup
+```
+
+Keys are written into `~/.ssh` with owner-only permissions, and files already
+there are left alone unless you pass `--overwrite`.
 
 ## Security
 

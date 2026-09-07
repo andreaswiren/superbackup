@@ -301,7 +301,15 @@ fn job_detail(ctx: &mut Ctx, job: &Job, snapshot: &StatusSnapshot, now: DateTime
     ctx.ui.heading(&job.name);
     let pad = 16;
     ctx.ui.field("Enabled", if job.enabled { "yes" } else { "no" }, pad);
-    ctx.ui.field("Sources", format::plural(job.sources.len(), "folder", "folders"), pad);
+    ctx.ui.field(
+        "Sources",
+        if job.content.is_prepared() {
+            job.content.label().to_string()
+        } else {
+            format::plural(job.sources.len(), "folder", "folders")
+        },
+        pad,
+    );
     ctx.ui.field(
         "Destinations",
         format::plural(job.destination_ids.len(), "destination", "destinations"),

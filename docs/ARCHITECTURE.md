@@ -150,6 +150,52 @@ module directly. That keeps the scheduling logic testable against a mock with
 no subprocess in sight, and it is why the scheduler's tests can prove DST and
 catch-up behaviour deterministically.
 
+#### Jobs that build their own contents
+
+Two job types back up something other than folders the user named, and both
+exist because of the same observation: the things you need *first* after losing
+a machine are not among the files.
+
+The vault holds every repository password, and it cannot be protected by an
+ordinary job — an ordinary job writes into a repository whose password is in
+the vault. The SSH keys are what get you back into the forges and the servers,
+and they are the one kind of file that must never be written to a destination
+as it sits, because a destination can be a folder mirror and a folder mirror of
+`~/.ssh` into OneDrive is a private key handed to every device on the account.
+
+`engine::protected` resolves both the same way. A job with a prepared
+`JobContent` carries **no sources**; before the run, a `ContentProvider` builds
+the payload into a staging folder under the data directory, and the runner
+backs that folder up as though the user had listed it. The folder deletes
+itself on `Drop`, which is what covers the cancelled run, the panicking driver
+and the timeout — the paths an explicit cleanup call would be forgotten on.
+
+What reaches the destination is ciphertext in both cases, plus a plain-text
+`RESTORE.txt`. The instructions are deliberately *not* encrypted: they are the
+one thing that is useless if you need the backup open to read them, and they
+give nothing away, because the procedure they describe still requires the
+passphrase.
+
+The provider is a trait for a boundary reason. Sealing needs the master
+passphrase, which lives in the daemon; the runner lives in `core`. Without a
+provider installed, these jobs **fail** — `UnavailableContent` — rather than
+snapshotting an empty folder, because a nightly run that reports success and
+protects nothing is precisely the failure the feature exists to prevent.
+
+#### Waking the machine
+
+`Settings::wake_for_backups` is two mechanisms in `platform::wake`, and either
+one alone is worse than neither. A wake alarm without a stay-awake request
+gives a machine that wakes at 02:00 and sleeps again at 02:02, half way through
+the copy. A stay-awake request without an alarm gives a machine that never
+sleeps and never backs up. `Scheduler::reconcile_power` is the only place
+either is decided, and it runs every tick.
+
+Superbackup does not force the machine back to sleep afterwards. It releases
+the request and lets the operating system's idle timer take over, because it
+cannot tell "nobody has touched this since we woke it" from "the owner sat down
+two minutes ago".
+
 ### `git` — what is only on this disk
 
 A backup of a source tree that is committed and pushed is a convenience; a

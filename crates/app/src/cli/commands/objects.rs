@@ -116,7 +116,11 @@ fn job_list(ctx: &mut Ctx, daemon: &Daemon, args: JobListArgs) -> CliResult<Outc
             } else {
                 format!("{} (disabled)", schedule::describe(&job.schedule))
             }),
-            Cell::new(job.sources.len().to_string()),
+            Cell::new(if job.content.is_prepared() {
+                job.content.label().to_string()
+            } else {
+                job.sources.len().to_string()
+            }),
             Cell::new(if dests.is_empty() {
                 format::MISSING.to_string()
             } else {
@@ -168,7 +172,10 @@ fn job_show(ctx: &mut Ctx, daemon: &Daemon, needle: &str) -> CliResult<Outcome> 
     for source in &job.sources {
         ctx.ui.line(format!("  {}", source.path.display()));
     }
-    if job.sources.is_empty() {
+    if job.content.is_prepared() {
+        // Not a misconfigured job: one whose payload is built each run.
+        ctx.ui.line(format!("  {}", job.content.summary()));
+    } else if job.sources.is_empty() {
         ctx.ui.line("  none - this job would back up nothing");
     }
 
@@ -232,6 +239,7 @@ fn job_add(ctx: &mut Ctx, daemon: &Daemon, args: JobAddArgs) -> CliResult<Outcom
     };
 
     let job = Job {
+        content: superbackup_core::model::JobContent::Files,
         // Replaced by the daemon; sent so the object is complete.
         id: Uuid::new_v4(),
         name: args.name.clone(),
@@ -457,6 +465,10 @@ fn destination_list(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<Outcome> {
         Column::new("location").path(),
         Column::new("jobs").right(),
         Column::new("enabled"),
+        // Which of these another machine can also open. Not derivable from
+        // the location — a OneDrive folder and a local one look alike — so it
+        // is a column rather than something the reader is left to infer.
+        Column::new("shared"),
         Column::new("last checked"),
     ])
     .empty_note("No destinations yet. Add one with `superbackup destination add --local PATH`.");
@@ -469,6 +481,7 @@ fn destination_list(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<Outcome> {
             Cell::new(location_of(&dest.kind)),
             Cell::new(used.to_string()),
             if dest.enabled { Cell::new("yes") } else { Cell::coloured("no", Colour::Dim) },
+            if dest.shared { Cell::new("yes") } else { Cell::coloured("-", Colour::Dim) },
             Cell::new(format::opt_relative(dest.last_verified_at, now)),
         ]);
     }
@@ -574,6 +587,7 @@ fn destination_add(ctx: &mut Ctx, daemon: &Daemon, args: DestinationAddArgs) -> 
     }
 
     let destination = Destination {
+        shared: args.shared,
         id: Uuid::new_v4(),
         name: name.clone(),
         kind,

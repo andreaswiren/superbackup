@@ -361,6 +361,47 @@ impl App {
         }
 
         ui.add_space(space::XL);
+        // Waking. Offered only where it works, and where it does not, the
+        // platform's own reason is shown in place of the switch — the same
+        // treatment the metered toggle gets below, and for the same reason: a
+        // toggle that silently does nothing is worse than no toggle, because
+        // the user then believes their backups are running.
+        let wake_support = superbackup_core::platform::wake::support();
+        let mut wake = self.data.settings.wake_for_backups;
+        if wake_support.available {
+            if widgets::toggle(
+                ui,
+                &mut wake,
+                copy::set::WAKE,
+                Some(copy::set::WAKE_BODY),
+                true,
+            )
+            .clicked()
+            {
+                self.data.settings.wake_for_backups = wake;
+                changed = true;
+            }
+            if wake {
+                // The caveat only matters once it is switched on, and then it
+                // matters a great deal: on Windows the power plan can refuse
+                // the alarm, and nothing else would tell the user why their
+                // machine never woke up.
+                ui.add_space(space::S);
+                widgets::paragraph_at(
+                    ui,
+                    &wake_support.note,
+                    Type::Small,
+                    t.text_muted,
+                    560.0,
+                );
+            }
+        } else {
+            ui.add_enabled_ui(false, |ui| {
+                widgets::toggle(ui, &mut wake, copy::set::WAKE, Some(&wake_support.note), false);
+            });
+        }
+
+        ui.add_space(space::XL);
         let mut metered = self.data.settings.skip_on_metered;
         // Greyed out with the platform's own reason rather than offered as a
         // switch that does nothing.
@@ -560,7 +601,7 @@ impl App {
         rows.into_iter()
             .map(|(at, name, blocked)| {
                 (
-                    format!("{} · {}", format::absolute(at), format::relative_future(at, now)),
+                    format!("{} · {}", format::absolute_zoned(at), format::relative_future(at, now)),
                     name,
                     blocked,
                 )

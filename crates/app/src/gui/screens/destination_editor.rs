@@ -194,6 +194,7 @@ impl State {
             }
             None => {
                 let fresh = Destination {
+                    shared: false,
                     id: Uuid::new_v4(),
                     name: String::new(),
                     kind: DestinationKind::LocalRepository { path: Default::default() },
@@ -483,6 +484,20 @@ impl App {
             .clicked()
             {
                 draft.enabled = enabled;
+            }
+
+            ui.add_space(space::XL);
+            let mut shared = draft.shared;
+            if widgets::toggle(
+                ui,
+                &mut shared,
+                copy::dest::SHARED,
+                Some(copy::dest::SHARED_BODY),
+                true,
+            )
+            .clicked()
+            {
+                draft.shared = shared;
             }
         });
 

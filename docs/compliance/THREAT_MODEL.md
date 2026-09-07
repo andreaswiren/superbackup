@@ -66,6 +66,20 @@ peer-UID verification on Unix. Secrets are never passed to child processes in
 `argv`, because `argv` is readable by other users through `/proc` on Linux and
 through WMI on Windows; they go through the environment and stdin instead.
 
+**The argv rule extends to `ssh-keygen` and `ssh-add`.** Both take a passphrase
+only from a terminal or from an askpass helper, never from an argument. Key
+generation therefore supplies one through `SSH_ASKPASS` plus the child's
+environment; and where a terminal is genuinely required — adding a
+passphrase-protected key to the agent — superbackup opens a real terminal
+window and lets `ssh-add` ask there, so the passphrase travels from the
+keyboard to `ssh-add` and enters neither a command line nor this process.
+`platform::terminal` takes only `OsStr` arguments, has no stdin or environment
+parameter by design, and refuses an argument that looks like a passphrase, so
+it cannot be turned into a way to pass one.
+
+Superbackup will not run `ssh-add` on a protected key non-interactively, and
+that refusal is not a limitation to be worked around later.
+
 **Residual risk.** A local administrator or root can read another process's
 memory. Nothing in userspace prevents this and we do not pretend otherwise.
 
@@ -89,6 +103,32 @@ point of choice.
 (machine labels, hostnames, OS versions, timestamps) and, inherently, object
 sizes and write timing. An observer of the bucket learns roughly how much
 changes and when, even though they cannot read what changed.
+
+**Vault and key backups are encrypted before the destination sees them, and
+independently of the destination.** These two job types (`JobContent::Vault`,
+`JobContent::Keys`) exist to protect the vault and the machine's SSH keys, and
+a `LocalMirror` destination would otherwise write both in the clear.
+
+So the staging step in `engine::protected` seals *before* handing anything to
+any destination:
+
+| Job | What lands | Sealed by |
+|---|---|---|
+| Vault | `config.sbvault` | already the output of `Vault::seal` — copied, not re-encrypted |
+| Keys | `superbackup-keys.sbkeys` | `KeyBundle::seal`, under the master passphrase |
+
+A private key is therefore never written to a destination as it sits on disk,
+whatever the destination is, and there is no setting that changes that. A
+plaintext option would exist to be chosen by the person least able to judge the
+consequence. Both jobs also write a plain-text `RESTORE.txt`, which is
+deliberate and discloses nothing: it describes a procedure that still requires
+the passphrase.
+
+The staging folder lives under the data directory — not the system temp folder,
+which is swept by tools that do not ask and is the sort of place a sync client
+may be pointed at — is created with owner-only permissions, and is removed by
+`Drop` on every exit path a run has, including cancellation and a panicking
+driver.
 
 ### A4 — A malicious or compromised shared config repository
 

@@ -17,7 +17,7 @@ pub mod schedule;
 pub mod testing;
 pub mod timespec;
 
-pub use args::{exit, Cli, Command, GlobalArgs};
+pub use args::{exit, Cli, Command, GlobalArgs, GuiArgs};
 pub use schema::Schema;
 
 use std::process::ExitCode;

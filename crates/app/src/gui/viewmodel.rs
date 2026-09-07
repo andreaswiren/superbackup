@@ -1610,6 +1610,7 @@ mod tests {
 
     fn job(name: &str) -> Job {
         Job {
+            content: superbackup_core::model::JobContent::Files,
             id: Uuid::new_v4(),
             name: name.into(),
             project_id: None,

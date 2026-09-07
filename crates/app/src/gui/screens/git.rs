@@ -79,7 +79,9 @@ const GIT_COLUMNS: [ColumnSpec; 7] = [
     ColumnSpec::keep("state", 150.0),
     ColumnSpec::droppable("branch", 150.0, 2),
     ColumnSpec::droppable("changes", 80.0, 3),
-    ColumnSpec::droppable("last", 110.0, 1),
+    // Wide enough for `2026-08-15 12:47`; at 110 the ISO form elided to
+    // "2026-08-15 12:4…", which is worse than the format it replaced.
+    ColumnSpec::droppable("last", 150.0, 1),
     ColumnSpec::droppable("host", 96.0, 4),
     ColumnSpec::keep("actions", 150.0),
 ];
@@ -286,6 +288,8 @@ impl App {
         let mut push: Option<std::path::PathBuf> = None;
         let mut trust: Option<std::path::PathBuf> = None;
         let mut open: Option<std::path::PathBuf> = None;
+        // The repository page to open on its host, when the globe is clicked.
+        let mut visit: Option<String> = None;
         let mut expand: Option<std::path::PathBuf> = None;
         let busy = self.screens.git.acting;
 
@@ -509,6 +513,29 @@ impl App {
                                 {
                                     push = Some(repo.path.clone());
                                 }
+                                // The repository's page on its host, one
+                                // click from the list. The address was
+                                // reachable only by opening the row's dialog
+                                // and reading the Remotes card, which is a
+                                // long way round for "where does this live?".
+                                if let Some(url) = repo
+                                    .primary_remote()
+                                    .and_then(|remote| remote.web_url.clone())
+                                {
+                                    if widgets::icon_button_compact(
+                                        ui,
+                                        Icon::Globe,
+                                        // The address itself is the tooltip,
+                                        // so hovering answers the question
+                                        // without leaving the application.
+                                        &copy::git_open_on_web(&url),
+                                        true,
+                                    )
+                                    .clicked()
+                                    {
+                                        visit = Some(url);
+                                    }
+                                }
                                 if widgets::icon_button_compact(
                                     ui,
                                     Icon::Folder,
@@ -547,6 +574,12 @@ impl App {
 
         if let Some(path) = open {
             let _ = open::that_detached(&path);
+        }
+        if let Some(url) = visit {
+            // Only ever a web address the inventory derived from the remote,
+            // never a string typed anywhere: see `git::parse::web_url`, which
+            // builds it from a recognised host rather than echoing the URL.
+            let _ = open::that_detached(&url);
         }
         if let Some(path) = pull {
             self.git_act(Request::GitPull { path: path.display().to_string() }, path);
@@ -846,9 +879,12 @@ pub fn git_details(
         .collect();
     let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     let mut selected = RepoTab::ALL.iter().position(|c| c == tab).unwrap_or(0);
-    if widgets::segmented(ui, &mut selected, &refs).changed() {
-        *tab = RepoTab::ALL[selected.min(RepoTab::ALL.len() - 1)];
-    }
+    // Written back unconditionally rather than behind `.changed()`. The tab is
+    // derived from `tab` at the top of every frame, so `selected` carries the
+    // whole answer and there is nothing a change flag adds — while getting the
+    // flag wrong, as this did, silently discards the click.
+    widgets::segmented(ui, &mut selected, &refs);
+    *tab = RepoTab::ALL[selected.min(RepoTab::ALL.len() - 1)];
     ui.add_space(space::L);
 
     match tab {

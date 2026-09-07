@@ -277,13 +277,26 @@ impl App {
                                     &destination.name,
                                     Type::BodyStrong,
                                     theme::alpha(t.text_primary, dim),
-                                    if destination.auto_discovered { 140.0 } else { 166.0 },
+                                    166.0
+                                        - if destination.auto_discovered { 26.0 } else { 0.0 }
+                                        - if destination.shared { 26.0 } else { 0.0 },
                                 );
                                 if destination.auto_discovered {
                                     let (rect, response) =
                                         ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
                                     Icon::Sparkles.paint(ui.painter(), rect, t.text_muted);
                                     response.on_hover_text(copy::dest::AUTO_FOUND);
+                                }
+                                // Which of these another machine can also
+                                // open. Not derivable from the path — a
+                                // OneDrive folder and a local one look the
+                                // same — so it is shown because only its owner
+                                // could have known it.
+                                if destination.shared {
+                                    let (rect, response) =
+                                        ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                                    Icon::FolderSync.paint(ui.painter(), rect, t.accent);
+                                    response.on_hover_text(copy::dest::SHARED_HINT);
                                 }
                             });
                         });

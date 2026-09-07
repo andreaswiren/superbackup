@@ -155,6 +155,10 @@ pub enum Command {
     #[command(subcommand)]
     Git(GitCommand),
 
+    /// The SSH keys and tokens this machine signs in with.
+    #[command(subcommand)]
+    Cred(CredCommand),
+
     // -- Data -------------------------------------------------------------
     /// List snapshots taken by a job.
     Snapshots(SnapshotsArgs),
@@ -174,6 +178,10 @@ pub enum Command {
 
     /// Change the master passphrase.
     ChangePassphrase,
+
+    /// Put a backed-up vault back. The other half of the vault backup job.
+    #[command(subcommand)]
+    Vault(VaultCommand),
 
     // -- Setup ------------------------------------------------------------
     /// Set up superbackup on this machine.
@@ -200,7 +208,7 @@ pub enum Command {
     Doctor(DoctorArgs),
 
     /// Open the graphical interface.
-    Gui,
+    Gui(GuiArgs),
 
     /// Run the scheduler in the foreground without a tray icon.
     Daemon(DaemonArgs),
@@ -214,6 +222,16 @@ pub enum Command {
 
     /// Print version and build information.
     Version,
+
+    /// Print the passphrase in `SUPERBACKUP_ASKPASS` and exit.
+    ///
+    /// Not for people. `ssh-keygen` and `ssh-add` will run an *askpass helper*
+    /// named by `SSH_ASKPASS` and read one line from its output, and this
+    /// makes superbackup that helper — so a key passphrase reaches ssh-keygen
+    /// through the child's environment rather than through an argument list
+    /// that every process on the machine can read.
+    #[command(hide = true)]
+    Askpass,
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +618,14 @@ pub struct DestinationAddArgs {
     /// want a copy you can open without any tooling.
     #[arg(long, value_name = "PATH", group = "kind")]
     pub mirror: Option<PathBuf>,
+
+    /// Mark this destination as reachable from your other machines.
+    ///
+    /// A label, not a mechanism. It exists because nothing about a path says
+    /// whether a second machine can open it, and that decides whether a shared
+    /// key bundle lands somewhere useful.
+    #[arg(long)]
+    pub shared: bool,
 
     /// Encryption algorithm for a new repository.
     #[arg(long, value_name = "ALGO")]
@@ -1016,6 +1042,138 @@ pub struct BrowseArgs {
 // Vault
 // ---------------------------------------------------------------------------
 
+/// Where the window should open.
+///
+/// # Why this exists
+///
+/// The tray has always launched the window with `--screen activity`,
+/// `--screen settings` and `--screen unlock`, and `gui` took no arguments at
+/// all — so clap rejected the command line and the child exited before it drew
+/// anything. From the user's side, five tray entries did nothing whatever:
+/// Activity, Settings, a job's own activity, "fix kopia", and Unlock. A tray
+/// that silently does nothing is worse than one with the entries removed, and
+/// it went unnoticed because the one entry with no arguments — Open
+/// superbackup — worked perfectly.
+///
+/// An unknown screen name is *not* an error here. This is a message from one
+/// half of this program to the other, and the failure mode of being strict
+/// about it is the one that just cost us: no window at all. An unrecognised
+/// name opens the dashboard.
+#[derive(Debug, Args, Default)]
+pub struct GuiArgs {
+    /// Open on this screen: `dashboard`, `jobs`, `destinations`, `providers`,
+    /// `git`, `credentials`, `restore`, `activity`, `settings`, or `unlock`.
+    #[arg(long, value_name = "SCREEN")]
+    pub screen: Option<String>,
+
+    /// Show this job, with `--screen activity` or `--screen jobs`.
+    #[arg(long, value_name = "ID")]
+    pub job: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CredCommand {
+    /// List the keys and tokens found on this machine.
+    ///
+    /// Reads public halves, names and permissions. A private key is never
+    /// read, and no key material is ever printed.
+    #[command(visible_alias = "ls")]
+    List,
+
+    /// Choose whether a key is backed up, shared with your other machines,
+    /// or neither.
+    Role(CredRoleArgs),
+
+    /// Write the keys marked for sharing into a sealed bundle in a folder.
+    ///
+    /// The bundle is encrypted under your master passphrase. That is not
+    /// optional: a private key written in the clear into a shared folder is a
+    /// private key given to every device that folder reaches.
+    Seal(CredFolderArgs),
+
+    /// Read a sealed bundle and write its keys into this machine's key folder.
+    ///
+    /// This is the procedure written into every key backup as RESTORE.txt.
+    Unseal(CredUnsealArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CredRoleArgs {
+    /// The private key's path, as `cred list` reported it.
+    pub path: String,
+
+    /// Include it in the key backup job.
+    #[arg(long)]
+    pub backup: bool,
+
+    /// Include it in the bundle your other machines can open.
+    #[arg(long)]
+    pub sync: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CredFolderArgs {
+    /// The shared folder: inside OneDrive, or one a destination mirrors.
+    #[arg(long, value_name = "PATH")]
+    pub to: PathBuf,
+
+    #[arg(long, value_name = "FILE")]
+    pub passphrase_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct CredUnsealArgs {
+    /// The folder holding the bundle.
+    #[arg(long, value_name = "PATH")]
+    pub from: PathBuf,
+
+    /// Replace keys that already exist here.
+    ///
+    /// Off by default: the likeliest mistake is unsealing an old bundle over
+    /// the key this machine is using now.
+    #[arg(long)]
+    pub overwrite: bool,
+
+    #[arg(long, value_name = "FILE")]
+    pub passphrase_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum VaultCommand {
+    /// Put a vault from a backup into place on this machine.
+    ///
+    /// This is step 2 of the procedure written into every vault backup as
+    /// RESTORE.txt. It replaces this machine's vault, so it asks for the
+    /// passphrase first and keeps a copy of whatever was there before.
+    Restore(VaultRestoreArgs),
+
+    /// List the copies superbackup keeps of your vault before each change.
+    Backups,
+}
+
+#[derive(Debug, Args)]
+pub struct VaultRestoreArgs {
+    /// The restored backup folder, or the `config.sbvault` file itself.
+    #[arg(long, value_name = "PATH")]
+    pub from: PathBuf,
+
+    /// Read the passphrase from this file, or from stdin when given `-`.
+    ///
+    /// The passphrase is needed to prove the file opens before this machine's
+    /// vault is replaced. There is deliberately no flag that takes it
+    /// directly: see [`UnlockArgs`].
+    #[arg(long, value_name = "FILE")]
+    pub passphrase_file: Option<PathBuf>,
+
+    /// Also put back the `config.json` beside it, if the backup has one.
+    #[arg(long)]
+    pub with_config: bool,
+
+    /// Do not ask for confirmation.
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+}
+
 #[derive(Debug, Args)]
 pub struct UnlockArgs {
     /// Read the passphrase from this file, or from stdin when given `-`.
@@ -1412,5 +1570,55 @@ mod tests {
     fn no_arguments_means_run_the_tray() {
         let cli = Cli::try_parse_from(["superbackup"]).unwrap();
         assert!(cli.command.is_none());
+    }
+
+    /// Every command line the tray builds, parsed.
+    ///
+    /// `gui` took no arguments while the tray had always launched it with
+    /// `--screen`, so clap rejected the line and the child exited before
+    /// drawing anything: five tray entries silently did nothing. Nothing
+    /// caught it because the tray spawns a *process*, and a process that exits
+    /// 2 looks exactly like a process that was never asked for much.
+    ///
+    /// So this asserts the contract between the two halves directly. The
+    /// literal strings are duplicated from `tray::mod::handle` on purpose:
+    /// sharing a constant would make them agree with each other while both
+    /// disagreed with the parser, which is the failure being prevented.
+    #[test]
+    fn every_command_line_the_tray_builds_actually_parses() {
+        let lines: [&[&str]; 6] = [
+            &["gui"],
+            &["gui", "--screen", "activity"],
+            &["gui", "--screen", "settings"],
+            &["gui", "--screen", "activity", "--job", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"],
+            &["gui", "--screen", "unlock"],
+            // With the --home the tray always passes, which is where the
+            // window finds the configuration this daemon is serving.
+            &["gui", "--home", "C:\\tmp\\sb", "--screen", "settings"],
+        ];
+        for line in lines {
+            let mut argv = vec!["superbackup"];
+            argv.extend_from_slice(line);
+            let cli = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|e| panic!("the tray sends {line:?}, which must parse: {e}"));
+            assert!(
+                matches!(cli.command, Some(Command::Gui(_))),
+                "{line:?} must open the window"
+            );
+        }
+    }
+
+    /// A screen name the parser does not know must still open a window.
+    ///
+    /// It is taken as a free string rather than an enum precisely so that a
+    /// rename on one side degrades to the wrong screen instead of no screen.
+    #[test]
+    fn an_unknown_screen_name_is_not_a_parse_error() {
+        let cli = Cli::try_parse_from(["superbackup", "gui", "--screen", "nonsense"])
+            .expect("must not be rejected");
+        match cli.command {
+            Some(Command::Gui(args)) => assert_eq!(args.screen.as_deref(), Some("nonsense")),
+            other => panic!("{other:?}"),
+        }
     }
 }

@@ -1281,8 +1281,9 @@ pub fn segmented_marked(
         })
         .collect();
     let total: f32 = widths.iter().sum::<f32>() + 6.0;
-    let (rect, response) =
+    let (rect, mut response) =
         ui.allocate_exact_size(Vec2::new(total, size::CONTROL_H), Sense::click());
+    let was = *selected;
 
     if ui.is_rect_visible(rect) {
         ui.painter().rect(
@@ -1358,6 +1359,18 @@ pub fn segmented_marked(
                 });
             }
         }
+    }
+    // `changed()` has to be true when the selection changed, or it is a lie.
+    //
+    // It was never set, so a caller that trusted it saw every click as no
+    // change: the git repository dialog wrote the new tab back only
+    // `if segmented(..).changed()`, and its Branches, Working trees and
+    // Documents tabs did nothing at all. The other five call sites read
+    // `selected` directly and so were unaffected, which is exactly why this
+    // went unnoticed — the bug was in the one place that used the documented
+    // return value.
+    if *selected != was {
+        response.mark_changed();
     }
     response
 }
@@ -2563,6 +2576,90 @@ pub fn row_background(ui: &Ui, rect: Rect, hovered: bool, selected: bool, focuse
 ///
 /// Callers that size a flexible column must subtract [`TABLE_GUTTER`], as they
 /// measure available width *before* this frame is entered.
+/// The height one line of `ty` occupies.
+pub fn line_height(ui: &Ui, ty: Type) -> f32 {
+    ui.fonts(|f| f.row_height(&ty.font()))
+}
+
+/// A cell holding two or more stacked lines, vertically centred in its row.
+///
+/// # Why this is not just `ui.vertical`
+///
+/// It was, and that is the bug it exists to fix. `Ui::vertical` builds its
+/// child from `available_rect_before_wrap()` with `Layout::top_down(Align::Min)`
+/// and then allocates only the child's `min_rect` — so the block is anchored to
+/// the **top** of the row, and egui's own documentation says as much: "the
+/// amount of space actually used (`min_rect`) will be allocated in the parent".
+///
+/// A single widget dropped straight into a table cell *does* centre, because
+/// the cell's own layout is `left_to_right(Align::Center)` over the full row
+/// rect. So a one-line column and a two-line column in the same table sit on
+/// different baselines, and the two-line one looks roughly right while the
+/// one-line one is visibly high — which is exactly how this was reported.
+///
+/// Wrapping the block in another `with_layout(…Align::Center)` does **not**
+/// fix it: the new layout's own height is the block's height, so there is
+/// nothing to centre within. The height has to be measured and the slack
+/// padded explicitly, which is what this does.
+///
+/// `lines` is the type of each line, in order. Spacing between them is zero,
+/// matching the callers, so the block's height is the sum of the row heights.
+pub fn stacked_cell<R>(ui: &mut Ui, lines: &[Type], add: impl FnOnce(&mut Ui) -> R) -> R {
+    let content: f32 = lines.iter().map(|ty| line_height(ui, *ty)).sum();
+    stacked_cell_of_height(ui, content, add)
+}
+
+/// [`stacked_cell`] for a block whose height the caller already knows.
+///
+/// Split out so the measurement and the placement can be tested apart: the
+/// test context has no fonts, so measuring text there would prove nothing
+/// about where the block lands.
+pub fn stacked_cell_of_height<R>(
+    ui: &mut Ui,
+    content_height: f32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    // `max(0)`: a row shorter than its content must not be pushed upward out
+    // of itself, which negative padding would do.
+    let pad = ((ui.available_height() - content_height) / 2.0).max(0.0);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
+        add(ui)
+    })
+    .inner
+}
+
+/// A fixed-width cell that actually keeps its width.
+///
+/// # Why this is not just `allocate_ui_with_layout`
+///
+/// Because that does not do what its name suggests. From egui's own
+/// documentation: "you can request a lot of space and then use less" — the
+/// parent's cursor advances by the child's `min_rect`, not by the size asked
+/// for. A hand-built table whose columns are laid out that way therefore has
+/// no columns at all: every cell collapses to its content, so each row's
+/// boundaries land wherever that row's text happens to end, and the header
+/// row — whose labels are a different length from the data — drifts furthest
+/// of all.
+///
+/// `set_min_size` inside the child is what makes the requested size real.
+pub fn fixed_cell<R>(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    layout: Layout,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    ui.allocate_ui_with_layout(Vec2::new(width, height), layout, |ui| {
+        ui.set_min_size(Vec2::new(width, height));
+        add(ui)
+    })
+    .inner
+}
+
 pub fn table_frame<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
     let t = theme::tokens(ui.ctx());
     egui::Frame::new()
@@ -2935,6 +3032,136 @@ pub fn menu_item_danger(ui: &mut Ui, label: &str, enabled: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// A fixed-width cell must occupy the width it asked for.
+    ///
+    /// `allocate_ui_with_layout` does not, and egui says so in its own
+    /// documentation: "you can request a lot of space and then use less" — the
+    /// parent advances by the child's `min_rect`. A hand-built table laid out
+    /// that way has no columns: every cell collapses to its content, so each
+    /// row's boundaries land wherever that row's text ends and the header,
+    /// whose labels are a different length from the data, drifts furthest.
+    /// That is what the recent-runs table's staggered header was.
+    ///
+    /// Asserted as geometry, because geometry is precisely what nothing was
+    /// checking.
+    #[test]
+    fn a_fixed_cell_keeps_its_width_when_its_content_is_narrow() {
+        use std::cell::Cell;
+        let naive = Cell::new(0.0_f32);
+        let fixed = Cell::new(0.0_f32);
+
+        egui::__run_test_ui(|ui| {
+            ui.horizontal(|ui| {
+                let before = ui.cursor().min.x;
+                // What every column in that table used to do.
+                ui.allocate_ui_with_layout(
+                    Vec2::new(200.0, 18.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
+                    },
+                );
+                naive.set(ui.cursor().min.x - before);
+            });
+            ui.horizontal(|ui| {
+                let before = ui.cursor().min.x;
+                fixed_cell(ui, 200.0, 18.0, Layout::left_to_right(Align::Center), |ui| {
+                    ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
+                });
+                fixed.set(ui.cursor().min.x - before);
+            });
+        });
+
+        assert!(
+            naive.get() < 100.0,
+            "the premise of this test is that the plain call collapses to its content; \
+             it advanced {}",
+            naive.get()
+        );
+        assert!(
+            fixed.get() >= 200.0,
+            "a 200px cell must advance the row by 200px, not {}",
+            fixed.get()
+        );
+    }
+
+    /// A stacked cell sits in the middle of its row, not against the top.
+    ///
+    /// `Ui::vertical` builds its child from the available rect with
+    /// `top_down(Align::Min)` and allocates only the content, so the block is
+    /// top-anchored — while a single widget dropped straight into a table cell
+    /// centres, because the cell's own layout is `left_to_right(Align::Center)`
+    /// over the full row. A one-line column and a two-line column in the same
+    /// table therefore sit on different baselines, which is the Storage
+    /// providers name column, reported twice.
+    ///
+    /// Wrapping the block in another centred layout does **not** fix it: that
+    /// layout's height is the block's height, so there is no slack to centre
+    /// within. This asserts the placement, which is the only thing that
+    /// distinguishes the fix from the version that looked like one.
+    #[test]
+    fn a_stacked_cell_is_centred_in_its_row_rather_than_pinned_to_the_top() {
+        use std::cell::Cell;
+        const ROW: f32 = 60.0;
+        const LINE: f32 = 10.0;
+
+        let naive_row = Cell::new(0.0_f32);
+        let stacked_row = Cell::new(0.0_f32);
+        let naive_top = Cell::new(0.0_f32);
+        let stacked_top = Cell::new(0.0_f32);
+
+        egui::__run_test_ui(|ui| {
+            // Two rows of a known height, the way a table hands a cell one.
+            for stacked in [false, true] {
+                ui.allocate_ui_with_layout(
+                    Vec2::new(300.0, ROW),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.set_min_size(Vec2::new(300.0, ROW));
+                        if stacked {
+                            stacked_row.set(ui.max_rect().top());
+                        } else {
+                            naive_row.set(ui.max_rect().top());
+                        }
+                        let record = |ui: &mut Ui| {
+                            let (r, _) =
+                                ui.allocate_exact_size(Vec2::new(40.0, LINE), Sense::hover());
+                            if stacked {
+                                stacked_top.set(r.top());
+                            } else {
+                                naive_top.set(r.top());
+                            }
+                            ui.allocate_exact_size(Vec2::new(40.0, LINE), Sense::hover());
+                        };
+                        if stacked {
+                            // Two lines whose heights the helper is told about
+                            // explicitly, so the test does not depend on the
+                            // fontless test context measuring text.
+                            stacked_cell_of_height(ui, 2.0 * LINE, record);
+                        } else {
+                            ui.vertical(record);
+                        }
+                    },
+                );
+            }
+        });
+
+        assert!(
+            (naive_top.get() - naive_row.get()).abs() < 1.0,
+            "the premise: a plain vertical is pinned to the row's top ({} vs {})",
+            naive_top.get(),
+            naive_row.get()
+        );
+        let expected = stacked_row.get() + (ROW - 2.0 * LINE) / 2.0;
+        assert!(
+            (stacked_top.get() - expected).abs() < 1.0,
+            "a two-line block in a {ROW}px row starts at {expected}, not {}",
+            stacked_top.get()
+        );
+    }
+
     /// The curve has to pass through the readings, not near them: these *are*
     /// the measurements, and a line that misses them is a line that lies.
     #[test]
@@ -3006,7 +3233,6 @@ mod tests {
         assert_eq!(kbps_to_mbit(0), 1);
         assert_eq!(kbps_to_mbit(124), 1);
     }
-    use super::*;
 
     #[test]
     fn button_sizes_match_the_design_system() {

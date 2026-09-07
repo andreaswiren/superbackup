@@ -508,6 +508,7 @@ mod tests {
     fn repository(name: &str, path: &str) -> Destination {
         let id = Uuid::new_v4();
         Destination {
+            shared: false,
             id,
             name: name.into(),
             kind: DestinationKind::LocalRepository { path: path.into() },

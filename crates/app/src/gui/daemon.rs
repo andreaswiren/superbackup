@@ -103,6 +103,7 @@ pub enum Intent {
     AgentStatus,
     /// A key being loaded into the agent.
     AgentAdd,
+    AgentRemove,
     /// A key pair being made. Carries whether to open it once it exists.
     GenerateKey(bool),
     GitDocument,

@@ -594,9 +594,44 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                 }
             });
             if kopia.is_none() {
+                // Both of these were drawn and had their clicks discarded, so
+                // a first run on a machine without kopia offered two buttons
+                // that did nothing at the one moment the user has no other
+                // way forward.
+                //
+                // Neither can go through the daemon: this is onboarding, and
+                // there is no daemon until a vault exists. Both are therefore
+                // done in this process, which is also the one with a window
+                // to put a file dialog over.
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let _ = Button::secondary(copy::onboarding::KOPIA_CHOOSE).compact().show(ui);
-                    let _ = Button::primary(copy::onboarding::KOPIA_DOWNLOAD).compact().show(ui);
+                    if Button::secondary(copy::onboarding::KOPIA_CHOOSE)
+                        .compact()
+                        .show(ui)
+                        .on_hover_text(copy::onboarding::KOPIA_CHOOSE_HINT)
+                        .clicked()
+                    {
+                        if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            app.data.settings.kopia_path = Some(path.clone());
+                            app.screens.settings.kopia_path =
+                                path.to_string_lossy().into_owned();
+                            // Saved now rather than at the end of onboarding:
+                            // the probe above re-reads on the next frame, and
+                            // the user needs to see it turn green here.
+                            app.save_settings();
+                        }
+                    }
+                    if Button::primary(copy::onboarding::KOPIA_DOWNLOAD)
+                        .compact()
+                        .show(ui)
+                        .on_hover_text(copy::onboarding::KOPIA_DOWNLOAD_HINT)
+                        .clicked()
+                    {
+                        // Superbackup fetches a tested build on its own once
+                        // it is running; this is for the person who would
+                        // rather install it themselves, and it goes to
+                        // Kopia's own releases rather than anywhere of ours.
+                        let _ = open::that_detached(copy::onboarding::KOPIA_RELEASES_URL);
+                    }
                 });
             }
         });

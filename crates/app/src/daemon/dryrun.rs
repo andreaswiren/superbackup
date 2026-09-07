@@ -92,7 +92,12 @@ pub async fn start(runtime: &Arc<Runtime>, job: Job) -> Result<StartedReply> {
         Arc::new(chrono::Local),
         events.clone(),
         Arc::clone(&runtime.persisted),
-    );
+    )
+    // A rehearsal of a vault or keys job builds its payload for real, into
+    // the same self-deleting staging folder. It has to: the point of the
+    // rehearsal is what would be written, and "nothing, because this instance
+    // has no provider" is not an answer about the job.
+    .with_content_provider(super::content::DaemonContent::new(Arc::clone(runtime)));
 
     let run_id = Uuid::new_v4();
     let request = RunRequest {

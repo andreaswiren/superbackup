@@ -29,6 +29,13 @@ mod cli {
         pub service: bool,
         pub timeout: u64,
     }
+
+    /// Mirrors `cli::args::GuiArgs`: where the tray asks the window to open.
+    #[derive(Debug, Clone, Default)]
+    pub struct GuiArgs {
+        pub screen: Option<String>,
+        pub job: Option<String>,
+    }
 }
 
 /// The real `crate::build`, not a stub.
@@ -458,4 +465,63 @@ fn a_scoped_key_is_a_qualified_success_in_the_provider_editor_not_a_failure() {
     // Credentials not proven at all is a genuine failure.
     state.probe(provider, &buckets_reply(&[], false, false));
     assert!(matches!(state.probe_state(provider), Some(ProbeState::Failed(_))));
+}
+
+// ---------------------------------------------------------------------------
+// Buttons that do nothing
+// ---------------------------------------------------------------------------
+
+/// No button's click may be thrown away.
+///
+/// # Why this is a source scan rather than a type
+///
+/// `Button::show` returns a `Response`, and a discarded `Response` is a button
+/// that is drawn, is clickable, highlights on hover, and does nothing. There is
+/// no visual difference, no warning, and no test that would notice — the
+/// screen renders exactly as intended.
+///
+/// It happened **six times**: Close on the git repository dialog, Close on the
+/// cron help and the document viewer, Cancel on the new-key and export
+/// dialogs, and — worst — both buttons on the first-run screen shown when
+/// kopia is missing, which is the one moment a user has no other way forward.
+///
+/// `#[must_use]` would not have caught any of them, because `let _ =` is
+/// precisely the syntax that suppresses it. So the check is on the text: a
+/// click has to be *used* — assigned, tested with `.clicked()`, or returned.
+///
+/// If a genuinely decorative button is ever needed, this test should be
+/// updated deliberately, with the reason written down. That is the point: the
+/// six above were not decisions, they were oversights that looked like code.
+#[test]
+fn no_button_has_its_click_discarded() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui");
+    let mut offences = Vec::new();
+    visit(&root, &mut |path, text| {
+        for (number, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("let _ = Button::") || trimmed.starts_with("let _ = widgets::") {
+                offences.push(format!("{}:{}: {}", path.display(), number + 1, trimmed));
+            }
+        }
+    });
+    assert!(
+        offences.is_empty(),
+        "these draw a control and throw its click away, which renders as a control that does \
+         nothing:\n{}",
+        offences.join("\n")
+    );
+}
+
+fn visit(dir: &std::path::Path, f: &mut impl FnMut(&std::path::Path, &str)) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            visit(&path, f);
+        } else if path.extension().map(|e| e == "rs").unwrap_or(false) {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                f(&path, &text);
+            }
+        }
+    }
 }

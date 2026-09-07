@@ -381,6 +381,15 @@ pub struct Settings {
     pub skip_on_battery: bool,
     /// Run schedules that elapsed while the PC was asleep or powered off.
     pub run_missed_on_start: bool,
+    /// Wake this machine from sleep when a scheduled job is due, and hold it
+    /// awake until the run finishes.
+    ///
+    /// Off by default. Waking somebody's machine at two in the morning is a
+    /// surprising thing for a program to do, and a surprise is not a sensible
+    /// default however useful it is once asked for. See
+    /// [`crate::platform::wake`] for what it can and cannot reach.
+    #[serde(default)]
+    pub wake_for_backups: bool,
     /// Keep the vault key in memory for this long after the last GUI action.
     /// 0 = lock immediately when the window closes.
     pub auto_lock_minutes: u32,
@@ -426,6 +435,7 @@ impl Default for Settings {
             skip_on_metered: true,
             skip_on_battery: false,
             run_missed_on_start: true,
+            wake_for_backups: false,
             auto_lock_minutes: 30,
             use_os_keychain: false,
             log_level: LogLevel::Info,
@@ -890,6 +900,22 @@ pub struct Destination {
     /// discovery). Kept so the GUI can mark it and offer to re-detect.
     #[serde(default)]
     pub auto_discovered: bool,
+    /// This destination is reachable from more than one of your machines.
+    ///
+    /// A label, not a mechanism: nothing behaves differently because of it.
+    /// What it does is let the interface tell apart the destinations only this
+    /// PC can see — a local disk, a folder on this machine — from the ones
+    /// another machine could also open: a OneDrive folder that syncs
+    /// everywhere, a bucket, a network share.
+    ///
+    /// That distinction is invisible from a path. `D:\backups` and
+    /// `C:\Users\me\OneDrive\backups` look equally local, and only their owner
+    /// knows which of them the laptop can also reach. It matters wherever the
+    /// point of the destination is that a *second* machine gets what is
+    /// written there — the shared key bundle above all, which is useless in a
+    /// place only the machine that wrote it can read.
+    #[serde(default)]
+    pub shared: bool,
     /// Per-destination bandwidth ceiling, overriding the global setting.
     #[serde(default)]
     pub bandwidth: Option<BandwidthSettings>,
@@ -1265,6 +1291,78 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
 }
 
+/// What a job puts into its destinations.
+///
+/// Almost every job backs up files the user named, and that is [`Files`]. Two
+/// do not, and both exist because of the same observation: the things you need
+/// *first* after losing a machine are not files.
+///
+/// - The vault holds every repository password. Without it, a perfect backup
+///   of every file is a directory of blobs nobody can open. Backing it up with
+///   an ordinary job does not work, because an ordinary job needs a
+///   destination whose password is in the vault.
+/// - SSH keys get you back into the forges, the servers and the deploy
+///   targets. They are small, they cannot be regenerated, and re-keying every
+///   host by hand is the part of losing a laptop that actually costs a week.
+///
+/// Both are prepared into a staging folder at run time rather than read from
+/// the source list, which is why [`Job::sources`] is empty for them.
+///
+/// [`Files`]: JobContent::Files
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobContent {
+    /// The folders in [`Job::sources`]. What almost every job is.
+    #[default]
+    Files,
+    /// The keys marked "back up" on the Credentials page, sealed into one
+    /// encrypted bundle before they leave this process.
+    ///
+    /// Never the key files themselves. A destination can be a plain folder
+    /// mirror, and a plain folder mirror of `~/.ssh` is a private key written
+    /// somewhere in the clear.
+    Keys,
+    /// The vault file, which is already sealed under the master passphrase,
+    /// plus a written restore procedure.
+    Vault,
+}
+
+impl JobContent {
+    /// The name shown in lists.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Files => "Files",
+            Self::Keys => "SSH keys",
+            Self::Vault => "Vault",
+        }
+    }
+
+    /// True when the run builds its own payload instead of reading
+    /// [`Job::sources`].
+    ///
+    /// Everything that treats `sources` as "what this job protects" has to ask
+    /// this first, or a keys job reads as a job that backs up nothing.
+    pub fn is_prepared(self) -> bool {
+        !matches!(self, Self::Files)
+    }
+
+    /// One sentence saying what the job will contain, for the interface.
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::Files => "The folders listed as sources.",
+            Self::Keys => {
+                "The keys ticked for backup on the Credentials page, sealed into one encrypted \
+                 bundle. Opening it needs your master passphrase."
+            }
+            Self::Vault => {
+                "Superbackup's vault, which holds every repository password and stored token. \
+                 It is already encrypted; the backup carries the file as-is, plus the steps to \
+                 put it back."
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
     pub id: Uuid,
@@ -1273,6 +1371,12 @@ pub struct Job {
     pub project_id: Option<Uuid>,
     #[serde(default)]
     pub description: String,
+    /// What this job backs up. Almost always the folders in `sources`; see
+    /// [`JobContent`] for the two that are not.
+    #[serde(default)]
+    pub content: JobContent,
+    /// The folders this job protects. Empty for a job whose
+    /// [`content`](Job::content) is prepared at run time instead.
     pub sources: Vec<Source>,
     /// One job fans out to every destination listed here — typically a fast
     /// local repo, a OneDrive repo, and an offsite S3 bucket.
@@ -1732,6 +1836,7 @@ mod tests {
 
     fn job(name: &str) -> Job {
         Job {
+            content: crate::model::JobContent::Files,
             id: Uuid::new_v4(),
             name: name.into(),
             project_id: None,

@@ -14,6 +14,118 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.6.0] - 2026-09-07
+
+### Superbackup backs itself up
+
+- **Two new job types**, for the two things a file backup cannot protect.
+
+  - **Superbackup's vault.** It holds the password of every repository you
+    have. Your file backups survive without it and nothing can read them,
+    and it could not be protected by an ordinary job because an ordinary job
+    writes into a repository whose password is in the vault. The job carries
+    the sealed file as it sits, plus a plain-text `RESTORE.txt` saying where
+    it goes and how to put it back.
+
+  - **Your SSH keys.** The keys ticked on the Credentials page are sealed
+    into one file under your master passphrase *before* they leave the
+    process, so what lands in a bucket or in OneDrive is useless without that
+    passphrase. There is no setting that turns that off. Until now the tick
+    recorded a choice that no job acted on, and the help text said so.
+
+  Both are made from **Jobs -> New job**, build their payload into a folder
+  that deletes itself when the run ends, and fail loudly rather than writing
+  an empty snapshot when the vault is locked or nothing is ticked.
+
+- **`superbackup vault restore --from <folder>`**, the other half of the vault
+  backup. It refuses while superbackup is running — a running instance would
+  write its own vault back over the restored one, which looks like it worked —
+  checks the backed-up file actually opens with the passphrase before replacing
+  anything, and keeps a dated copy of what was there. `superbackup vault
+  backups` lists those copies.
+
+- **`superbackup cred`**: `list`, `role`, `seal`, `unseal`. `cred unseal` is
+  the command written into every key backup's `RESTORE.txt`.
+
+### Waking the machine
+
+- **Wake this computer when a backup is due** (Settings -> Scheduling, off by
+  default). A desktop asleep at 02:00 never ran the 02:00 backup; the catch-up
+  then ran it at 08:40 while you were working.
+
+  It is two things, and doing only the first gives a machine that wakes, sits
+  at a black screen for two minutes and sleeps again mid-copy: a wake alarm a
+  minute before the run, and a request that holds the machine awake until the
+  run finishes. Afterwards the request is released and the machine sleeps on
+  its own timer — superbackup does not suspend it, because it cannot tell an
+  idle machine from one you have just sat down at.
+
+  Windows wakes from sleep, not from hibernation or a machine that is off, and
+  the power plan must allow wake timers; the setting says so. Linux uses the
+  kernel RTC alarm, which also covers hibernation but needs the system service.
+  macOS reports that `pmset` is the way and does not pretend otherwise.
+
+### Fixed
+
+- **Five tray menu entries did nothing at all.** Activity, Settings, a job's
+  own activity, "fix kopia" and Unlock all launch the window with `--screen`,
+  and `gui` took no arguments — so the command line was rejected and the child
+  exited before drawing anything. Nothing caught it because a process that
+  exits 2 looks exactly like one that was never asked for much. The window now
+  takes `--screen` and `--job`, and every command line the tray builds is
+  asserted to parse.
+
+- **The git repository dialog was unusable.** Its Branches, Working trees and
+  Documents tabs did nothing, and so did its Close button. Two separate
+  defects: the segmented control updated the selection but never reported the
+  change, and the dialog only wrote the new tab back when the change was
+  reported; and the Close button's click was discarded with `let _ =`. Four
+  more buttons in other dialogs had the same defect and are fixed too.
+
+  **Seven controls in total were drawn, clickable, and wired to nothing.** A
+  discarded `Response` renders identically to a working button — it highlights
+  on hover and does nothing — so no rendering test would ever have noticed, and
+  `#[must_use]` cannot help because `let _ =` is exactly the syntax that
+  suppresses it. There is now a test that scans the interface's source and
+  fails on a discarded click.
+
+- **A key opened automatically could not be closed again.** Loading a key into
+  the agent was reversible only by restarting the agent, which on Windows means
+  restarting a service. There is now a "Stop opening it" button, which also
+  deletes the copy the Windows service agent keeps in the registry so the key
+  is not reloaded at the next boot.
+
+- **A key with its own passphrase can now be opened from the window**, by
+  opening a terminal that runs `ssh-add` for it. The passphrase goes from your
+  keyboard to `ssh-add` and reaches neither a command line nor superbackup,
+  which is what makes this the safe way round. The terminal is opened by the
+  window rather than the daemon: a service in session 0 would put it on a
+  desktop nobody is looking at.
+
+- **The dashboard's "View error" link did nothing** on a destination that had
+  failed — the one moment somebody wants to know what went wrong. It now opens
+  that run.
+
+- **The first-run screen offered two buttons that did nothing** on a machine
+  without kopia — "Download Kopia" and "Choose a file…" — at the one moment
+  the user has no other way forward. Same defect as the dialog buttons above:
+  drawn, clicked, discarded. Choosing a file now sets and saves the path so
+  the probe above it turns green; Download opens Kopia's own releases page.
+
+- **The Name column on Storage providers sat above the rest of its row.** The
+  previous fix was the cause: wrapping the name in a layout of its own replaced
+  the table cell's own centred layout with one anchored to the cell's top edge.
+  Every other column lines up by doing nothing, and now so does this one.
+
+### Added
+
+- **Destinations can be marked as reachable from your other machines.** A
+  label, not a mechanism — but nothing about a path says whether a second
+  machine can open it, and it decides whether the shared key bundle lands
+  somewhere useful. Marked destinations carry a badge in the list and are
+  offered as one-click choices for the key-sharing folder.
+
+
 ## [0.5.0] - 2026-09-07
 
 - **Make a new SSH key pair**, from the Credentials page. Ed25519 by default,

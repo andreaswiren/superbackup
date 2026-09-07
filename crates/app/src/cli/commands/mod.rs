@@ -1,5 +1,6 @@
 //! One module per group of commands, and the dispatcher that reaches them.
 
+pub mod credentials;
 pub mod data;
 pub mod doctor;
 pub mod everyday;
@@ -40,6 +41,7 @@ pub fn dispatch(ctx: &mut Ctx, command: Command) -> CliResult<Outcome> {
         Command::Provider(sub) => objects::provider(ctx, sub),
         Command::Project(sub) => objects::project(ctx, sub),
         Command::Git(sub) => objects::git(ctx, sub),
+        Command::Cred(sub) => credentials::cred(ctx, sub),
 
         Command::Snapshots(args) => data::snapshots(ctx, args),
         Command::Restore(args) => data::restore(ctx, args),
@@ -48,6 +50,7 @@ pub fn dispatch(ctx: &mut Ctx, command: Command) -> CliResult<Outcome> {
         Command::Unlock(args) => vault::unlock(ctx, args),
         Command::Lock => vault::lock(ctx),
         Command::ChangePassphrase => vault::change_passphrase(ctx),
+        Command::Vault(sub) => vault::vault(ctx, sub),
 
         Command::Init(args) => setup::init(ctx, args),
         Command::Service(sub) => setup::service(ctx, sub),
@@ -58,7 +61,11 @@ pub fn dispatch(ctx: &mut Ctx, command: Command) -> CliResult<Outcome> {
         Command::Doctor(args) => doctor::doctor(ctx, args),
 
         // Reached only if main.rs stops intercepting these.
-        Command::Gui | Command::Daemon(_) | Command::Schema | Command::Version => {
+        Command::Gui(_)
+        | Command::Daemon(_)
+        | Command::Schema
+        | Command::Version
+        | Command::Askpass => {
             Err(super::output::CliError::new(
                 superbackup_core::error::ErrorCode::Internal,
                 "this command is handled before the thin client and should not have reached it",

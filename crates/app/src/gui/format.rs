@@ -14,7 +14,7 @@
 // as a separate crate, so items that are used and tested there look unused from
 // the binary's side. The allow is scoped to this module rather than the crate.
 #![allow(dead_code)]
-use chrono::{DateTime, Datelike, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 
 // ---------------------------------------------------------------------------
 // Bytes and rates
@@ -96,21 +96,69 @@ pub fn minutes(total: u32) -> String {
 // Times
 // ---------------------------------------------------------------------------
 
-/// `12 Mar 02:00`, with the year appended only when it is not this one.
-/// Always local time; the model stores UTC.
-pub fn absolute(at: DateTime<Utc>) -> String {
-    let local = at.with_timezone(&Local);
-    let now = Local::now();
-    if local.year() == now.year() {
-        local.format("%-d %b %H:%M").to_string()
+/// The machine's UTC offset, written the way people say it: `GMT+2`.
+///
+/// # Why not `%:z`
+///
+/// `+02:00` is unambiguous and unreadable. Every timestamp in this
+/// application is already converted to local time, and the only thing a reader
+/// needs from the offset is confirmation that it *is* their own clock — so it
+/// is spelled the way an operating system's clock settings spell it.
+///
+/// Computed for the given instant rather than for `now`, because the two
+/// differ across a daylight-saving boundary: a snapshot taken in July is
+/// `GMT+2` even when it is read in January, and labelling it with January's
+/// offset would be quietly wrong by an hour.
+///
+/// Half-hour and quarter-hour zones exist (`GMT+5:30`, `GMT+5:45`), so the
+/// minutes are kept when they are not zero.
+pub fn zone_suffix(at: DateTime<Utc>) -> String {
+    let offset = at.with_timezone(&Local).offset().local_minus_utc();
+    if offset == 0 {
+        return "GMT".to_string();
+    }
+    let sign = if offset < 0 { '-' } else { '+' };
+    let total = offset.abs();
+    let (hours, minutes) = (total / 3600, (total % 3600) / 60);
+    if minutes == 0 {
+        format!("GMT{sign}{hours}")
     } else {
-        local.format("%-d %b %Y %H:%M").to_string()
+        format!("GMT{sign}{hours}:{minutes:02}")
     }
 }
 
-/// `12 Mar 02:00:04` — the Activity event log wants seconds.
+/// `2026-03-12 02:00`, in local time.
+///
+/// # Why the year is always there, and why it comes first
+///
+/// It read `12 Mar 02:00`, dropping the year whenever the timestamp fell in
+/// the current one. Two things were wrong with that. A date written
+/// `<day> <month-name>` is one region's convention rather than "the local
+/// format"; and a backup listing is exactly where a silently omitted year
+/// matters, because "12 Mar" against a snapshot from 2024 reads as this
+/// year's.
+///
+/// ISO order sorts, never reads two ways, and needs no month name to
+/// translate. The zone is deliberately not appended here: this is the
+/// table-cell form, the offset is identical for every row, and repeating it
+/// down a column costs width and tells the reader nothing new. Use
+/// [`absolute_zoned`] where a timestamp stands on its own.
+pub fn absolute(at: DateTime<Utc>) -> String {
+    at.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// `2026-03-12 02:00 GMT+2` — the same instant, saying which clock it is on.
+///
+/// For anywhere a timestamp stands alone: a tooltip, a detail row, a single
+/// figure in a card. There, nothing else on screen tells the reader whether
+/// they are looking at their own time or at UTC.
+pub fn absolute_zoned(at: DateTime<Utc>) -> String {
+    format!("{} {}", absolute(at), zone_suffix(at))
+}
+
+/// `2026-03-12 02:00:04` — the Activity event log wants seconds.
 pub fn absolute_seconds(at: DateTime<Utc>) -> String {
-    at.with_timezone(&Local).format("%-d %b %H:%M:%S").to_string()
+    at.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 /// `02:00`.
@@ -178,7 +226,7 @@ pub fn relative(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
 /// Local-time offset, shown in tooltips where UTC versus local could matter.
 pub fn offset_note(at: DateTime<Utc>) -> String {
     let local = Local.from_utc_datetime(&at.naive_utc());
-    format!("{} (UTC{})", local.format("%Y-%m-%d %H:%M:%S"), local.format("%:z"))
+    format!("{} {}", local.format("%Y-%m-%d %H:%M:%S"), zone_suffix(at))
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +390,63 @@ pub fn weekdays(days: &[u8]) -> String {
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    /// The format the whole application shows dates in.
+    ///
+    /// It was `15 Aug 12:47`: one region's convention, and with the year
+    /// dropped whenever the timestamp fell in the current one — in a backup
+    /// listing, where "15 Aug" against a two-year-old snapshot reads as this
+    /// year's.
+    #[test]
+    fn a_timestamp_is_iso_ordered_and_always_carries_its_year() {
+        let at = "2024-08-15T10:47:00Z".parse::<DateTime<Utc>>().expect("literal");
+        let shown = absolute(at);
+        assert!(
+            shown.starts_with("2024-08-15 "),
+            "ISO order, with the year: {shown}"
+        );
+        assert!(!shown.contains("Aug"), "no month names to translate: {shown}");
+        // Minute resolution, 24-hour.
+        assert_eq!(shown.len(), "2024-08-15 12:47".len(), "{shown}");
+    }
+
+    /// A timestamp standing on its own says which clock it is on, because
+    /// nothing else on screen does.
+    #[test]
+    fn a_lone_timestamp_names_its_zone() {
+        let at = "2024-08-15T10:47:00Z".parse::<DateTime<Utc>>().expect("literal");
+        let zoned = absolute_zoned(at);
+        assert!(zoned.starts_with(&absolute(at)), "it is the same instant: {zoned}");
+        assert!(zoned.contains("GMT"), "and it names the offset: {zoned}");
+    }
+
+    /// `GMT`, `GMT+2`, `GMT-5`, `GMT+5:30`. The half-hour zones are real and
+    /// truncating them would put India an hour out.
+    #[test]
+    fn the_zone_suffix_is_written_the_way_a_clock_setting_is() {
+        fn render(seconds: i32) -> String {
+            if seconds == 0 {
+                return "GMT".to_string();
+            }
+            let sign = if seconds < 0 { '-' } else { '+' };
+            let total = seconds.abs();
+            let (h, m) = (total / 3600, (total % 3600) / 60);
+            if m == 0 {
+                format!("GMT{sign}{h}")
+            } else {
+                format!("GMT{sign}{h}:{m:02}")
+            }
+        }
+        assert_eq!(render(0), "GMT");
+        assert_eq!(render(2 * 3600), "GMT+2");
+        assert_eq!(render(-5 * 3600), "GMT-5");
+        assert_eq!(render(5 * 3600 + 30 * 60), "GMT+5:30");
+        assert_eq!(render(-(3 * 3600 + 30 * 60)), "GMT-3:30");
+
+        // And the real one for this machine is one of those shapes.
+        let live = zone_suffix(Utc::now());
+        assert!(live.starts_with("GMT"), "{live}");
+    }
 
     #[test]
     fn bytes_follow_the_one_decimal_rule() {

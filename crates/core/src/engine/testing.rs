@@ -356,6 +356,7 @@ impl BackupExecutor for MockExecutor {
 /// up new fields is a fixture that stops testing them.
 pub fn test_job(name: &str) -> Job {
     Job {
+        content: crate::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: name.to_string(),
         project_id: None,
@@ -378,6 +379,7 @@ pub fn test_job(name: &str) -> Job {
 /// A local-repository destination, which routes through [`BackupExecutor`].
 pub fn test_repository(name: &str, path: impl Into<PathBuf>) -> Destination {
     Destination {
+        shared: false,
         id: Uuid::new_v4(),
         name: name.to_string(),
         kind: DestinationKind::LocalRepository { path: path.into() },

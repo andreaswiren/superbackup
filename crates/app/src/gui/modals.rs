@@ -161,11 +161,25 @@ impl UnlockState {
 /// `T-5`. Blocking: no `x`, and Escape does nothing.
 #[derive(Debug, Clone)]
 pub struct WriteDownState {
-    pub destination: Uuid,
+    /// What this passphrase protects. The acknowledgement does different work
+    /// for each — a repository is connected afterwards, a key is already
+    /// made — and conflating them would connect a repository that does not
+    /// exist every time somebody made a key.
+    pub purpose: WriteDownPurpose,
     pub location: String,
     pub passphrase: String,
     pub acknowledged: bool,
     pub copied: bool,
+}
+
+/// What a written-down passphrase is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteDownPurpose {
+    /// A repository passphrase. Acknowledging connects the repository.
+    Repository(Uuid),
+    /// An SSH key passphrase. The key already exists; there is nothing to do
+    /// afterwards but close the dialog.
+    SshKey,
 }
 
 impl WriteDownState {
@@ -459,6 +473,8 @@ pub struct NewKeyState {
     pub comment: String,
     /// RSA rather than the Ed25519 default.
     pub rsa: bool,
+    /// Protect it with a generated passphrase, kept in the vault.
+    pub protect: bool,
     /// Load it into the agent as soon as it exists.
     pub load_into_agent: bool,
     pub busy: bool,
@@ -561,7 +577,7 @@ impl Modal {
             Modal::Confirm(remove_destination_confirm(data, destination)),
             Modal::Confirm(reset_vault_confirm(data)),
             Modal::WriteDown(WriteDownState {
-                destination,
+                purpose: WriteDownPurpose::Repository(destination),
                 location: "D:\\superbackup\\repository".into(),
                 passphrase: "kX7fQ2mNbR4tYw8ZaP1sDv6HgJ3eLc0U".into(),
                 acknowledged: false,
@@ -1050,7 +1066,10 @@ fn show_write_down(app: &mut App, ctx: &egui::Context, mut state: WriteDownState
             m.body(|ui| {
                 widgets::paragraph(
                     ui,
-                    copy::writedown_body(&state.location),
+                    match state.purpose {
+                        WriteDownPurpose::Repository(_) => copy::writedown_body(&state.location),
+                        WriteDownPurpose::SshKey => copy::writedown_key_body(&state.location),
+                    },
                     Type::Body,
                     t.text_secondary,
                 );
@@ -1119,7 +1138,15 @@ fn show_write_down(app: &mut App, ctx: &egui::Context, mut state: WriteDownState
                 ui.add_space(space::XXL);
                 widgets::checkbox(ui, &mut state.acknowledged, copy::writedown::ACK, None, true);
                 ui.add_space(space::L);
-                widgets::paragraph(ui, copy::writedown::ESCAPE, Type::Small, t.text_muted);
+                widgets::paragraph(
+                    ui,
+                    match state.purpose {
+                        WriteDownPurpose::Repository(_) => copy::writedown::ESCAPE,
+                        WriteDownPurpose::SshKey => copy::writedown::ESCAPE_KEY,
+                    },
+                    Type::Small,
+                    t.text_muted,
+                );
             });
             m.footer(|ui| {
                 if Button::primary(copy::action::DONE)
@@ -1693,6 +1720,7 @@ pub fn parse_hex(hex: &str) -> Option<egui::Color32> {
 
 fn show_cron_help(ctx: &egui::Context) -> Option<Modal> {
     let t = theme::tokens(ctx);
+    let mut dismissed = false;
     let (close, _) = widgets::modal(
         ctx,
         "sb-cron-help",
@@ -1729,11 +1757,13 @@ fn show_cron_help(ctx: &egui::Context) -> Option<Modal> {
             }
         });
             m.footer(|ui| {
-                let _ = Button::primary(copy::action::CLOSE).show(ui);
+                if Button::primary(copy::action::CLOSE).show(ui).clicked() {
+                    dismissed = true;
+                }
             });
         },
     );
-    if close {
+    if close || dismissed {
         None
     } else {
         Some(Modal::CronHelp)
@@ -1831,6 +1861,7 @@ fn show_git_commit(
 fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut follow: Option<String> = None;
+    let mut dismissed = false;
     let (close, _) = widgets::modal(
         ctx,
         "sb-document",
@@ -1866,7 +1897,9 @@ fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Op
                 });
             });
             m.footer(|ui| {
-                let _ = Button::primary(copy::action::CLOSE).show(ui);
+                if Button::primary(copy::action::CLOSE).show(ui).clicked() {
+                    dismissed = true;
+                }
             });
         },
     );
@@ -1877,7 +1910,7 @@ fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Op
         let _ = open::that_detached(&url);
     }
     let _ = app;
-    if close {
+    if close || dismissed {
         None
     } else {
         Some(Modal::Document(state))
@@ -1893,6 +1926,7 @@ fn show_git_repo(
     let t = theme::tokens(ctx);
     let now = chrono::Utc::now();
     let mut action = None;
+    let mut dismissed = false;
     let (close, _) = widgets::modal(
         ctx,
         "sb-git-repo",
@@ -1912,7 +1946,12 @@ fn show_git_repo(
                 });
             });
             m.footer(|ui| {
-                let _ = Button::primary(copy::action::CLOSE).show(ui);
+                // The click was discarded with `let _ =`, so the one button in
+                // the footer did nothing and the dialog could only be left by
+                // its header cross.
+                if Button::primary(copy::action::CLOSE).show(ui).clicked() {
+                    dismissed = true;
+                }
             });
         },
     );
@@ -1930,7 +1969,7 @@ fn show_git_repo(
             return None;
         }
     }
-    if close {
+    if close || dismissed {
         None
     } else {
         Some(Modal::GitRepo(state))
@@ -2170,6 +2209,7 @@ fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState
 fn show_new_key(app: &mut App, ctx: &egui::Context, mut state: NewKeyState) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut make = false;
+    let mut dismissed = false;
     let (close, _) = widgets::modal(
         ctx,
         "sb-new-key",
@@ -2204,21 +2244,53 @@ fn show_new_key(app: &mut App, ctx: &egui::Context, mut state: NewKeyState) -> O
                     .show(ui, &mut state.comment);
 
                 ui.add_space(space::XL);
+                widgets::divider(ui);
+                ui.add_space(space::L);
+
+                // The two choices interact, and the dialog says how rather
+                // than letting the user discover it: a protected key cannot be
+                // opened unattended, because supplying its passphrase without
+                // being asked would defeat the passphrase.
+                widgets::checkbox(
+                    ui,
+                    &mut state.protect,
+                    copy::cred::NEW_PROTECT,
+                    Some(copy::cred::NEW_PROTECT_HINT),
+                    true,
+                );
+                ui.add_space(space::M);
+                let mut auto_open = state.load_into_agent && !state.protect;
+                if widgets::checkbox(
+                    ui,
+                    &mut auto_open,
+                    copy::cred::NEW_AUTO_OPEN,
+                    Some(if state.protect {
+                        copy::cred::NEW_AUTO_OPEN_BLOCKED
+                    } else {
+                        copy::cred::NEW_AUTO_OPEN_HINT
+                    }),
+                    !state.protect,
+                )
+                .clicked()
+                {
+                    state.load_into_agent = auto_open;
+                }
+
+                ui.add_space(space::L);
                 widgets::banner(
                     ui,
                     widgets::BannerKind::Info,
-                    copy::cred::NEW_NO_PASSPHRASE,
-                    Some(copy::cred::NEW_NO_PASSPHRASE_BODY),
+                    if state.protect {
+                        copy::cred::NEW_PASSPHRASE_SHOWN
+                    } else {
+                        copy::cred::NEW_NO_PASSPHRASE
+                    },
+                    Some(if state.protect {
+                        copy::cred::NEW_PASSPHRASE_SHOWN_BODY
+                    } else {
+                        copy::cred::NEW_NO_PASSPHRASE_BODY
+                    }),
                     |_| {},
-                );
-
-                ui.add_space(space::L);
-                widgets::checkbox(
-                    ui,
-                    &mut state.load_into_agent,
-                    copy::cred::NEW_AUTO_OPEN,
-                    Some(copy::cred::NEW_AUTO_OPEN_HINT),
-                    true,
                 );
 
                 if let Some(error) = &state.error {
@@ -2234,7 +2306,9 @@ fn show_new_key(app: &mut App, ctx: &egui::Context, mut state: NewKeyState) -> O
                 {
                     make = true;
                 }
-                let _ = Button::ghost(copy::action::CANCEL).show(ui);
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    dismissed = true;
+                }
             });
         },
     );
@@ -2248,11 +2322,12 @@ fn show_new_key(app: &mut App, ctx: &egui::Context, mut state: NewKeyState) -> O
                 name: state.name.trim().to_string(),
                 key_type: if state.rsa { "rsa4096".into() } else { "ed25519".into() },
                 comment: state.comment.trim().to_string(),
+                protect: state.protect,
             },
         );
         return Some(Modal::NewKey(state));
     }
-    if close {
+    if close || dismissed {
         None
     } else {
         Some(Modal::NewKey(state))
@@ -2262,6 +2337,7 @@ fn show_new_key(app: &mut App, ctx: &egui::Context, mut state: NewKeyState) -> O
 fn show_export(app: &mut App, ctx: &egui::Context) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut chosen: Option<&'static str> = None;
+    let mut dismissed = false;
     let (close, _) = widgets::modal(
         ctx,
         "sb-export",
@@ -2285,10 +2361,15 @@ fn show_export(app: &mut App, ctx: &egui::Context) -> Option<Modal> {
                 widgets::paragraph(ui, copy::activity::EXPORT_NOTE, Type::Small, t.text_muted);
             });
             m.footer(|ui| {
-                let _ = Button::ghost(copy::action::CANCEL).show(ui);
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    dismissed = true;
+                }
             });
         },
     );
+    if dismissed {
+        return None;
+    }
     if let Some(kind) = chosen {
         if kind == "bundle" {
             app.go(super::nav::Route::Settings(super::nav::SettingsSection::Advanced));
@@ -2657,7 +2738,7 @@ mod tests {
     #[test]
     fn the_generated_passphrase_is_grouped_for_transcription() {
         let state = WriteDownState {
-            destination: Uuid::nil(),
+            purpose: WriteDownPurpose::SshKey,
             location: "somewhere".into(),
             passphrase: "abcdefghijklmnopqrstuvwxyz012345".into(),
             acknowledged: false,

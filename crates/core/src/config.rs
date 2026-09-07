@@ -455,7 +455,22 @@ fn validate_jobs(config: &Config, report: &mut ValidationReport) {
             }
         }
 
-        if job.sources.is_empty() {
+        // A vault or keys job builds its own payload at run time, so an empty
+        // source list is correct for it and a populated one is a job that
+        // would back up two unrelated things under one name.
+        if job.content.is_prepared() {
+            if !job.sources.is_empty() {
+                report.error(
+                    format!("jobs[{name}].sources"),
+                    format!(
+                        "a {} backup has no sources of its own; it protects {} \
+                         Remove the folders, or make this an ordinary job.",
+                        job.content.label().to_lowercase(),
+                        job.content.summary().to_lowercase(),
+                    ),
+                );
+            }
+        } else if job.sources.is_empty() {
             report.error(format!("jobs[{name}].sources"), "a job with no sources backs up nothing");
         }
         for (i, source) in job.sources.iter().enumerate() {

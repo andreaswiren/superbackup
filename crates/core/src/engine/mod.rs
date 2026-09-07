@@ -60,6 +60,7 @@ pub mod clock;
 pub mod executor;
 pub mod hooks;
 pub mod mirror;
+pub mod protected;
 pub mod retry;
 pub mod runner;
 pub mod schedule;
@@ -77,6 +78,9 @@ pub use executor::{
     SnapshotRequest, VerifyOutcome, VerifyRequest,
 };
 pub use mirror::{MirrorEngine, MirrorOptions, MirrorRequest};
+pub use protected::{
+    ContentProvider, SharedContentProvider, StagedContent, Staging, UnavailableContent,
+};
 pub use retry::RetryPolicy;
 pub use runner::{plan_destinations, PlannedDestination, RunRequest, Runner};
 pub use schedule::{catch_up_due, describe, next_occurrence, next_occurrence_in, Zone};
@@ -227,6 +231,7 @@ pub struct EngineBuilder {
     state: Arc<tokio::sync::Mutex<PersistedState>>,
     retry: RetryPolicy,
     hooks: Option<hooks::HookRunner>,
+    content: Option<protected::SharedContentProvider>,
 }
 
 impl EngineBuilder {
@@ -244,6 +249,7 @@ impl EngineBuilder {
             state: Arc::new(tokio::sync::Mutex::new(PersistedState::default())),
             retry: RetryPolicy::default(),
             hooks: None,
+            content: None,
         }
     }
 
@@ -281,6 +287,15 @@ impl EngineBuilder {
         self
     }
 
+    /// Supply the payload for vault and key backups.
+    ///
+    /// Left unset, those jobs fail with a message rather than producing an
+    /// empty backup. See [`protected`].
+    pub fn content_provider(mut self, content: protected::SharedContentProvider) -> EngineBuilder {
+        self.content = Some(content);
+        self
+    }
+
     /// Spawn the scheduler task and return a handle to it.
     ///
     /// The returned [`scheduler::SchedulerHandle`] is the only way to talk to
@@ -299,6 +314,9 @@ impl EngineBuilder {
         .with_retry_policy(self.retry);
         if let Some(hooks) = self.hooks {
             runner = runner.with_hooks(hooks);
+        }
+        if let Some(content) = self.content {
+            runner = runner.with_content_provider(content);
         }
         Scheduler::spawn(
             self.config,

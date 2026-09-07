@@ -106,6 +106,7 @@ fn save_then_load_round_trips_and_normalises() {
     });
     let destination_id = Uuid::new_v4();
     config.destinations.push(Destination {
+        shared: false,
         id: destination_id,
         name: "Offsite".into(),
         kind: DestinationKind::S3 {
@@ -126,6 +127,7 @@ fn save_then_load_round_trips_and_normalises() {
         last_verified_at: None,
     });
     config.jobs.push(Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: "dev".into(),
         project_id: None,
@@ -170,6 +172,7 @@ fn saving_an_invalid_config_writes_nothing() {
     let before = std::fs::read(paths.config_file()).expect("read");
 
     good.jobs.push(Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: "broken".into(),
         project_id: None,
@@ -405,6 +408,7 @@ fn set_config_validates_before_it_persists() {
 
     let mut config = store.config().clone();
     config.jobs.push(Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: "bad".into(),
         project_id: None,
@@ -477,6 +481,7 @@ fn gc_fixture(home: &Home) -> (Store, Uuid, Uuid) {
         last_verified_at: None,
     });
     config.destinations.push(Destination {
+        shared: false,
         id: destination_id,
         name: "Offsite".into(),
         kind: DestinationKind::S3 {

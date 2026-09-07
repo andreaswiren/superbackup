@@ -29,11 +29,34 @@ pub enum Template {
     Documents,
     Home,
     Blank,
+    /// Superbackup's own vault. See [`superbackup_core::engine::protected`].
+    Vault,
+    /// The SSH keys ticked on the Credentials page.
+    Keys,
 }
 
 impl Template {
-    pub const ALL: [Template; 4] =
-        [Template::Development, Template::Documents, Template::Home, Template::Blank];
+    pub const ALL: [Template; 6] = [
+        Template::Development,
+        Template::Documents,
+        Template::Home,
+        Template::Blank,
+        Template::Vault,
+        Template::Keys,
+    ];
+
+    /// What a job made from this template actually backs up.
+    ///
+    /// The last two are not folders, which is why they exist as templates at
+    /// all: there is no path a user could type that would produce them.
+    pub fn content(self) -> superbackup_core::model::JobContent {
+        use superbackup_core::model::JobContent;
+        match self {
+            Template::Vault => JobContent::Vault,
+            Template::Keys => JobContent::Keys,
+            _ => JobContent::Files,
+        }
+    }
 
     pub fn title(self) -> &'static str {
         match self {
@@ -41,6 +64,8 @@ impl Template {
             Template::Documents => copy::template::DOCS_TITLE,
             Template::Home => copy::template::HOME_TITLE,
             Template::Blank => copy::template::BLANK_TITLE,
+            Template::Vault => copy::template::VAULT_TITLE,
+            Template::Keys => copy::template::KEYS_TITLE,
         }
     }
     pub fn body(self) -> &'static str {
@@ -49,6 +74,8 @@ impl Template {
             Template::Documents => copy::template::DOCS_BODY,
             Template::Home => copy::template::HOME_BODY,
             Template::Blank => copy::template::BLANK_BODY,
+            Template::Vault => copy::template::VAULT_BODY,
+            Template::Keys => copy::template::KEYS_BODY,
         }
     }
     pub fn detail(self) -> &'static str {
@@ -57,6 +84,8 @@ impl Template {
             Template::Documents => copy::template::DOCS_DETAIL,
             Template::Home => copy::template::HOME_DETAIL,
             Template::Blank => copy::template::BLANK_DETAIL,
+            Template::Vault => copy::template::VAULT_DETAIL,
+            Template::Keys => copy::template::KEYS_DETAIL,
         }
     }
     pub fn icon(self) -> Icon {
@@ -65,6 +94,8 @@ impl Template {
             Template::Documents => Icon::FileText,
             Template::Home => Icon::Folder,
             Template::Blank => Icon::Plus,
+            Template::Vault => Icon::Shield,
+            Template::Keys => Icon::KeyRound,
         }
     }
     pub fn default_name(self) -> &'static str {
@@ -73,6 +104,8 @@ impl Template {
             Template::Documents => "Documents",
             Template::Home => "Everything",
             Template::Blank => "",
+            Template::Vault => "Superbackup vault",
+            Template::Keys => "SSH keys",
         }
     }
 
@@ -91,7 +124,8 @@ impl Template {
                 .collect(),
             Template::Documents => ["Documents", "Desktop"].iter().map(|p| home.join(p)).collect(),
             Template::Home => vec![home.clone()],
-            Template::Blank => Vec::new(),
+            // Neither has folders: the payload is built at run time.
+            Template::Blank | Template::Vault | Template::Keys => Vec::new(),
         };
         let existing: Vec<Source> =
             candidates.iter().filter(|p| p.exists()).map(Source::new).collect();
@@ -117,13 +151,21 @@ impl Template {
                 set.presets.push(ExclusionPreset::VirtualMachineImages);
                 set
             }
-            Template::Blank => ExclusionSet { presets: Vec::new(), ..ExclusionSet::default() },
+            Template::Blank | Template::Vault | Template::Keys => {
+                ExclusionSet { presets: Vec::new(), ..ExclusionSet::default() }
+            }
         }
     }
 
     pub fn schedule(self) -> Schedule {
         match self {
             Template::Blank => Schedule::Manual,
+            // Daily and early, but not on the same minute as the file
+            // templates: the vault is the thing you want written even
+            // on a night when the big job is still running.
+            Template::Vault | Template::Keys => {
+                Schedule::Daily { times: vec![TimeOfDay { hour: 1, minute: 30 }] }
+            }
             _ => Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 0 }] },
         }
     }
@@ -155,6 +197,7 @@ impl WizardState {
 
 fn blank_job() -> Job {
     Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: String::new(),
         project_id: None,
@@ -175,6 +218,7 @@ fn blank_job() -> Job {
 }
 
 fn apply_template(draft: &mut Job, template: Template, data: &Data) {
+    draft.content = template.content();
     draft.sources = template.sources();
     draft.exclusions = template.exclusions();
     draft.schedule = template.schedule();
@@ -411,6 +455,15 @@ fn step_sources(ui: &mut Ui, state: &mut WizardState) {
         .char_limit(64)
         .show(ui, &mut state.draft.name);
     ui.add_space(space::XL);
+
+    // A vault or keys job has nothing to pick, so the folder list is replaced
+    // by a description of what it *will* contain. An empty picker with a
+    // "choose a folder" empty state would read as a job that is not finished.
+    if state.draft.content.is_prepared() {
+        step_contents(ui, state);
+        return;
+    }
+
     widgets::text(ui, copy::job::SOURCES_TITLE, Type::H3, t.text_primary);
     ui.add_space(space::S);
     widgets::paragraph_at(ui, copy::job::SOURCES_HINT, Type::Small, t.text_muted, 640.0);
@@ -644,8 +697,46 @@ fn step_schedule(ui: &mut Ui, state: &mut WizardState) {
         });
 }
 
+/// What a vault or keys job will contain, in place of the folder picker.
+///
+/// It names the files, says they are encrypted before they leave, and says the
+/// one condition that can make the job fail — a locked vault, or no keys
+/// ticked. Saying so here costs a paragraph; finding out from a failed
+/// scheduled run costs a night.
+fn step_contents(ui: &mut Ui, state: &mut WizardState) {
+    use superbackup_core::model::JobContent;
+    let t = theme::tokens(ui.ctx());
+
+    widgets::text(ui, copy::protected::CONTENTS_TITLE, Type::H3, t.text_primary);
+    ui.add_space(space::S);
+    let (what, also) = match state.draft.content {
+        JobContent::Vault => (copy::protected::VAULT_WHAT, Some(copy::protected::VAULT_ALSO)),
+        JobContent::Keys => (copy::protected::KEYS_WHAT, None),
+        JobContent::Files => ("", None),
+    };
+    widgets::paragraph_at(ui, what, Type::Small, t.text_secondary, 640.0);
+    if let Some(also) = also {
+        ui.add_space(space::M);
+        widgets::paragraph_at(ui, also, Type::Small, t.text_secondary, 640.0);
+    }
+    ui.add_space(space::L);
+    widgets::paragraph_at(ui, copy::protected::NO_FOLDERS, Type::Small, t.text_muted, 640.0);
+    ui.add_space(space::XL);
+    widgets::banner(ui, widgets::BannerKind::Info, copy::protected::NEEDS_UNLOCK, None, |_| {});
+}
+
 fn step_exclusions(ui: &mut Ui, state: &mut WizardState) {
     let t = theme::tokens(ui.ctx());
+    if state.draft.content.is_prepared() {
+        widgets::paragraph_at(
+            ui,
+            copy::protected::NO_EXCLUSIONS,
+            Type::Small,
+            t.text_secondary,
+            640.0,
+        );
+        return;
+    }
     widgets::paragraph_at(ui, copy::job::EXCL_LEAD, Type::Small, t.text_secondary, 640.0);
     ui.add_space(space::L);
 
@@ -783,6 +874,15 @@ fn step_review(ui: &mut Ui, state: &mut WizardState, data: &Data) {
     widgets::kv_with(ui, copy::job::SOURCES_TITLE, |ui| {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = space::XXS;
+            if state.draft.content.is_prepared() {
+                widgets::paragraph_at(
+                    ui,
+                    state.draft.content.summary(),
+                    Type::Small,
+                    t.text_primary,
+                    (ui.available_width() - 8.0).max(160.0),
+                );
+            }
             for source in &state.draft.sources {
                 widgets::elided(
                     ui,

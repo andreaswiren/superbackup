@@ -109,7 +109,10 @@ pub fn validate_job(job: &Job, others: &[Job], destinations: &[Destination]) -> 
         report.push(Field::Name, copy::valid_job_name_dup(name));
     }
 
-    if job.sources.is_empty() {
+    // A vault or keys job builds its own payload at run time, so having no
+    // sources is right for it rather than an error. Without this the editor
+    // shows a permanent complaint on a job that is correctly configured.
+    if job.sources.is_empty() && !job.content.is_prepared() {
         report.push(Field::Sources, copy::valid::SOURCE_NONE);
     }
     for (i, source) in job.sources.iter().enumerate() {
@@ -859,7 +862,14 @@ pub fn wizard_blocked(
     match step {
         WizardStep::Template => None,
         WizardStep::Sources => {
-            if draft.sources.is_empty() {
+            if draft.content.is_prepared() {
+                // Nothing to pick; only the name can be wrong here.
+                if draft.name.trim().is_empty() {
+                    Some(copy::valid::JOB_NAME_EMPTY.to_string())
+                } else {
+                    None
+                }
+            } else if draft.sources.is_empty() {
                 Some(copy::valid::SOURCE_NONE.to_string())
             } else if draft.name.trim().is_empty() {
                 Some(copy::valid::JOB_NAME_EMPTY.to_string())
@@ -962,6 +972,7 @@ mod tests {
 
     fn destination(name: &str, kind: DestinationKind) -> Destination {
         Destination {
+            shared: false,
             id: Uuid::new_v4(),
             name: name.into(),
             kind,
@@ -1110,6 +1121,7 @@ mod tests {
 
     fn job(name: &str, destinations: Vec<Uuid>) -> Job {
         Job {
+            content: superbackup_core::model::JobContent::Files,
             id: Uuid::new_v4(),
             name: name.into(),
             project_id: None,

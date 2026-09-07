@@ -15,6 +15,10 @@ const ISSUES: &str = "https://github.com/andreaswiren/superbackup/issues/new";
 const KOPIA_DOCS: &str = "https://kopia.io/docs/";
 const RELEASES: &str = "https://github.com/andreaswiren/superbackup/releases";
 
+/// One column for the whole page: the header block and the cards under it
+/// share this so they have a single left edge.
+const COLUMN_W: f32 = 560.0;
+
 impl App {
     pub(crate) fn show_about(&mut self, ui: &mut Ui) {
         let t = theme::tokens(ui.ctx());
@@ -37,9 +41,17 @@ impl App {
         let mut open: Option<String> = None;
 
         widgets::scroll_area(ui, "about", |ui| {
+            // Left-aligned in the same 560px column the cards below use.
+            //
+            // It was centred over the full width while everything under it was
+            // left-aligned and narrow, so the logo, the name and the version
+            // floated off to the right of the page they belonged to. Two
+            // alignments on one screen read as a mistake whichever is
+            // "correct", and matching the cards is the one that needs no
+            // second column.
             ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width(), 0.0),
-                Layout::top_down(Align::Center),
+                Vec2::new(ui.available_width().min(COLUMN_W), 0.0),
+                Layout::top_down(Align::Min),
                 |ui| {
                     ui.add_space(space::H2);
                     widgets::app_logo(ui, 96.0);
@@ -64,25 +76,19 @@ impl App {
                         );
                     }
                     ui.add_space(space::XL);
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(560.0, 0.0),
-                        Layout::top_down(Align::Center),
-                        |ui| {
-                            widgets::paragraph_at(
-                                ui,
-                                copy::about::TAGLINE,
-                                Type::Body,
-                                t.text_secondary,
-                                560.0,
-                            );
-                        },
+                    widgets::paragraph_at(
+                        ui,
+                        copy::about::TAGLINE,
+                        Type::Body,
+                        t.text_secondary,
+                        COLUMN_W,
                     );
                 },
             );
 
             ui.add_space(space::H2);
             ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width().min(560.0), 0.0),
+                Vec2::new(ui.available_width().min(COLUMN_W), 0.0),
                 Layout::top_down(Align::Min),
                 |ui| {
                     widgets::card(ui, |ui| {

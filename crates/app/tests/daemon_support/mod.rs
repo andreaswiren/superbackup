@@ -330,6 +330,7 @@ pub fn manifest_json(files: u64, bytes: u64) -> String {
 pub fn repository(name: &str, path: PathBuf) -> Destination {
     let id = Uuid::new_v4();
     Destination {
+        shared: false,
         id,
         name: name.to_string(),
         kind: DestinationKind::LocalRepository { path },
@@ -351,6 +352,7 @@ pub fn repository(name: &str, path: PathBuf) -> Destination {
 /// A folder mirror: no repository, no kopia, no secrets.
 pub fn mirror(name: &str, path: PathBuf) -> Destination {
     Destination {
+        shared: false,
         id: Uuid::new_v4(),
         name: name.to_string(),
         kind: DestinationKind::LocalMirror { path },
@@ -369,6 +371,7 @@ pub fn mirror(name: &str, path: PathBuf) -> Destination {
 /// A manual job over one source, writing to the given destinations.
 pub fn job(name: &str, source: PathBuf, destinations: Vec<Uuid>) -> Job {
     Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
         name: name.to_string(),
         project_id: None,

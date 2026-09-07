@@ -498,6 +498,7 @@ mod tests {
 
     fn destination(name: &str, source: Option<PassphraseSource>) -> Destination {
         Destination {
+            shared: false,
             id: Uuid::new_v4(),
             name: name.into(),
             kind: DestinationKind::LocalRepository { path: "/backups".into() },

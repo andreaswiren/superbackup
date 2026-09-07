@@ -575,12 +575,30 @@ impl App {
                 self.ask(Intent::AgentStatus, Request::CredentialAgentStatus {});
                 self.toasts.success(copy::cred::AGENT_ADDED);
             }
+            (Intent::AgentRemove, Reply::Ack(_)) => {
+                self.ask(Intent::AgentStatus, Request::CredentialAgentStatus {});
+                self.toasts.success(copy::cred::AGENT_REMOVED);
+            }
             (Intent::GenerateKey(open_it), Reply::GeneratedKey(made)) => {
                 self.modal = None;
                 // The public key stays on screen. Pasting it into a forge is
                 // the very next thing anybody does, and a toast that scrolls
                 // away would mean going to find the file.
                 self.screens.credentials.last_public_key = Some(made.public_key.clone());
+                // The passphrase is returned exactly once, so this is the only
+                // moment it can be put in front of the user. It is in the
+                // vault too — but a passphrase reachable only from inside the
+                // machine it protects is no use on the day that machine is
+                // what has been lost.
+                if let Some(passphrase) = made.passphrase.clone() {
+                    self.modal = Some(Modal::WriteDown(modals::WriteDownState {
+                        purpose: modals::WriteDownPurpose::SshKey,
+                        location: made.private_path.clone(),
+                        passphrase,
+                        acknowledged: false,
+                        copied: false,
+                    }));
+                }
                 self.toasts.success(copy::cred_key_made(&made.private_path));
                 if *open_it {
                     self.ask(
@@ -739,7 +757,7 @@ impl App {
                 // The agent is optional; a machine without one is not an
                 // error state, it just cannot open keys unattended.
                 Intent::AgentStatus => self.screens.credentials.agent = None,
-                Intent::AgentAdd => self.toasts.warning(payload.message),
+                Intent::AgentAdd | Intent::AgentRemove => self.toasts.warning(payload.message),
                 Intent::GenerateKey(_) => {
                     // The dialog stays open with the reason on it: a name that
                     // is already taken should be retyped, not restarted.
@@ -1563,7 +1581,7 @@ impl App {
                 .history
                 .iter()
                 .find(|r| &r.run_id == id)
-                .map(|r| copy::run_detail_title(&r.job_name, &format::absolute(r.started_at)))
+                .map(|r| copy::run_detail_title(&r.job_name, &format::absolute_zoned(r.started_at)))
                 .unwrap_or_else(|| copy::state::UNKNOWN.to_string()),
             Route::Preview(id) => copy::preview_title(&self.data.job_name(id)),
             other => other.section().title().to_string(),
@@ -1767,7 +1785,15 @@ impl App {
         };
         match modals::show(self, ctx, modal) {
             Some(still_open) => self.modal = Some(still_open),
-            None => self.modal = None,
+            // Deliberately *not* `self.modal = None`.
+            //
+            // `self.modal` was already taken above, so it is None here
+            // whatever happens. A modal that closes by opening another one —
+            // the git repository dialog giving way to the document viewer —
+            // sets `self.modal` while it runs, and assigning None here threw
+            // that away: the first dialog closed and the second never
+            // appeared, which reads as a button that does nothing.
+            None => {}
         }
     }
 

@@ -155,8 +155,23 @@ impl App {
             ui.add_space(space::L);
             widgets::text(ui, copy::job_detail::SOURCES, Type::H3, t.text_primary);
             ui.add_space(space::XS);
-            if job.sources.is_empty() {
-                widgets::paragraph(ui, copy::job_detail::NO_SOURCES, Type::Small, t.warning.tint_text);
+            if job.content.is_prepared() {
+                // Not a job that is missing its folders: a job that has none
+                // by design. Saying "no folders" here in warning colour would
+                // report a correctly configured job as broken.
+                widgets::paragraph(
+                    ui,
+                    job.content.summary(),
+                    Type::Small,
+                    t.text_secondary,
+                );
+            } else if job.sources.is_empty() {
+                widgets::paragraph(
+                    ui,
+                    copy::job_detail::NO_SOURCES,
+                    Type::Small,
+                    t.warning.tint_text,
+                );
             }
             for source in &job.sources {
                 widgets::text(
@@ -250,6 +265,10 @@ impl App {
             return;
         }
 
+        // The header and the rows share these, and both must actually keep
+        // them; see the note on `fixed_cell` below.
+        const HEADER_H: f32 = 18.0;
+        const ROW_H: f32 = 26.0;
         const WHEN_W: f32 = 130.0;
         const STATUS_W: f32 = 170.0;
         const UP_W: f32 = 110.0;
@@ -257,13 +276,26 @@ impl App {
 
         let mut open: Option<Uuid> = None;
         widgets::table_frame(ui, |ui| {
+            // `fixed_cell`, not `allocate_ui_with_layout`, for every column
+            // in both the header and the rows below.
+            //
+            // egui allocates the child's `min_rect` in the parent — "you can
+            // request a lot of space and then use less" — so each of these
+            // collapsed to the width of its own text. The table therefore had
+            // no columns: each row's boundaries landed wherever that row's
+            // content happened to end, and the header, whose labels are a
+            // different length from the data, drifted furthest of all. It has
+            // to be the same helper on both or they line up with nothing.
             ui.horizontal(|ui| {
+                ui.set_min_height(HEADER_H);
                 for (label, width) in [
                     (copy::job_detail::COL_WHEN, WHEN_W),
                     (copy::job_detail::COL_RESULT, STATUS_W),
                 ] {
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(width, 18.0),
+                    widgets::fixed_cell(
+                        ui,
+                        width,
+                        HEADER_H,
                         Layout::left_to_right(Align::Center),
                         |ui| widgets::table_header(ui, label, None),
                     );
@@ -274,22 +306,38 @@ impl App {
                     (copy::job_detail::COL_UPLOADED, UP_W),
                     (copy::job_detail::COL_TOOK, TOOK_W),
                 ] {
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(width, 18.0),
+                    widgets::fixed_cell(
+                        ui,
+                        width,
+                        HEADER_H,
                         Layout::right_to_left(Align::Center),
                         |ui| widgets::table_header(ui, label, None),
                     );
                 }
                 ui.add_space(space::M);
-                widgets::table_header(ui, copy::job_detail::COL_WHERE, None);
+                // The last column takes the remainder, and is boxed for the
+                // same reason: unboxed, `table_header` builds its own child
+                // from the *panel's* remaining height and centres the label
+                // in that, which is why "Destinations" sat on a different
+                // line from every other header.
+                let rest = ui.available_width().max(60.0);
+                widgets::fixed_cell(
+                    ui,
+                    rest,
+                    HEADER_H,
+                    Layout::left_to_right(Align::Center),
+                    |ui| widgets::table_header(ui, copy::job_detail::COL_WHERE, None),
+                );
             });
             widgets::divider(ui);
 
             for run in &runs {
                 let response = ui.horizontal(|ui| {
                     ui.set_min_height(32.0);
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(WHEN_W, 26.0),
+                    widgets::fixed_cell(
+                        ui,
+                        WHEN_W,
+                        ROW_H,
                         Layout::left_to_right(Align::Center),
                         |ui| {
                             widgets::text(
@@ -298,11 +346,13 @@ impl App {
                                 Type::Small,
                                 t.text_primary,
                             )
-                            .on_hover_text(format::absolute(run.started_at));
+                            .on_hover_text(format::absolute_zoned(run.started_at));
                         },
                     );
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(STATUS_W, 26.0),
+                    widgets::fixed_cell(
+                        ui,
+                        STATUS_W,
+                        ROW_H,
                         Layout::left_to_right(Align::Center),
                         |ui| {
                             widgets::status_badge(ui, run.status);
@@ -310,8 +360,10 @@ impl App {
                     );
                     let uploaded: u64 =
                         run.destinations.iter().map(|d| d.progress.bytes_uploaded).sum();
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(UP_W, 26.0),
+                    widgets::fixed_cell(
+                        ui,
+                        UP_W,
+                        ROW_H,
                         Layout::right_to_left(Align::Center),
                         |ui| {
                             widgets::text(
@@ -322,8 +374,10 @@ impl App {
                             );
                         },
                     );
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(TOOK_W, 26.0),
+                    widgets::fixed_cell(
+                        ui,
+                        TOOK_W,
+                        ROW_H,
                         Layout::right_to_left(Align::Center),
                         |ui| {
                             let took = run.finished_at.map(|finished| {

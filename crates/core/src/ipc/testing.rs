@@ -1225,12 +1225,18 @@ impl Handler for MockHandler {
         name: String,
         _key_type: String,
         comment: String,
+        protect: bool,
     ) -> Result<GeneratedKeyReply> {
         let _guard = self.enter("cred.generate").await?;
         Ok(GeneratedKeyReply {
             private_path: format!("/mock/.ssh/{name}"),
             public_path: format!("/mock/.ssh/{name}.pub"),
             fingerprint: None,
+            protected: protect,
+            // The mock invents no passphrase: a test asserting on one would be
+            // asserting on the mock, and this is the one field where that
+            // would be actively misleading.
+            passphrase: None,
             public_key: format!("ssh-ed25519 AAAAmock {comment}"),
         })
     }
@@ -1254,6 +1260,15 @@ impl Handler for MockHandler {
         _path: String,
     ) -> Result<AckReply> {
         let _guard = self.enter("cred.agent_add").await?;
+        Ok(AckReply {})
+    }
+
+    async fn credential_agent_remove(
+        &self,
+        _ctx: &RequestContext,
+        _path: String,
+    ) -> Result<AckReply> {
+        let _guard = self.enter("cred.agent_remove").await?;
         Ok(AckReply {})
     }
 

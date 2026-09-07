@@ -44,6 +44,7 @@ const SECRET_KEY: &str = "s3cr3t/Sup3r+Secret/AccessKey0123456789";
 
 fn local_destination(path: &Path) -> Destination {
     Destination {
+        shared: false,
         id: uuid::Uuid::new_v4(),
         name: "Local disk".into(),
         kind: DestinationKind::LocalRepository { path: path.to_path_buf() },
@@ -89,6 +90,7 @@ fn storj_provider() -> StorageProvider {
 
 fn s3_destination(provider: &StorageProvider) -> Destination {
     Destination {
+        shared: false,
         id: uuid::Uuid::new_v4(),
         name: "StorJ offsite".into(),
         kind: DestinationKind::S3 {
@@ -1220,6 +1222,7 @@ const OFFSITE_SECRET_KEY: &str = "0ffs1te/Sup3r+Secret/AccessKey987654321";
 
 fn offsite_destination(provider: &StorageProvider, source: uuid::Uuid) -> Destination {
     Destination {
+        shared: false,
         id: uuid::Uuid::new_v4(),
         name: "StorJ replica".into(),
         kind: DestinationKind::S3 {

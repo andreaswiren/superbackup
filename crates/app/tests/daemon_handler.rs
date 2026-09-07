@@ -367,6 +367,14 @@ async fn every_command_answers_or_refuses_cleanly() {
         "cred.agent_add",
         Request::CredentialAgentAdd { path: "/not/a/key/on/this/machine".into() }
     );
+    // Removal is confined the same way. It is deliberately more permissive
+    // than `add` — a key can be in the agent after its file has gone, and that
+    // is exactly the key somebody wants out — but the folder is still the
+    // boundary, so a path outside it must be refused before `ssh-add -d` runs.
+    run!(
+        "cred.agent_remove",
+        Request::CredentialAgentRemove { path: "/not/a/key/on/this/machine".into() }
+    );
     // A name that would escape the key folder is refused without ssh-keygen
     // ever being run.
     run!(
@@ -375,6 +383,7 @@ async fn every_command_answers_or_refuses_cleanly() {
             name: "../escape".into(),
             key_type: "ed25519".into(),
             comment: "should never happen".into(),
+            protect: true,
         }
     );
     // A path that is not one of this machine's keys must be refused, or the

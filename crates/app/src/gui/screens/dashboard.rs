@@ -494,6 +494,9 @@ impl App {
         stop: &mut Option<(Uuid, String)>,
     ) {
         let t = theme::tokens(ui.ctx());
+        // Set by a destination row's "view error" link; acted on after the
+        // card closes, where `self` is no longer borrowed by the layout.
+        let mut open_error: Option<Uuid> = None;
         widgets::card_tinted(ui, None, Some(t.border_control), |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = space::S;
@@ -643,17 +646,30 @@ impl App {
 
             // Per-destination rows. Never flattened into one number.
             for destination in &run.destinations {
-                self.destination_progress_row(ui, destination);
+                if self.destination_progress_row(ui, destination) {
+                    open_error = Some(run.run_id);
+                }
                 ui.add_space(space::XS);
             }
         });
+        if let Some(run_id) = open_error {
+            self.go(Route::RunDetail(run_id));
+        }
     }
 
+    /// One destination's line inside a running job.
+    ///
+    /// Returns whether the "view error" link was clicked. It has to be a
+    /// return value rather than a navigation: this takes `&self`, and the row
+    /// is drawn inside a borrow of `self.data`. The link's click used to be
+    /// discarded instead, so a failing destination offered a link that did
+    /// nothing at the exact moment somebody wanted to know what went wrong.
     fn destination_progress_row(
         &self,
         ui: &mut Ui,
         destination: &superbackup_core::state::DestinationRun,
-    ) {
+    ) -> bool {
+        let mut view_error = false;
         let t = theme::tokens(ui.ctx());
         let narrow = ui.available_width() < 700.0;
         ui.horizontal(|ui| {
@@ -752,11 +768,14 @@ impl App {
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 widgets::status_badge(ui, destination.status);
-                if destination.error.is_some() {
-                    let _ = widgets::link(ui, copy::dash::VIEW_ERROR);
+                if destination.error.is_some()
+                    && widgets::link(ui, copy::dash::VIEW_ERROR).clicked()
+                {
+                    view_error = true;
                 }
             });
         });
+        view_error
     }
 
     // -- job grid -----------------------------------------------------------

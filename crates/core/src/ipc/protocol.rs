@@ -862,6 +862,18 @@ pub struct GeneratedKeyReply {
     pub private_path: String,
     pub public_path: String,
     pub fingerprint: Option<String>,
+    /// Whether the key ended up protected — read back from the key on disk,
+    /// not assumed from what was asked for.
+    #[serde(default)]
+    pub protected: bool,
+    /// The passphrase, returned **once**, so the user can write it down.
+    ///
+    /// It is in the vault as well and can be read back from there while the
+    /// vault is unlocked. It is returned here because a passphrase kept only
+    /// inside the thing it protects is a passphrase nobody can use when that
+    /// thing is what has been lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase: Option<String>,
     /// The public key line, ready to paste into a forge — which is the very
     /// next thing anybody does after making a key.
     pub public_key: String,
@@ -2181,12 +2193,13 @@ protocol! {
             }
 
         "cred.generate" CredentialGenerate => credential_generate -> GeneratedKey(GeneratedKeyReply)
-            flags [mutating, elevated]
-            doc "Make a new SSH key pair in this account's key folder, using ssh-keygen. THE KEY HAS NO PASSPHRASE, deliberately and unavoidably: ssh-keygen takes one only in an argument or from a terminal, and an argument is readable by every process on the machine. A key with no passphrase is also what loading it at boot without being asked requires. Add one afterwards with `ssh-keygen -p -f <key>` in your own terminal. An existing file is never replaced."
+            flags [mutating, needs_unlock, elevated]
+            doc "Make a new SSH key pair in this account's key folder, using ssh-keygen. With `protect`, superbackup generates a passphrase, protects the key with it, keeps it in the vault, and returns it ONCE so the user can write it down — the only time it is ever returned. The passphrase reaches ssh-keygen through an askpass helper and the child's environment, never through an argument list, which every process on the machine can read. Without `protect` the key has no passphrase, which is what loading it at boot unattended requires. An existing file is never replaced."
             params {
                 name: String = "The file name in the key folder, e.g. `id_work_ed25519`. Not a path.",
                 key_type: String = "`ed25519` (the right answer for almost everyone) or `rsa4096` for a host too old to accept it.",
                 comment: String = "The trailing comment, usually user@machine. It is how people recognise their own keys.",
+                protect: bool = "Generate a passphrase, protect the key with it, and keep it in the vault. A protected key cannot be loaded into the agent unattended.",
             }
 
         "cred.agent_status" CredentialAgentStatus => credential_agent_status -> AgentStatus(AgentStatusReply)
@@ -2197,6 +2210,13 @@ protocol! {
         "cred.agent_add" CredentialAgentAdd => credential_agent_add -> Ack(AckReply)
             flags [mutating, elevated]
             doc "Load a key into the agent so it is not asked for again. On Windows the service agent keeps it encrypted in the registry and reloads it at every boot. A key protected by its own passphrase is refused with the command to run instead: superbackup will not put a passphrase on a command line."
+            params {
+                path: String = "The private key's path, as `cred.list` reported it.",
+            }
+
+        "cred.agent_remove" CredentialAgentRemove => credential_agent_remove -> Ack(AckReply)
+            flags [mutating, elevated]
+            doc "Take a key back out of the agent, so it is no longer opened automatically. Runs `ssh-add -d`, which also deletes the copy the Windows service agent keeps in the registry — so the key stops being loaded at boot rather than only for this session. A key the agent does not hold is reported as already removed rather than as an error."
             params {
                 path: String = "The private key's path, as `cred.list` reported it.",
             }

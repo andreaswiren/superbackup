@@ -61,6 +61,8 @@ pub enum Icon {
     Pencil,
     Plus,
     ExternalLink,
+    /// A repository's address on the web. Lucide `globe`.
+    Globe,
     Download,
     Printer,
     Search,
@@ -541,6 +543,27 @@ impl Icon {
                 d.path(&[(14.0, 4.0), (20.0, 4.0), (20.0, 10.0)]);
                 d.line(10.0, 14.0, 20.0, 4.0);
                 d.path(&[(17.0, 13.0), (17.0, 19.0), (5.0, 19.0), (5.0, 7.0), (11.0, 7.0)]);
+            }
+            Icon::Globe => {
+                d.circle(12.0, 12.0, 9.0);
+                // The equator, and one meridian drawn as two arcs so the
+                // sphere reads as a sphere rather than a circle with a cross
+                // in it.
+                d.line(3.0, 12.0, 21.0, 12.0);
+                d.path(&[
+                    (12.0, 3.0),
+                    (9.2, 6.4),
+                    (8.4, 12.0),
+                    (9.2, 17.6),
+                    (12.0, 21.0),
+                ]);
+                d.path(&[
+                    (12.0, 3.0),
+                    (14.8, 6.4),
+                    (15.6, 12.0),
+                    (14.8, 17.6),
+                    (12.0, 21.0),
+                ]);
             }
             Icon::Download => {
                 d.line(12.0, 3.5, 12.0, 15.5);

@@ -332,6 +332,9 @@ impl App {
         // matched by fingerprint, which is the only thing the two lists have
         // in common.
         let mut load: Option<String> = None;
+        let mut unload: Option<String> = None;
+        // Path of a protected key whose passphrase the user wants to type.
+        let mut in_terminal: Option<std::path::PathBuf> = None;
         for credential in credentials {
             let CredentialKind::SshKey(key) = &credential.kind else { continue };
             let Some(fingerprint) = &key.fingerprint else { continue };
@@ -354,16 +357,42 @@ impl App {
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if held {
+                        // Opening a key had no undo in the interface that
+                        // offered it: the only way back was restarting the
+                        // agent, which on Windows means restarting a service.
+                        // A choice about a credential has to be reversible
+                        // where it was made.
+                        if Button::ghost(copy::cred::AGENT_REMOVE)
+                            .compact()
+                            .show(ui)
+                            .on_hover_text(copy::cred::AGENT_REMOVE_HINT)
+                            .clicked()
+                        {
+                            unload = Some(credential.id.clone());
+                        }
                         return;
                     }
-                    // A key with its own passphrase cannot be loaded from
-                    // here, and the button says so rather than failing when
-                    // pressed.
                     let protected = key.encrypted == Some(true);
-                    let mut button = Button::secondary(copy::cred::AGENT_LOAD).compact();
                     if protected {
-                        button = button.disabled_because(copy::cred::AGENT_PROTECTED);
-                    } else if !status.running {
+                        // Superbackup cannot type the passphrase — that is the
+                        // argv rule, and it is not going to be bent. But it
+                        // can open a terminal and let ssh-add ask, which is
+                        // the arrangement where the passphrase goes from the
+                        // keyboard to ssh-add and touches neither a command
+                        // line nor this process.
+                        if Button::secondary(copy::cred::AGENT_TERMINAL)
+                            .compact()
+                            .enabled(status.running)
+                            .show(ui)
+                            .on_hover_text(copy::cred::AGENT_TERMINAL_HINT)
+                            .clicked()
+                        {
+                            in_terminal = Some(key.private_path.clone());
+                        }
+                        return;
+                    }
+                    let mut button = Button::secondary(copy::cred::AGENT_LOAD).compact();
+                    if !status.running {
                         button = button.disabled_because(copy::cred::AGENT_NONE_HINT);
                     }
                     if button.show(ui).clicked() {
@@ -375,6 +404,43 @@ impl App {
 
         if let Some(path) = load {
             self.ask(Intent::AgentAdd, Request::CredentialAgentAdd { path });
+        }
+        if let Some(path) = unload {
+            self.ask(Intent::AgentRemove, Request::CredentialAgentRemove { path });
+        }
+        if let Some(path) = in_terminal {
+            self.open_ssh_add_terminal(&path);
+        }
+    }
+
+    /// Open a terminal running `ssh-add` for a key with its own passphrase.
+    ///
+    /// Done here in the window rather than through the daemon on purpose. The
+    /// daemon may be the Windows service, which runs in session 0 and whose
+    /// windows are on a desktop nobody is looking at — so a terminal opened
+    /// there would be invisible and would appear to have done nothing. The
+    /// window is in the user's own session, which is where a window they are
+    /// meant to type into belongs.
+    fn open_ssh_add_terminal(&mut self, private_key: &std::path::Path) {
+        use superbackup_core::platform::terminal;
+
+        let Some(tool) = superbackup_core::credentials::agent::ssh_add() else {
+            self.toasts.warning(copy::cred::AGENT_NONE_HINT);
+            return;
+        };
+        let args = vec![std::ffi::OsString::from(private_key)];
+        match terminal::run(&tool, &args, "superbackup — open a key") {
+            Ok(_) => self.toasts.info(copy::cred::AGENT_TERMINAL_OPENED),
+            Err(_) => {
+                // No terminal to open. The command is still the answer, so it
+                // is put where the user can read and retype it rather than
+                // leaving them with a button that failed.
+                self.toasts.warning(format!(
+                    "{} {}",
+                    copy::cred::AGENT_NO_TERMINAL,
+                    terminal::describe(&tool, &args)
+                ));
+            }
         }
     }
 
@@ -402,6 +468,47 @@ impl App {
             .show(ui, &mut folder);
         self.screens.credentials.sync_folder =
             (!folder.trim().is_empty()).then(|| folder.trim().to_string());
+
+        // The destinations marked as reachable from more than one machine,
+        // offered as one-click answers.
+        //
+        // This is the question the "shared" flag exists for. A bundle written
+        // somewhere only this PC can open is a bundle that will never reach
+        // the machine that needs it, and nothing about a path says which kind
+        // it is — so the folders whose owner has said "my other machines see
+        // this" are the ones put in front of them here.
+        let candidates: Vec<(String, String)> = self
+            .data
+            .destinations
+            .iter()
+            .filter(|d| d.shared)
+            .filter_map(|d| {
+                d.kind
+                    .local_path()
+                    .map(|p| (d.name.clone(), p.display().to_string()))
+            })
+            .collect();
+        if !candidates.is_empty() {
+            ui.add_space(space::S);
+            widgets::text(ui, copy::cred::SYNC_SHARED_DESTS, Type::Small, t.text_muted);
+            ui.add_space(space::XS);
+            let mut pick: Option<String> = None;
+            ui.horizontal_wrapped(|ui| {
+                for (name, path) in &candidates {
+                    if Button::ghost(name)
+                        .compact()
+                        .show(ui)
+                        .on_hover_text(path.clone())
+                        .clicked()
+                    {
+                        pick = Some(path.clone());
+                    }
+                }
+            });
+            if let Some(path) = pick {
+                self.screens.credentials.sync_folder = Some(path);
+            }
+        }
 
         ui.add_space(space::M);
         let ready = self.screens.credentials.sync_folder.is_some();

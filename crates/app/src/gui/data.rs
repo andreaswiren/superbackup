@@ -786,6 +786,7 @@ mod tests {
         let provider_id = Uuid::new_v4();
         let mut d = data(true);
         let make = |override_creds: bool, name: &str| Destination {
+            shared: false,
             id: Uuid::new_v4(),
             name: name.into(),
             kind: DestinationKind::S3 {
@@ -819,6 +820,7 @@ mod tests {
         let dest = Uuid::new_v4();
         let other = Uuid::new_v4();
         let job = |name: &str, dests: Vec<Uuid>| Job {
+            content: superbackup_core::model::JobContent::Files,
             id: Uuid::new_v4(),
             name: name.into(),
             project_id: None,

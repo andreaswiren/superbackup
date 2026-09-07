@@ -264,6 +264,9 @@ pub struct Runner {
     events: tokio::sync::broadcast::Sender<EngineEvent>,
     state: Arc<tokio::sync::Mutex<PersistedState>>,
     retry: RetryPolicy,
+    /// Builds the payload for a job whose content is not files on disk.
+    /// See [`crate::engine::protected`].
+    content: Arc<dyn crate::engine::protected::ContentProvider>,
 }
 
 impl Runner {
@@ -283,6 +286,7 @@ impl Runner {
             events,
             state,
             retry: RetryPolicy::default(),
+            content: Arc::new(crate::engine::protected::UnavailableContent),
         }
     }
 
@@ -296,6 +300,19 @@ impl Runner {
     /// Override the hook runner, e.g. to shorten the hook timeout.
     pub fn with_hooks(mut self, hooks: HookRunner) -> Runner {
         self.hooks = hooks;
+        self
+    }
+
+    /// Install the provider that builds vault and key payloads.
+    ///
+    /// Without one, a job whose content is prepared fails with a message
+    /// saying the vault is not reachable. That is deliberate: the alternative
+    /// to failing is a nightly run that reports success and backs up nothing.
+    pub fn with_content_provider(
+        mut self,
+        provider: Arc<dyn crate::engine::protected::ContentProvider>,
+    ) -> Runner {
+        self.content = provider;
         self
     }
 
@@ -355,17 +372,35 @@ impl Runner {
             status: None,
         };
 
-        let mut aborted_by_hook: Option<HookOutcome> = None;
-        if let Some(outcome) =
-            self.hooks.run_before(&request.job.hooks, &context, &request.cancel).await
-        {
-            self.record_hook(&run, &outcome);
-            if !outcome.succeeded() && request.job.hooks.abort_on_before_failure {
-                aborted_by_hook = Some(outcome);
+        // A vault or keys job carries no sources of its own: its payload is
+        // built now, into a folder that exists only for this run and deletes
+        // itself when `_staged` drops. Before the hooks, because a payload
+        // that cannot be built is not a job worth starting.
+        let mut request = request;
+        let mut early_failure: Option<(String, String)> = None;
+        let _staged = match self.stage_content(&mut request, &run).await {
+            Ok(staged) => staged,
+            Err(error) => {
+                early_failure = Some((
+                    format!("{} could not be prepared", run.job_name),
+                    error.to_string(),
+                ));
+                None
+            }
+        };
+
+        if early_failure.is_none() {
+            if let Some(outcome) =
+                self.hooks.run_before(&request.job.hooks, &context, &request.cancel).await
+            {
+                self.record_hook(&run, &outcome);
+                if !outcome.succeeded() && request.job.hooks.abort_on_before_failure {
+                    early_failure = Some((outcome.summary(), outcome.output.clone()));
+                }
             }
         }
 
-        if let Some(outcome) = aborted_by_hook {
+        if let Some((summary, detail)) = early_failure {
             // Nothing ran, so `derive_status` has nothing to derive from: an
             // all-`Skipped` run would roll up to "succeeded with warnings",
             // which is exactly the wrong thing to tell someone whose backup
@@ -377,8 +412,8 @@ impl Runner {
             run.status = RunStatus::Failed;
             if let Some(first) = run.destinations.first_mut() {
                 first.error = Some(
-                    ExecutorError::new(ErrorCode::Internal, outcome.summary())
-                        .with_detail(outcome.output.clone())
+                    ExecutorError::new(ErrorCode::Internal, summary)
+                        .with_detail(detail)
                         .to_run_error(),
                 );
             }
@@ -448,6 +483,49 @@ impl Runner {
             latest,
         )
         .await
+    }
+
+    /// Build the payload for a job whose content is not files on disk, and
+    /// point the run at it.
+    ///
+    /// Returns the staging folder's guard, which the caller holds for the
+    /// length of the run: dropping it deletes the folder. For an ordinary
+    /// files job this does nothing and returns `None`.
+    ///
+    /// The job on the request is *replaced* rather than mutated in place, so
+    /// what the rest of the run sees is one consistent value. Everything
+    /// downstream — the snapshot, the mirror, the exclusions, the log — reads
+    /// `request.job.sources` and needs it to already be the staging folder.
+    async fn stage_content(
+        &self,
+        request: &mut RunRequest,
+        run: &JobRun,
+    ) -> crate::error::Result<Option<crate::engine::protected::Staging>> {
+        let content = request.job.content;
+        if !content.is_prepared() {
+            return Ok(None);
+        }
+
+        let staged = self.content.stage(content, request.run_id).await?;
+        self.log(
+            Event::info(
+                "job.staged",
+                format!("{} prepared: {}", run.job_name, staged.notes.join(", ")),
+            )
+            .with_job(run.job_id)
+            .with_run(run.run_id),
+        );
+
+        // A prepared payload is a handful of small files that are already
+        // encrypted. Inheriting the job's exclusions could drop one of them —
+        // a developer-defaults preset that skips `*.f` or a max-file-size rule
+        // would silently produce a backup missing the thing it exists for.
+        let mut job = (*request.job).clone();
+        job.sources = staged.sources;
+        job.exclusions = crate::model::ExclusionSet::default();
+        request.job = Arc::new(job);
+
+        Ok(Some(staged.staging))
     }
 
     /// Why a chained destination cannot run, or `None` when it can.

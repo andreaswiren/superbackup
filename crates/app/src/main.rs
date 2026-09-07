@@ -73,7 +73,7 @@ fn main() -> ExitCode {
     // `daemon` deliberately keeps it: it logs to stdout and is usually run in a
     // terminal on purpose.
     #[cfg(windows)]
-    if matches!(parsed.command, None | Some(cli::Command::Gui)) {
+    if matches!(parsed.command, None | Some(cli::Command::Gui(_))) {
         detach_console();
     }
     let global = parsed.global.clone();
@@ -105,7 +105,8 @@ fn main() -> ExitCode {
             } else {
                 #[cfg(windows)]
                 detach_console();
-                let code = gui::open_or_focus(paths.clone(), &global);
+                let code =
+                    gui::open_or_focus(paths.clone(), &global, &Default::default());
                 // Setup may have been abandoned; only go on if it finished.
                 if code == ExitCode::SUCCESS && superbackup_core::config::is_initialised(&paths) {
                     daemon::run_foreground(paths, &global, daemon::Surface::Tray)
@@ -121,7 +122,7 @@ fn main() -> ExitCode {
             daemon::run_foreground(paths, &global, surface)
         }
 
-        Some(cli::Command::Gui) => gui::open_or_focus(paths, &global),
+        Some(cli::Command::Gui(ref args)) => gui::open_or_focus(paths, &global, args),
 
         Some(cli::Command::Service(cli::args::ServiceCommand::Run)) => {
             service::run_as_service(paths, &global)
@@ -129,6 +130,24 @@ fn main() -> ExitCode {
 
         // Answered in-process: these describe the binary itself and must work
         // with no daemon running, no configuration, and no vault.
+        // Answered before anything else starts: this runs as a child of
+        // ssh-keygen, which is waiting on one line of output, and a daemon
+        // connection or a config read here would be a hang inside a key
+        // generation. Nothing is logged — the whole point is the passphrase
+        // going nowhere but ssh-keygen's own pipe.
+        Some(cli::Command::Askpass) => {
+            match std::env::var(superbackup_core::credentials::keygen::ASKPASS_ENV) {
+                Ok(passphrase) => {
+                    println!("{passphrase}");
+                    ExitCode::SUCCESS
+                }
+                // No variable means this was run by hand, or by an ssh that
+                // wanted a passphrase superbackup was not supplying. Refusing
+                // is right: printing an empty line would be answering a prompt
+                // this process knows nothing about.
+                Err(_) => ExitCode::from(cli::exit::FAILED as u8),
+            }
+        }
         Some(cli::Command::Schema) => match cli::Schema::generate().to_json() {
             Ok(json) => {
                 println!("{json}");

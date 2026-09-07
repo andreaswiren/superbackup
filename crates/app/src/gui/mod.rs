@@ -20,6 +20,8 @@ use std::time::Duration;
 
 use superbackup_core::paths::Paths;
 
+use nav::{Route, SettingsSection};
+
 pub mod app;
 pub mod copy;
 pub mod daemon;
@@ -65,10 +67,50 @@ fn window_icon() -> egui::IconData {
     }
 }
 
+/// Where a `--screen` name from the tray lands.
+///
+/// Deliberately forgiving. This is one half of superbackup talking to the
+/// other, and the cost of being strict was five tray entries that opened
+/// nothing at all. An unknown name gets the dashboard, which is wrong but
+/// visible; refusing gets a window that never appears, which is wrong and
+/// invisible.
+fn route_for(screen: Option<&str>, job: Option<&str>) -> Option<Route> {
+    let job = || job.and_then(|id| uuid::Uuid::parse_str(id).ok());
+    Some(match screen?.trim().to_ascii_lowercase().as_str() {
+        "dashboard" | "home" => Route::Dashboard,
+        // A job named with the screen goes to that job rather than the list,
+        // which is what the tray's per-job entries mean by it.
+        "jobs" => match job() {
+            Some(id) => Route::JobDetail(id),
+            None => Route::Jobs,
+        },
+        "activity" => match job() {
+            Some(id) => Route::JobDetail(id),
+            None => Route::Activity,
+        },
+        "destinations" => Route::Destinations,
+        "providers" | "storage" => Route::Providers,
+        "git" => Route::Git,
+        "credentials" | "keys" => Route::Credentials,
+        "restore" => Route::Restore,
+        "settings" => Route::Settings(SettingsSection::General),
+        // The vault is opened from a modal over whatever is behind it, and
+        // `App` raises that modal itself whenever the vault is locked. So this
+        // needs no special case beyond landing somewhere sensible.
+        "unlock" => Route::Dashboard,
+        _ => return None,
+    })
+}
+
 /// Open the window, or focus an already-open one.
-pub fn open_or_focus(paths: Paths, global: &crate::cli::GlobalArgs) -> ExitCode {
+pub fn open_or_focus(
+    paths: Paths,
+    global: &crate::cli::GlobalArgs,
+    args: &crate::cli::GuiArgs,
+) -> ExitCode {
     let endpoint = paths.ipc_endpoint();
     let timeout = Duration::from_secs(global.timeout.max(5));
+    let route = route_for(args.screen.as_deref(), args.job.as_deref());
 
     let viewport = egui::ViewportBuilder::default()
         .with_title(copy::window_title(superbackup_core::state::Health::Idle.title()))
@@ -84,7 +126,9 @@ pub fn open_or_focus(paths: Paths, global: &crate::cli::GlobalArgs) -> ExitCode 
     let outcome = eframe::run_native(
         "superbackup",
         options,
-        Box::new(move |cc| Ok(Box::new(Window::new(&cc.egui_ctx, endpoint, timeout, paths)))),
+        Box::new(move |cc| {
+            Ok(Box::new(Window::new(&cc.egui_ctx, endpoint, timeout, paths, route)))
+        }),
     );
 
     match outcome {
@@ -102,8 +146,21 @@ struct Window {
 }
 
 impl Window {
-    fn new(ctx: &egui::Context, endpoint: String, timeout: Duration, paths: Paths) -> Window {
-        Window { app: app::App::new(ctx, endpoint, timeout).with_paths(paths) }
+    fn new(
+        ctx: &egui::Context,
+        endpoint: String,
+        timeout: Duration,
+        paths: Paths,
+        route: Option<Route>,
+    ) -> Window {
+        let mut app = app::App::new(ctx, endpoint, timeout).with_paths(paths);
+        // After `with_paths`, so a first run still opens onboarding rather
+        // than the screen the tray asked for: a window that cannot do
+        // anything yet must not pretend otherwise.
+        if let Some(route) = route {
+            app.go(route);
+        }
+        Window { app }
     }
 }
 

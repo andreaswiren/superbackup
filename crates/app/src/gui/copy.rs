@@ -189,7 +189,16 @@ pub mod onboarding {
     pub const KOPIA_MISSING: &str = "Kopia was not found";
     pub const KOPIA_MISSING_BODY: &str = "superbackup uses Kopia to write and read backups. You can download a tested build now, or point superbackup at a copy you already have.";
     pub const KOPIA_DOWNLOAD: &str = "Download Kopia";
+    pub const KOPIA_DOWNLOAD_HINT: &str =
+        "Opens Kopia's own releases page. Superbackup also fetches a tested build by itself once \
+         it is running, so this is only if you would rather install it yourself.";
     pub const KOPIA_CHOOSE: &str = "Choose a file…";
+    pub const KOPIA_CHOOSE_HINT: &str =
+        "Point superbackup at a kopia you already have. It will use exactly that one and never \
+         replace it.";
+    /// Kopia's own releases, not a mirror of ours: an executable that writes
+    /// and reads every backup is one to fetch from its own project.
+    pub const KOPIA_RELEASES_URL: &str = "https://github.com/kopia/kopia/releases/latest";
     pub const KOPIA_SKIP_NOTE: &str =
         "You can set this up later. Backups will not run until Kopia is available.";
     pub const ONEDRIVE_CREATE: &str = "Create a OneDrive destination here";
@@ -280,6 +289,45 @@ pub mod template {
     pub const BLANK_TITLE: &str = "Start from scratch";
     pub const BLANK_BODY: &str = "Choose the folders yourself.";
     pub const BLANK_DETAIL: &str = "No exclusions and no schedule until you add them.";
+    pub const VAULT_TITLE: &str = "Superbackup's vault";
+    pub const VAULT_BODY: &str = "The file that opens every other backup you have.";
+    pub const VAULT_DETAIL: &str =
+        "Tiny, already encrypted, and the first thing you need after losing a machine. \
+         Carries written restore instructions with it.";
+    pub const KEYS_TITLE: &str = "Your SSH keys";
+    pub const KEYS_BODY: &str = "The keys that get you back into your servers and forges.";
+    pub const KEYS_DETAIL: &str =
+        "Only the keys ticked on the Credentials page, sealed into one file under your master \
+         passphrase. The keys themselves are never written anywhere in the clear.";
+}
+
+/// The two jobs that protect superbackup itself.
+pub mod protected {
+    pub const CONTENTS_TITLE: &str = "What this backs up";
+    pub const NO_FOLDERS: &str =
+        "This job has no folders to choose. It builds what it backs up each time it runs, \
+         so that what leaves this machine is always encrypted.";
+    pub const NO_EXCLUSIONS: &str =
+        "Exclusions do not apply here: the payload is a handful of small files that are all \
+         needed, and skipping one would produce a backup missing the thing it exists for.";
+    pub const VAULT_WHAT: &str =
+        "config.sbvault, exactly as it sits on disk. It is already encrypted under your master \
+         passphrase, so it is safe in a bucket or in OneDrive, and useless to anyone without \
+         that passphrase.";
+    pub const VAULT_ALSO: &str =
+        "RESTORE.txt goes in beside it, in plain text, saying where the file belongs and how \
+         to put it back. Plain text on purpose: instructions you need a working superbackup to \
+         read are instructions you cannot use.";
+    pub const KEYS_WHAT: &str =
+        "The keys ticked for backup on the Credentials page, and their public halves, sealed \
+         together into one encrypted file.";
+    pub const KEYS_NONE: &str =
+        "No keys are ticked for backup yet. Tick them on the Credentials page, or this job \
+         will fail rather than quietly back up nothing.";
+    pub const NEEDS_UNLOCK: &str =
+        "This job needs the vault unlocked when it runs, because sealing needs your master \
+         passphrase. On a machine that unlocks itself at start-up it can be scheduled; on one \
+         that does not, run it by hand.";
 }
 
 pub mod strength {
@@ -928,6 +976,15 @@ pub mod dest {
         "There is nothing here to erase — this location is already empty, so the copy can start.";
     pub const FILTER_KIND: &str = "Kind";
     pub const AUTO_FOUND: &str = "Found automatically";
+    pub const SHARED: &str = "My other machines can reach this too";
+    pub const SHARED_HINT: &str =
+        "Marked as reachable from more than one of your machines — a OneDrive folder that syncs \
+         everywhere, a bucket, or a network share.";
+    pub const SHARED_BODY: &str =
+        "Nothing behaves differently because of this; it is a label. Superbackup cannot tell a \
+         folder only this PC can see from one your laptop opens too, and it matters wherever the \
+         point is that a second machine gets what was written — the shared key bundle above all, \
+         which is no use in a place only the machine that wrote it can read.";
     pub const STATUS_READY: &str = "Ready";
     pub const STATUS_NOT_CONNECTED: &str = "Not connected";
     pub const STATUS_UNREACHABLE: &str = "Unreachable";
@@ -1176,6 +1233,7 @@ pub mod writedown {
         "The file is plain text. Treat it the way you would treat the passphrase.";
     pub const PRINT: &str = "Print…";
     pub const ACK: &str = "I have saved this passphrase somewhere safe.";
+    pub const ESCAPE_KEY: &str = "If you skip this, the passphrase is still in your vault and can be read back while the vault is unlocked — but not if this machine is what you have lost, which is the case it exists for.";
     pub const ESCAPE: &str = "If you skip this, the passphrase can still be exported later from Settings › Security, using your master passphrase.";
     pub const CANNOT_SHOW: &str = "It cannot be shown again.";
     pub const PASS_STORED: &str = "Generated, stored in your vault";
@@ -1448,6 +1506,13 @@ pub fn run_stopped_toast(job: &str) -> String {
 
 /// The git inventory: which backed-up folders are repositories, and whether
 /// what is in them exists anywhere but this disk.
+/// The tooltip on a repository's globe button: the address itself, so
+/// hovering answers "where does this live?" without opening anything.
+pub fn git_open_on_web(url: &str) -> String {
+    format!("Open on the web
+{url}")
+}
+
 pub mod git {
     pub const TITLE: &str = "Git";
     pub const SUBTITLE: &str =
@@ -1634,7 +1699,7 @@ pub mod cred {
     pub const WIDE_OPEN_HINT: &str = "The file's permissions let other accounts on this machine read it. ssh itself will refuse to use a key like this.";
     pub const FINGERPRINT_HINT: &str = "The fingerprint a forge shows next to this key in its settings. Click to copy.";
     pub const BACK_UP: &str = "Back up";
-    pub const BACK_UP_HINT: &str = "Marks this key to be included in a key backup. Recording the choice is all this does in this build — no job copies these yet; sharing below is the route that works today.";
+    pub const BACK_UP_HINT: &str = "Includes this key in the \"Your SSH keys\" job, which seals every ticked key into one file under your master passphrase and backs that up. The key itself is never written to a destination in the clear. Make the job from Jobs → New job if you have not yet.";
     pub const SHARE: &str = "Share with my other machines";
     pub const SHARE_HINT: &str = "Seal this key into a bundle in a shared folder, so another machine can unseal it with the master passphrase.";
     pub const GH_BODY: &str = "The GitHub CLI is signed in on this machine, and superbackup borrows that rather than holding a token of its own. Nothing is stored here, and you revoke it where you granted it.";
@@ -1661,11 +1726,34 @@ pub mod cred {
     pub const NEW_COMMENT: &str = "Comment";
     pub const NEW_COMMENT_HINT: &str = "Goes into the public key and into the agent listing. It is how you recognise this key later.";
     pub const NEW_NO_PASSPHRASE: &str = "This key will have no passphrase";
-    pub const NEW_NO_PASSPHRASE_BODY: &str = "ssh-keygen takes a passphrase only in an argument or from a terminal, and an argument is readable by every process on the machine — so superbackup does not set one. A key with no passphrase is also what opening it at boot without being asked requires. To add one afterwards, run ssh-keygen -p -f followed by the key path, in a terminal.";
+    pub const NEW_NO_PASSPHRASE_BODY: &str = "Anyone who gets the file can use this key. That is the trade for opening it at boot without being asked, which a protected key cannot do. Tick \"Protect it with a passphrase\" above if you would rather have one; to add one later, run ssh-keygen -p -f followed by the key path, in a terminal.";
+    pub const NEW_PROTECT: &str = "Protect it with a passphrase";
+    pub const NEW_PROTECT_HINT: &str = "Superbackup generates one, protects the key with it, keeps it in your vault, and shows it to you once so you can write it down. A copy of the key file alone is then not enough to use it.";
+    pub const NEW_PASSPHRASE_SHOWN: &str = "The passphrase is shown once";
+    pub const NEW_PASSPHRASE_SHOWN_BODY: &str = "It is kept in your vault and can be read back from there while the vault is unlocked. It is also shown after the key is made, because a passphrase kept only inside the thing it protects is one nobody can reach on the day that thing is what has been lost. Write it down somewhere that is not this machine.";
+    pub const NEW_AUTO_OPEN_BLOCKED: &str = "A protected key cannot be opened unattended: supplying its passphrase without being asked is exactly what the passphrase prevents.";
     pub const NEW_AUTO_OPEN: &str = "Open it automatically from now on";
     pub const NEW_AUTO_OPEN_HINT: &str = "Load it into the SSH agent as soon as it is made. On Windows the agent keeps it across reboots, so nothing asks for it again.";
     pub const NEW_CONFIRM: &str = "Make the key";
     pub const AGENT_ADDED: &str = "The key is open. Nothing will ask for it again.";
+    pub const SYNC_SHARED_DESTS: &str =
+        "Destinations you have marked as reachable from your other machines:";
+    pub const AGENT_REMOVE: &str = "Stop opening it";
+    pub const AGENT_REMOVE_HINT: &str =
+        "Take this key out of the agent, so it is asked for again and is not loaded at the next \
+         boot.";
+    pub const AGENT_REMOVED: &str =
+        "The key is closed. It will be asked for the next time something needs it.";
+    pub const AGENT_TERMINAL: &str = "Open in a terminal…";
+    pub const AGENT_TERMINAL_HINT: &str =
+        "Opens a terminal window running ssh-add for this key, so you can type its passphrase \
+         there. Superbackup never sees it and it never reaches a command line, which is what \
+         makes this the safe way to do it.";
+    pub const AGENT_TERMINAL_OPENED: &str =
+        "A terminal is open. Type the key's passphrase there; this page updates when you come \
+         back.";
+    pub const AGENT_NO_TERMINAL: &str =
+        "No terminal could be opened on this machine. Run this yourself in a shell:";
     pub const NEW_MADE: &str = "Public key — paste this into your git host";
     pub const SYNC_TITLE: &str = "Shared with your other machines";
     pub const SYNC_NONE: &str = "No keys are marked for sharing. Tick one above to put it in a bundle other machines can open.";
@@ -1855,6 +1943,13 @@ pub fn prov_last_write(bytes: u64) -> String {
 /// is that the user knows which folder now holds the bundle.
 /// Where the new key landed. The path matters: the next step is pasting its
 /// public half somewhere, and knowing which file that is.
+/// The same idea as `writedown_body`, for a key rather than a repository.
+pub fn writedown_key_body(key_path: &str) -> String {
+    format!(
+        "This passphrase protects {key_path}. It is in your vault, and it is shown here once so you can put it somewhere that is not this machine — which is the only place it is any use on the day this machine is gone."
+    )
+}
+
 pub fn cred_key_made(private_path: &str) -> String {
     format!("Key pair created at {private_path}.")
 }
@@ -1984,6 +2079,12 @@ pub mod set {
     pub const CATCHUP: &str = "Run schedules that were missed while the computer was off";
     pub const CATCHUP_BODY: &str =
         "Missed runs start shortly after superbackup does, and are recorded as catch-up runs.";
+    pub const WAKE: &str = "Wake this computer when a backup is due";
+    pub const WAKE_BODY: &str =
+        "Sets a wake alarm a minute before the next scheduled run, and holds the computer awake \
+         until the run finishes. Afterwards it goes back to sleep on its own — superbackup does \
+         not suspend it, because it cannot tell an idle machine from one you have just sat down \
+         at.";
     pub const METERED: &str = "Skip scheduled runs on a metered connection";
     pub const METERED_BODY: &str =
         "Skipped runs are recorded as skipped, not failed. Individual jobs can override this.";

@@ -761,6 +761,17 @@ fn same_folder(a: &std::path::Path, b: &std::path::Path) -> bool {
     }
 }
 
+/// The vault handle a key's passphrase is kept under.
+///
+/// Keyed by the key's own path, so `cred.list` can say which keys superbackup
+/// holds a passphrase for without keeping a second list that could disagree
+/// with the first. Normalised the same way everything else here that compares
+/// paths is, so two spellings of one file are one key rather than two.
+fn key_passphrase_ref(private_key: &std::path::Path) -> superbackup_core::model::SecretRef {
+    let normalised = private_key.display().to_string().replace('\\', "/").to_lowercase();
+    superbackup_core::model::SecretRef(format!("ssh.key:{normalised}"))
+}
+
 /// Which folders a git scan may look in.
 ///
 /// Every source of the named job, or of every job when none is named. The
@@ -2056,8 +2067,10 @@ impl Handler for DaemonHandler {
         name: String,
         key_type: String,
         comment: String,
+        protect: bool,
     ) -> Result<GeneratedKeyReply> {
         use superbackup_core::credentials::keygen;
+        self.require_unlocked().await?;
 
         let key_type = match key_type.trim().to_ascii_lowercase().as_str() {
             "ed25519" | "" => keygen::KeyType::Ed25519,
@@ -2073,7 +2086,22 @@ impl Handler for DaemonHandler {
             return Err(Error::Config("this account has no home directory".into()));
         };
         let spec = keygen::NewKey { name, key_type, comment };
-        let made = keygen::generate(&dir, &spec).await?;
+
+        // Generated here rather than typed: a passphrase a person invents for
+        // a key they will never type it into is a passphrase they will reuse.
+        let passphrase = protect
+            .then(superbackup_core::crypto::generate_passphrase)
+            .transpose()?;
+        let made = keygen::generate(&dir, &spec, passphrase.as_ref()).await?;
+
+        // Into the vault, keyed by the path so `cred.list` can say which keys
+        // superbackup holds a passphrase for. Stored *after* the key exists,
+        // so a failed generation leaves no orphan entry claiming otherwise.
+        if let Some(passphrase) = &passphrase {
+            let handle = key_passphrase_ref(&made.private_path);
+            let mut store = self.runtime.store.lock().await;
+            store.put_secret(handle, passphrase.clone())?;
+        }
 
         // Worth logging: a key that appears in `~/.ssh` without explanation is
         // exactly the thing a careful person investigates.
@@ -2090,6 +2118,13 @@ impl Handler for DaemonHandler {
             private_path: made.private_path.display().to_string(),
             public_path: made.public_path.display().to_string(),
             fingerprint: made.fingerprint,
+            protected: made.protected,
+            // Returned once. It is in the vault as well, but a passphrase kept
+            // only inside the thing it protects is a passphrase nobody can
+            // reach on the day that thing is what has been lost.
+            passphrase: passphrase
+                .as_ref()
+                .and_then(|p| p.expose_str().map(str::to_string)),
             public_key: made.public_key,
         })
     }
@@ -2121,6 +2156,39 @@ impl Handler for DaemonHandler {
         self.runtime.record_event(Event::info("cred.agent_add", detail));
         Ok(AckReply {})
     }
+
+    async fn credential_agent_remove(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+    ) -> Result<AckReply> {
+        // Confined the same way `credential_agent_add` is, and for the same
+        // reason: the path comes from a client, and this runs a tool against
+        // it with the daemon's privilege.
+        //
+        // Deliberately *not* requiring the key to still be on disk in the way
+        // `add` does — a key whose file has been moved or deleted can still be
+        // in the agent, and that is exactly the key somebody most wants out.
+        // It must still be one of the keys this machine knows about, so the
+        // check is against the key folder's contents by name as well as path.
+        let target = std::path::PathBuf::from(&path);
+        let known = tokio::task::spawn_blocking(superbackup_core::credentials::ssh::discover)
+            .await
+            .map_err(|e| Error::Internal(format!("looking for keys did not finish: {e}")))?;
+        let recognised = known.iter().any(|k| k.private_path == target)
+            || (in_key_folder(&target)
+                && target.file_name().map(|n| !n.is_empty()).unwrap_or(false));
+        if !recognised {
+            return Err(Error::Validation(format!(
+                "{path} is not one of the keys in this machine's key folder"
+            )));
+        }
+
+        let detail = superbackup_core::credentials::agent::remove(&target).await?;
+        self.runtime.record_event(Event::info("cred.agent_remove", detail));
+        Ok(AckReply {})
+    }
+
 
     async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let path = self.git_target(&path).await?;
@@ -4493,4 +4561,16 @@ mod tests {
             assert!(summary.contains("mapped"), "{summary}");
         }
     }
+}
+
+/// Is this path directly inside this account's SSH key folder?
+///
+/// The boundary for a key that is no longer on disk, where `ssh::discover`
+/// cannot vouch for it. Compares the parent folder only, so nothing carrying a
+/// `..` and nothing outside `~/.ssh` gets through.
+fn in_key_folder(path: &std::path::Path) -> bool {
+    let Some(folder) = superbackup_core::credentials::ssh::ssh_dir() else {
+        return false;
+    };
+    path.parent().map(|p| p == folder).unwrap_or(false)
 }

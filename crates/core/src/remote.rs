@@ -1091,6 +1091,7 @@ mod tests {
     fn diffing_matches_by_id_so_a_rename_is_a_modification() {
         let mut local = Config::default();
         let mut job = crate::model::Job {
+            content: crate::model::JobContent::Files,
             id: Uuid::from_u128(1),
             name: "nightly".into(),
             project_id: None,

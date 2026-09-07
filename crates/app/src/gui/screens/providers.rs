@@ -213,18 +213,26 @@ impl App {
                             response.on_hover_text(flavour.title());
                         });
                         row.col(|ui| {
-                            // Centred in the row, not stacked from its top.
-                            // `ui.vertical` starts at the top of the cell, so
-                            // a one-line name sat above the icon and the
-                            // badges beside it while every other column was
-                            // centred — the same misalignment the jobs table
-                            // had. The block is centred as a whole, so a name
-                            // with a note under it still reads as one unit.
-                            ui.with_layout(
-                                Layout::left_to_right(Align::Center),
-                                |ui| {
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
+                            // Drawn straight into the cell, with no
+                            // `with_layout` around it.
+                            //
+                            // The table already lays each cell out centred in
+                            // the row's height, which is why every other
+                            // column here lines up without doing anything.
+                            // Wrapping the name in a layout of its own
+                            // *replaced* that one with a fresh layout anchored
+                            // at the cell's top edge, so the fix for "the name
+                            // is too high" was itself what held it too high.
+                            // A nested `vertical` is fine — the Last write
+                            // column uses one for its two lines and centres
+                            // correctly — because it is a block inside the
+                            // cell's layout rather than a replacement for it.
+                            let lines: &[Type] = if provider.notes.is_empty() {
+                                &[Type::BodyStrong]
+                            } else {
+                                &[Type::BodyStrong, Type::Small]
+                            };
+                            widgets::stacked_cell(ui, lines, |ui| {
                                 widgets::elided(
                                     ui,
                                     &provider.name,
@@ -244,8 +252,6 @@ impl App {
                                     );
                                 }
                             });
-                                },
-                            );
                         });
                         row.col(|ui| {
                             ui.horizontal(|ui| {
@@ -318,21 +324,24 @@ impl App {
                         if has("last_write") {
                             row.col(|ui| match usage.last_write {
                                 Some(at) => {
-                                    ui.vertical(|ui| {
-                                        ui.spacing_mut().item_spacing.y = 0.0;
-                                        widgets::text(
-                                            ui,
-                                            format::relative_past(at, now),
-                                            Type::Small,
-                                            t.text_secondary,
-                                        );
-                                        widgets::text(
-                                            ui,
-                                            copy::prov_last_write(usage.last_write_bytes),
-                                            Type::MonoSmall,
-                                            t.text_muted,
-                                        );
-                                    });
+                                    widgets::stacked_cell(
+                                        ui,
+                                        &[Type::Small, Type::MonoSmall],
+                                        |ui| {
+                                            widgets::text(
+                                                ui,
+                                                format::relative_past(at, now),
+                                                Type::Small,
+                                                t.text_secondary,
+                                            );
+                                            widgets::text(
+                                                ui,
+                                                copy::prov_last_write(usage.last_write_bytes),
+                                                Type::MonoSmall,
+                                                t.text_muted,
+                                            );
+                                        },
+                                    );
                                 }
                                 None => {
                                     widgets::muted_cell(ui, copy::prov::NEVER_WRITTEN);

@@ -573,3 +573,75 @@ async fn shutdown_cancels_in_flight_runs() {
         "2025-01-08T12:00:00Z".parse::<chrono::DateTime<chrono::Utc>>().expect("literal")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Waking the machine
+// ---------------------------------------------------------------------------
+
+/// The setting must reach the platform, not merely be stored.
+///
+/// The failure this guards against is the one this codebase keeps producing: a
+/// setting that is written, read back correctly by the settings screen, and
+/// acted on by nothing. Every unit test of `platform::wake` would pass for a
+/// scheduler that never called it, and the user would find out on the morning
+/// after the night their machine did not wake up.
+#[tokio::test]
+async fn switching_waking_on_arms_the_alarm_for_the_next_run() {
+    let destination = test_repository("local", "/repos/local");
+    // Two hours out, so the arming is unambiguous and nothing is due.
+    let job = job_with(
+        "nightly",
+        &destination,
+        Schedule::Daily { times: vec![TimeOfDay { hour: 14, minute: 0 }] },
+    );
+    let mut config = config_with(vec![job], vec![destination]);
+    config.settings.wake_for_backups = true;
+
+    let h = build(config, PersistedState::default());
+    let armed = poll_status(&h.handle, "an armed wake alarm", |s| {
+        // A machine with no wake support answers `None` for ever, and that is
+        // not a failure of the scheduler. Distinguished by asking the platform
+        // the same question the scheduler did.
+        if !superbackup_core::platform::wake::support().available {
+            return Some(None);
+        }
+        s.wake_armed_for.map(Some)
+    })
+    .await;
+
+    if let Some(at) = armed {
+        let next = h.handle.status().await.expect("status").next_scheduled.expect("scheduled");
+        // A minute early, so the machine is properly up when the job is due.
+        assert!(at < next.1, "the alarm must precede the run: {at} vs {}", next.1);
+        assert_eq!(
+            (next.1 - at).num_seconds(),
+            superbackup_core::engine::scheduler::WAKE_LEAD_SECONDS
+        );
+    }
+    h.handle.shutdown();
+}
+
+/// And with the setting off, nothing is armed.
+///
+/// Waking somebody's machine at two in the morning without being asked is the
+/// one behaviour here that would be a genuine intrusion, so the default is
+/// asserted rather than assumed.
+#[tokio::test]
+async fn waking_is_off_unless_it_was_asked_for() {
+    let destination = test_repository("local", "/repos/local");
+    let job = job_with(
+        "nightly",
+        &destination,
+        Schedule::Daily { times: vec![TimeOfDay { hour: 14, minute: 0 }] },
+    );
+    let config = config_with(vec![job], vec![destination]);
+    assert!(!config.settings.wake_for_backups, "the default must be off");
+
+    let h = build(config, PersistedState::default());
+    settle().await;
+    let status = h.handle.status().await.expect("status");
+    assert!(status.next_scheduled.is_some(), "the job is scheduled");
+    assert_eq!(status.wake_armed_for, None, "nothing may be armed");
+    assert!(!status.holding_awake, "and nothing is being held awake while idle");
+    h.handle.shutdown();
+}

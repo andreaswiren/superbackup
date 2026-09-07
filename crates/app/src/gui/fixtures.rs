@@ -91,6 +91,7 @@ pub fn providers() -> Vec<StorageProvider> {
 pub fn destinations() -> Vec<Destination> {
     vec![
         Destination {
+            shared: false,
             id: DEST_LOCAL,
             name: "Local repo".into(),
             kind: DestinationKind::LocalRepository {
@@ -107,6 +108,7 @@ pub fn destinations() -> Vec<Destination> {
             last_verified_at: Some(Utc::now() - Duration::hours(2)),
         },
         Destination {
+            shared: false,
             id: DEST_ONEDRIVE,
             name: "OneDrive".into(),
             kind: DestinationKind::OneDrive {
@@ -127,6 +129,7 @@ pub fn destinations() -> Vec<Destination> {
             last_verified_at: Some(Utc::now() - Duration::days(2)),
         },
         Destination {
+            shared: false,
             id: DEST_S3,
             name: "StorJ offsite".into(),
             kind: DestinationKind::S3 {
@@ -150,6 +153,7 @@ pub fn destinations() -> Vec<Destination> {
             last_verified_at: None,
         },
         Destination {
+            shared: false,
             id: DEST_MIRROR,
             name: "Desktop mirror".into(),
             kind: DestinationKind::LocalMirror {
@@ -170,6 +174,7 @@ pub fn destinations() -> Vec<Destination> {
 
 pub fn jobs() -> Vec<Job> {
     let base = |id: Uuid, name: &str| Job {
+        content: superbackup_core::model::JobContent::Files,
         id,
         name: name.into(),
         project_id: None,

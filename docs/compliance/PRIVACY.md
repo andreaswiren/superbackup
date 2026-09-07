@@ -98,6 +98,27 @@ anyone who can read the destination:
 
 If either matters to you, use a destination only you can read.
 
+### Vault and SSH key backups
+
+Two job types back up superbackup's own vault and your SSH keys. Both are
+encrypted **before** they reach the destination, and independently of it — so
+they are ciphertext even in a folder mirror, which is otherwise a plain copy:
+
+- The vault (`config.sbvault`) is already sealed under your master passphrase
+  and is carried as it sits.
+- Your keys are sealed together into `superbackup-keys.sbkeys` under the same
+  passphrase. **The private keys are never written anywhere in the clear**, and
+  there is no setting that changes this.
+
+Each also carries a `RESTORE.txt` in plain text, on purpose. It says where the
+file belongs and how to put it back; it discloses nothing, because the
+procedure it describes still needs your passphrase. Instructions you need a
+working superbackup to read are instructions you cannot use.
+
+The keys are gathered into a folder under superbackup's own data directory,
+sealed there, and that folder is deleted when the run ends — including runs
+that are cancelled or fail.
+
 ---
 
 ## What stays on your machine

@@ -49,6 +49,7 @@ use uuid::Uuid;
 
 fn job() -> Job {
     Job {
+        content: superbackup_core::model::JobContent::Files,
         id: Uuid::nil(),
         name: "documents".into(),
         project_id: None,
@@ -70,6 +71,7 @@ fn job() -> Job {
 
 fn destination() -> Destination {
     Destination {
+        shared: false,
         id: Uuid::nil(),
         name: "external drive".into(),
         kind: DestinationKind::LocalRepository { path: PathBuf::from("/mnt/backup") },
@@ -183,9 +185,11 @@ fn sample_requests() -> Vec<Request> {
             name: "id_ed25519".into(),
             key_type: "ed25519".into(),
             comment: "me@here".into(),
+            protect: true,
         },
         Request::CredentialAgentStatus {},
         Request::CredentialAgentAdd { path: "/home/a/.ssh/id_ed25519".into() },
+        Request::CredentialAgentRemove { path: "/home/a/.ssh/id_ed25519".into() },
         Request::CredentialSetRole {
             path: "/home/a/.ssh/id_ed25519".into(),
             backed_up: true,
