@@ -12,7 +12,43 @@ rather than mangling it.
 
 ## [Unreleased]
 
-Nothing yet.
+- **A Credentials page.** The SSH keys this machine signs in with, found in
+  `~/.ssh` and reported from their *public* half, their name and their
+  permissions — algorithm, comment, and the `SHA256:` fingerprint a forge
+  shows in its settings, so a key here can be matched against a key on GitHub
+  by eye. A private key file is never read, except a 128-byte header check
+  that tells an encrypted key from an unencrypted one.
+
+  The GitHub CLI appears as its own kind of credential when it is signed in:
+  superbackup borrows it rather than holding a token, so there is nothing
+  here to leak and you revoke it where you granted it.
+
+- **Sharing keys between your machines, sealed.** Keys marked for sharing are
+  written to a folder as one bundle, **encrypted under your master
+  passphrase**, so what lands in OneDrive or a bucket is useless to whoever
+  finds it. Another machine unseals it into its own `~/.ssh` with owner-only
+  permissions. There is no plaintext option, because one would exist to be
+  chosen by whoever is least able to judge the consequence.
+
+  Both directions ask for the master passphrase again: an unlocked window is
+  not consent to gather every private key on a machine into one portable
+  file. A bundle from a newer build is refused whole rather than half-read,
+  and a file name inside one that tries to escape the key folder stops the
+  whole unsealing before anything is written.
+
+- **Folders that are not in git.** The scan now reports the direct children
+  of your sources that hold no repository — the most exposed thing on a
+  developer disk is a project nobody ever ran `git init` in, and it was
+  invisible to a list of repositories. Ones holding a manifest, a source
+  folder or a README are marked as looking like real work and sorted first.
+
+- **Start tracking, from that list.** `git init` on the chosen branch, a
+  first commit including everything `.gitignore` does not exclude, and
+  optionally a repository created on GitHub through the CLI. Private unless
+  you turn that off, and **nothing is pushed**: creating an empty repository
+  is reversible in one click and pushing a tree that turned out to hold a
+  `.env` is not.
+
 
 ## [0.4.0] - 2026-09-07
 

@@ -88,6 +88,17 @@ pub enum Intent {
     /// One of a repository's own documents, for the reading panel.
     /// Space used at one destination, for the providers page.
     DestinationStats(uuid::Uuid),
+    /// The credential list.
+    Credentials,
+    /// A key marked for backup or sharing.
+    CredentialRole,
+    /// A seal or unseal of the shared key bundle.
+    KeyBundle,
+    /// A folder being turned into a repository. Carries the dialog's state so
+    /// the reply can go on to create it on a host, if that was asked for.
+    GitInit(Box<crate::gui::modals::GitInitState>),
+    /// A repository being created on a host, after a successful init.
+    GitCreateRemote,
     GitDocument,
     GitInventory,
     /// A pull, commit, push or trust. The path is not carried: the screen

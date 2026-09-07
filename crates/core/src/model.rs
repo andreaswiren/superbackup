@@ -354,6 +354,19 @@ pub struct Settings {
     /// asked to leave alone is exactly what this setting says not to do.
     #[serde(default)]
     pub external_git_repos: Vec<PathBuf>,
+    /// SSH keys included in the key backup: copied into your own encrypted
+    /// repositories along with everything else.
+    #[serde(default)]
+    pub backed_up_keys: Vec<PathBuf>,
+    /// SSH keys sealed into the shared bundle, so another machine can have
+    /// them. Sealed under the master passphrase — see
+    /// [`crate::credentials::KeyBundle`] for why that is not optional.
+    #[serde(default)]
+    pub synced_keys: Vec<PathBuf>,
+    /// Where the sealed bundle is written. A folder inside OneDrive, or one a
+    /// destination mirrors to a bucket.
+    #[serde(default)]
+    pub key_sync_folder: Option<PathBuf>,
     pub start_at_login: bool,
     pub start_minimised: bool,
     pub run_as_service: bool,
@@ -398,6 +411,9 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             external_git_repos: Vec::new(),
+            backed_up_keys: Vec::new(),
+            synced_keys: Vec::new(),
+            key_sync_folder: None,
             kopia_path: None,
             kopia: KopiaManagement::default(),
             start_at_login: true,

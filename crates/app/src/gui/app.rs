@@ -526,6 +526,70 @@ impl App {
             (Intent::DestinationStats(id), Reply::StorageStats(stats)) => {
                 self.data.destination_stats.insert(*id, (*stats).clone());
             }
+            (Intent::GitInit(state), Reply::GitAction(reply)) => {
+                if !reply.outcome.ok {
+                    if let Some(Modal::GitInit(open)) = &mut self.modal {
+                        open.busy = false;
+                        open.error = Some(reply.outcome.detail.clone());
+                    }
+                    return;
+                }
+                // The second step, only if it was asked for, and only after
+                // the first succeeded. Creating something on a forge for a
+                // repository that failed to initialise would leave an empty
+                // repository on GitHub and nothing pointing at it.
+                if state.create_remote {
+                    self.ask(
+                        Intent::GitCreateRemote,
+                        Request::GitCreateRemote {
+                            path: state.path.display().to_string(),
+                            name: state.remote_name.trim().to_string(),
+                            owner: None,
+                            private: state.private,
+                            description: None,
+                            credential: None,
+                        },
+                    );
+                    return;
+                }
+                self.modal = None;
+                self.toasts.success(reply.outcome.detail.clone());
+                self.scan_git();
+            }
+            (Intent::GitCreateRemote, Reply::GitCreated(created)) => {
+                self.modal = None;
+                self.toasts.success(copy::git_created(
+                    &created.full_name,
+                    created.private,
+                    created.remote_added,
+                ));
+                self.scan_git();
+            }
+            (Intent::Credentials, Reply::Credentials(reply)) => {
+                self.screens
+                    .credentials
+                    .arrived(reply.credentials.clone(), reply.sync_folder.clone());
+            }
+            (Intent::CredentialRole, Reply::Ack(_)) => {
+                // Re-read rather than patching the local copy: the daemon owns
+                // which keys are marked, and a list that disagreed with it
+                // would be a list of promises nothing is keeping.
+                self.scan_credentials();
+            }
+            (Intent::KeyBundle, Reply::KeyBundle(bundle)) => {
+                self.modal = None;
+                let summary = match &bundle.from_machine {
+                    Some(machine) => copy::cred_unsealed(
+                        bundle.files.len(),
+                        machine,
+                        bundle.skipped.len(),
+                    ),
+                    None => copy::cred_sealed(bundle.files.len(), &bundle.path),
+                };
+                self.toasts.success(summary.clone());
+                self.screens.credentials.last_bundle = Some(summary);
+                self.scan_credentials();
+            }
             (Intent::GitDocument, Reply::Document(document)) => {
                 if let Some(Modal::Document(state)) = &mut self.modal {
                     state.loading = false;
@@ -646,6 +710,26 @@ impl App {
                 // whole page is the scan: a toast over an empty table would
                 // leave the user looking at a list that says nothing is here.
                 Intent::GitInventory => self.screens.git.scan_failed(payload.message),
+                Intent::Credentials => self.screens.credentials.failed(payload.message),
+                Intent::GitInit(_) | Intent::GitCreateRemote => {
+                    // The dialog stays open with the reason on it: the folder
+                    // may now be a repository even though the host step
+                    // failed, and closing would hide which half worked.
+                    if let Some(Modal::GitInit(state)) = &mut self.modal {
+                        state.busy = false;
+                        state.error = Some(payload.message);
+                    } else {
+                        self.toasts.warning(payload.message);
+                    }
+                }
+                Intent::KeyBundle => {
+                    // The dialog stays open with the reason on the field: a
+                    // mistyped passphrase should be retyped, not restarted.
+                    if let Some(Modal::KeyBundle(state)) = &mut self.modal {
+                        state.busy = false;
+                        state.error = Some(payload.message);
+                    }
+                }
                 Intent::GitDocument => {
                     if let Some(Modal::Document(state)) = &mut self.modal {
                         state.loading = false;
@@ -1670,6 +1754,7 @@ impl App {
             Route::ProviderEditor(id) => self.show_provider_editor(ui, Some(id)),
             Route::NewProvider => self.show_provider_editor(ui, None),
             Route::Git => self.show_git(ui),
+            Route::Credentials => self.show_credentials(ui),
             Route::Restore => self.show_restore(ui),
             Route::Activity => self.show_activity(ui),
             Route::RunDetail(id) => self.show_run_detail(ui, id),
@@ -1688,6 +1773,7 @@ impl App {
             Route::Destinations => self.destinations_actions(ui),
             Route::Providers => self.providers_actions(ui),
             Route::Git => self.git_actions(ui),
+            Route::Credentials => self.credentials_actions(ui),
             Route::Activity => self.activity_actions(ui),
             Route::Restore => self.restore_actions(ui),
             _ => {}

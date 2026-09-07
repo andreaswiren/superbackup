@@ -388,6 +388,11 @@ impl GitRepo {
 pub struct Inventory {
     pub roots: Vec<PathBuf>,
     pub repos: Vec<GitRepo>,
+    /// Folders under the roots that are *not* repositories. The most exposed
+    /// thing on a developer disk is a project nobody ever ran `git init` in,
+    /// and it is invisible to a list of repositories.
+    #[serde(default)]
+    pub candidates: Vec<Candidate>,
     pub scanned_at: DateTime<Utc>,
     pub folders_scanned: u64,
     /// A limit was hit, so this list is not everything. Said out loud rather
@@ -415,6 +420,7 @@ pub async fn inventory(roots: &[PathBuf], options: &ScanOptions) -> Result<Inven
         return Ok(Inventory {
             roots: roots.to_vec(),
             repos: Vec::new(),
+            candidates: Vec::new(),
             scanned_at,
             folders_scanned: 0,
             truncated: false,
@@ -429,6 +435,7 @@ pub async fn inventory(roots: &[PathBuf], options: &ScanOptions) -> Result<Inven
     let git = Git::locate()?;
 
     let mut notes = Vec::new();
+    let mut candidates: Vec<Candidate> = Vec::new();
     let mut found: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut folders_scanned = 0u64;
     let mut truncated = false;
@@ -441,6 +448,9 @@ pub async fn inventory(roots: &[PathBuf], options: &ScanOptions) -> Result<Inven
         let discovered = discover(root, options, &mut folders_scanned);
         if discovered.truncated {
             truncated = true;
+        }
+        for path in &discovered.candidates {
+            candidates.push(describe_candidate(path, root));
         }
         for path in discovered.repos {
             if found.len() >= options.max_repos {
@@ -476,9 +486,14 @@ pub async fn inventory(roots: &[PathBuf], options: &ScanOptions) -> Result<Inven
         ));
     }
 
+    // The ones that look like projects first: an empty folder somebody made
+    // and forgot is not the thing this list is for.
+    candidates.sort_by_key(|c| (!c.looks_like_a_project, c.name.to_lowercase()));
+
     Ok(Inventory {
         roots: roots.to_vec(),
         repos,
+        candidates,
         scanned_at,
         folders_scanned,
         truncated,
@@ -513,6 +528,11 @@ where
 
 struct Discovered {
     repos: Vec<PathBuf>,
+    /// Direct children of the root that hold no repository anywhere inside
+    /// them. Depth one only: a folder two levels down that is not a repository
+    /// is usually a subdirectory of one, and listing every one of those would
+    /// bury the projects the question is actually about.
+    candidates: Vec<PathBuf>,
     truncated: bool,
 }
 
@@ -525,6 +545,11 @@ struct Discovered {
 fn discover(root: &Path, options: &ScanOptions, folders_scanned: &mut u64) -> Discovered {
     let mut repos = Vec::new();
     let mut truncated = false;
+    // Every direct child, minus the ones that turn out to contain a
+    // repository. Collected as the walk goes and filtered at the end, because
+    // whether a child is a candidate is not known until its subtree has been
+    // looked at.
+    let mut children: Vec<PathBuf> = Vec::new();
     let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
 
     while let Some((dir, depth)) = queue.pop_front() {
@@ -553,11 +578,43 @@ fn discover(root: &Path, options: &ScanOptions, folders_scanned: &mut u64) -> Di
             if SKIPPED.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
                 continue;
             }
+            if depth == 0 && !name.starts_with('.') {
+                children.push(entry.path());
+            }
             queue.push_back((entry.path(), depth + 1));
         }
     }
 
-    Discovered { repos, truncated }
+    let candidates = children
+        .into_iter()
+        .filter(|child| !repos.iter().any(|repo| repo.starts_with(child)))
+        .collect();
+    Discovered { repos, candidates, truncated }
+}
+
+/// Describe one folder that is not a repository.
+fn describe_candidate(path: &Path, root: &Path) -> Candidate {
+    let mut entries = 0usize;
+    let mut looks_like_a_project = false;
+    if let Ok(listing) = std::fs::read_dir(path) {
+        for entry in listing.flatten() {
+            entries += 1;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if PROJECT_MARKERS.iter().any(|m| m.eq_ignore_ascii_case(&name)) {
+                looks_like_a_project = true;
+            }
+        }
+    }
+    Candidate {
+        name: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string()),
+        path: path.to_path_buf(),
+        root: root.to_path_buf(),
+        entries,
+        looks_like_a_project,
+    }
 }
 
 /// Read one repository.
@@ -961,6 +1018,178 @@ fn default_ssh_key() -> Option<String> {
         1 => Some(candidates[0].display().to_string()),
         _ => None,
     }
+}
+
+/// A folder under a source root that is not a git repository.
+///
+/// The question this answers is the one a developer folder full of projects
+/// raises immediately: *which of these am I not tracking?* A project that was
+/// started with `mkdir` and never `git init`-ed has no history, no remote and
+/// no second copy anywhere — which makes it the most exposed thing on the
+/// disk, and invisible to a list of repositories.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Candidate {
+    pub path: PathBuf,
+    pub name: String,
+    /// The root it was found under.
+    pub root: PathBuf,
+    /// Files directly inside it, as a rough sense of whether it is a project
+    /// or an empty folder somebody made and forgot.
+    pub entries: usize,
+    /// It looks like a project: there is a manifest, a source folder, or a
+    /// README in it. Folders that look like nothing are still listed, lower.
+    pub looks_like_a_project: bool,
+}
+
+/// Files that say "this is a project" rather than "this is a folder".
+const PROJECT_MARKERS: &[&str] = &[
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "pyproject.toml",
+    "requirements.txt",
+    "pom.xml",
+    "build.gradle",
+    "Gemfile",
+    "composer.json",
+    "Makefile",
+    "CMakeLists.txt",
+    "Dockerfile",
+    "README.md",
+    "README",
+    "index.html",
+    "main.py",
+    "src",
+];
+
+/// Initialise a repository in a folder, and optionally make the first commit.
+///
+/// Deliberately does **not** push, and does not create anything on a forge:
+/// those are separate steps with separate consequences, and running all three
+/// from one button is how a private project ends up on the internet. See
+/// [`forge`] for the creation half.
+pub async fn init_repository(
+    path: &Path,
+    initial_commit: Option<&str>,
+    default_branch: &str,
+) -> Result<ActionOutcome> {
+    let git = Git::locate()?;
+    if !path.is_dir() {
+        return Err(Error::Validation(format!("{} is not a folder", path.display())));
+    }
+    if path.join(".git").exists() {
+        return Err(Error::Validation(format!(
+            "{} is already a git repository",
+            path.display()
+        )));
+    }
+    let branch = default_branch.trim();
+    if branch.is_empty()
+        || !branch.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | '.'))
+    {
+        return Err(Error::Validation(
+            "a branch name holds letters, digits, dashes, underscores, dots and slashes".into(),
+        ));
+    }
+
+    let out = git
+        .run(path, &["init", &format!("--initial-branch={branch}")], LOCAL_TIMEOUT)
+        .await?;
+    if !out.ok() {
+        return Ok(ActionOutcome {
+            path: path.to_path_buf(),
+            action: "init".into(),
+            ok: false,
+            detail: out.failure(),
+        });
+    }
+
+    let mut detail = format!("Initialised an empty repository on {branch}.");
+    if let Some(message) = initial_commit {
+        let message = message.trim();
+        if message.is_empty() {
+            return Err(Error::Validation("a commit needs a message".into()));
+        }
+        // `--all` so a new project's untracked files are actually in the first
+        // commit — a repository whose first commit is empty protects nothing.
+        // `.gitignore` still applies.
+        let staged = git.run(path, &["add", "--all", "--", "."], LOCAL_TIMEOUT).await?;
+        if !staged.ok() {
+            return Ok(ActionOutcome {
+                path: path.to_path_buf(),
+                action: "init".into(),
+                ok: false,
+                detail: staged.failure(),
+            });
+        }
+        let committed = git.run(path, &["commit", "-m", message], LOCAL_TIMEOUT).await?;
+        if committed.ok() {
+            detail = format!("{detail} {}", first_line(&committed.stdout, "Committed."));
+        } else {
+            let combined = format!("{}{}", committed.stdout, committed.stderr);
+            if combined.contains("nothing to commit") {
+                detail = format!("{detail} The folder is empty, so there was nothing to commit.");
+            } else {
+                return Ok(ActionOutcome {
+                    path: path.to_path_buf(),
+                    action: "init".into(),
+                    ok: false,
+                    detail: identity_hint(&committed.failure()),
+                });
+            }
+        }
+    }
+
+    Ok(ActionOutcome { path: path.to_path_buf(), action: "init".into(), ok: true, detail })
+}
+
+/// Point a repository at a remote.
+///
+/// Separate from creating one on a forge and from pushing to it, so each can
+/// fail and be retried without the others.
+pub async fn add_remote(path: &Path, name: &str, url: &str) -> Result<ActionOutcome> {
+    let git = Git::locate()?;
+    let name = name.trim();
+    let url = url.trim();
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(Error::Validation("a remote name is a word, not a path".into()));
+    }
+    if url.is_empty() {
+        return Err(Error::Validation("a remote needs an address".into()));
+    }
+    // A remote URL goes into `.git/config` and into every error message git
+    // prints. One carrying a token would put it in both.
+    if url.contains('@') && (url.contains("://") && !url.starts_with("ssh://")) {
+        let authority = url.split("://").nth(1).unwrap_or_default();
+        let user = authority.split('@').next().unwrap_or_default();
+        if user.contains(':') {
+            return Err(Error::Validation(
+                "that address carries a password. git would write it into .git/config in the \
+                 clear and print it in its own error messages. Use SSH, or let a credential \
+                 helper hold it."
+                    .into(),
+            ));
+        }
+    }
+
+    // `set-url` when it already exists, so this is not a one-shot.
+    let existing = git.run(path, &["remote", "get-url", name], LOCAL_TIMEOUT).await?;
+    let args: Vec<&str> = if existing.ok() {
+        vec!["remote", "set-url", name, url]
+    } else {
+        vec!["remote", "add", name, url]
+    };
+    let out = git.run(path, &args, LOCAL_TIMEOUT).await?;
+    Ok(ActionOutcome {
+        path: path.to_path_buf(),
+        action: "remote".into(),
+        ok: out.ok(),
+        detail: if out.ok() {
+            format!("{name} now points at {url}.")
+        } else {
+            out.failure()
+        },
+    })
 }
 
 /// The trailer that says a commit was made from here.

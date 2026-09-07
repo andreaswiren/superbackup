@@ -354,6 +354,64 @@ async fn every_command_answers_or_refuses_cleanly() {
     run!("git.push", Request::GitPush { path: outside.clone() });
     run!("git.trust", Request::GitTrust { path: outside.clone() });
     run!("git.set_external", Request::GitSetExternal { path: outside.clone(), external: true });
+
+    // -- credentials --------------------------------------------------------
+    // Reading the list touches only this machine's own key folder and returns
+    // no key material, so it runs for real.
+    run!("cred.list", Request::CredentialList {});
+    // A path that is not one of this machine's keys must be refused, or the
+    // configuration accumulates entries for files that do not exist and the
+    // key backup silently protects nothing.
+    run!(
+        "cred.set_role",
+        Request::CredentialSetRole {
+            path: "/not/a/key/on/this/machine".into(),
+            backed_up: true,
+            synced: true,
+        }
+    );
+    // Both of these re-verify the master passphrase, so a wrong one must be
+    // refused as a passphrase problem rather than reaching the filesystem.
+    run!(
+        "cred.seal_keys",
+        Request::CredentialSealKeys {
+            folder: outside.clone(),
+            passphrase: SecretString::from_string("not the passphrase".into()),
+        }
+    );
+    run!(
+        "cred.unseal_keys",
+        Request::CredentialUnsealKeys {
+            folder: outside.clone(),
+            overwrite: false,
+            passphrase: SecretString::from_string("not the passphrase".into()),
+        }
+    );
+
+    // -- turning a folder into a repository ---------------------------------
+    run!(
+        "git.init",
+        Request::GitInit { path: outside.clone(), branch: "main".into(), message: None }
+    );
+    run!(
+        "git.add_remote",
+        Request::GitAddRemote {
+            path: outside.clone(),
+            name: "origin".into(),
+            url: "git@github.com:me/thing.git".into(),
+        }
+    );
+    run!(
+        "git.create_remote",
+        Request::GitCreateRemote {
+            path: outside.clone(),
+            name: "thing".into(),
+            owner: None,
+            private: true,
+            description: None,
+            credential: None,
+        }
+    );
     run!(
         "git.read_document",
         Request::GitReadDocument { path: outside, document: "README.md".into() }

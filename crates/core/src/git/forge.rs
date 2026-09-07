@@ -366,6 +366,84 @@ pub fn gh_create_args(repo: &NewRepo) -> Result<Vec<String>> {
     Ok(args)
 }
 
+/// Create a repository with the GitHub CLI.
+///
+/// Preferred over the REST API wherever `gh` is signed in, and the reason is
+/// not convenience. `gh` already holds a credential the user set up, scoped
+/// however they chose, refreshed by `gh` and revocable by them in one place.
+/// Borrowing it means superbackup never asks for, stores, or is capable of
+/// leaking a GitHub token — which is a better security property than any
+/// amount of care taken with one we held.
+pub async fn create_with_gh(repo: &NewRepo) -> crate::error::Result<CreatedRepo> {
+    use crate::error::Error;
+
+    let args = gh_create_args(repo)?;
+    let program = locate_gh().ok_or_else(|| {
+        Error::Validation(
+            "the GitHub CLI is not installed, or is not on this account's PATH. Install it from \
+             https://cli.github.com and sign in with `gh auth login`."
+                .into(),
+        )
+    })?;
+
+    let mut command = tokio::process::Command::new(program);
+    command.args(&args);
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    // `gh` will happily open a browser and wait for a login. In a tray
+    // application that is an application that has stopped responding.
+    command.env("GH_PROMPT_DISABLED", "1");
+    command.env("GH_NO_UPDATE_NOTIFIER", "1");
+    crate::kopia::harden_child(&mut command);
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        command.output(),
+    )
+    .await
+    .map_err(|_| Error::Config("the GitHub CLI did not answer within a minute".into()))?
+    .map_err(|e| Error::io("running the GitHub CLI", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !output.status.success() {
+        let reason = stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("the GitHub CLI failed without saying why");
+        return Err(Error::Config(reason.to_string()));
+    }
+
+    // `gh repo create` prints the URL of what it made.
+    let web_url = stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .find(|l| l.starts_with("https://"))
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("https://github.com/{}", repo.full_name()));
+    let full_name = web_url
+        .strip_prefix("https://github.com/")
+        .map(str::to_string)
+        .unwrap_or_else(|| repo.full_name());
+
+    Ok(CreatedRepo {
+        clone_url: format!("git@github.com:{full_name}.git"),
+        web_url,
+        full_name,
+        private: repo.private,
+        via: "the GitHub CLI".into(),
+    })
+}
+
+fn locate_gh() -> Option<std::path::PathBuf> {
+    let exe = if cfg!(windows) { "gh.exe" } else { "gh" };
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|dir| dir.join(exe)).find(|c| c.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

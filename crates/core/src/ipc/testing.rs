@@ -1056,6 +1056,7 @@ impl Handler for MockHandler {
             inventory: Box::new(crate::git::Inventory {
                 roots: Vec::new(),
                 repos: Vec::new(),
+                candidates: Vec::new(),
                 scanned_at: chrono::Utc::now(),
                 folders_scanned: 0,
                 truncated: false,
@@ -1117,6 +1118,104 @@ impl Handler for MockHandler {
             path: format!("{path}/{document}"),
             content: "# The mock has nothing to read\n".into(),
             truncated: false,
+        })
+    }
+
+    async fn credential_list(&self, _ctx: &RequestContext) -> Result<CredentialsReply> {
+        let _guard = self.enter("cred.list").await?;
+        // Nothing invented: a test that asserted on fabricated keys would be
+        // asserting on the mock.
+        Ok(CredentialsReply { credentials: Vec::new(), sync_folder: None })
+    }
+
+    async fn credential_set_role(
+        &self,
+        _ctx: &RequestContext,
+        _path: String,
+        _backed_up: bool,
+        _synced: bool,
+    ) -> Result<AckReply> {
+        let _guard = self.enter("cred.set_role").await?;
+        Ok(AckReply {})
+    }
+
+    async fn credential_seal_keys(
+        &self,
+        _ctx: &RequestContext,
+        folder: String,
+        _passphrase: SecretString,
+    ) -> Result<KeyBundleReply> {
+        let _guard = self.enter("cred.seal_keys").await?;
+        Ok(KeyBundleReply {
+            path: format!("{folder}/superbackup-keys.sbkeys"),
+            files: Vec::new(),
+            from_machine: None,
+            skipped: Vec::new(),
+        })
+    }
+
+    async fn credential_unseal_keys(
+        &self,
+        _ctx: &RequestContext,
+        folder: String,
+        _overwrite: bool,
+        _passphrase: SecretString,
+    ) -> Result<KeyBundleReply> {
+        let _guard = self.enter("cred.unseal_keys").await?;
+        Ok(KeyBundleReply {
+            path: folder,
+            files: Vec::new(),
+            from_machine: Some("mock".into()),
+            skipped: Vec::new(),
+        })
+    }
+
+    async fn git_init(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        _branch: String,
+        _message: Option<String>,
+    ) -> Result<GitActionReply> {
+        let _guard = self.enter("git.init").await?;
+        Ok(Self::git_did("init", &path))
+    }
+
+    async fn git_add_remote(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        _name: String,
+        _url: String,
+    ) -> Result<GitActionReply> {
+        let _guard = self.enter("git.add_remote").await?;
+        Ok(Self::git_did("remote", &path))
+    }
+
+    async fn git_create_remote(
+        &self,
+        _ctx: &RequestContext,
+        _path: String,
+        name: String,
+        owner: Option<String>,
+        private: bool,
+        _description: Option<String>,
+        _credential: Option<String>,
+    ) -> Result<GitCreatedReply> {
+        let _guard = self.enter("git.create_remote").await?;
+        let full_name = match &owner {
+            Some(owner) => format!("{owner}/{name}"),
+            None => name.clone(),
+        };
+        Ok(GitCreatedReply {
+            clone_url: format!("git@mock:{full_name}.git"),
+            web_url: format!("https://mock/{full_name}"),
+            full_name,
+            // The mock keeps the default the real one has: private unless
+            // something said otherwise.
+            private,
+            via: "mock".into(),
+            remote_added: false,
         })
     }
 

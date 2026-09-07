@@ -444,6 +444,42 @@ pub enum Modal {
     /// table: the table is taller than the window, so anything below it is
     /// somewhere the reader never looks.
     GitRepo(Box<GitRepoState>),
+    /// Sealing keys into a shared folder, or taking them out of one.
+    KeyBundle(KeyBundleState),
+    /// Turning a folder into a repository, and optionally putting it on a host.
+    GitInit(Box<GitInitState>),
+}
+
+/// What is about to be initialised, and how far it should go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitInitState {
+    pub path: std::path::PathBuf,
+    pub name: String,
+    pub branch: String,
+    pub commit: bool,
+    pub message: String,
+    /// Also create it on a host. Off by default: init is local and reversible,
+    /// creating something on a forge is neither.
+    pub create_remote: bool,
+    pub remote_name: String,
+    /// Private, and it stays the default.
+    pub private: bool,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
+/// Which way the keys are going, and the passphrase that authorises it.
+#[derive(Debug, Clone)]
+pub struct KeyBundleState {
+    pub folder: String,
+    /// True for sealing, false for unsealing.
+    pub sealing: bool,
+    /// Cleared the moment it is sent: the dialog stays on screen while the
+    /// operation runs and has no reason to keep holding one.
+    pub passphrase: String,
+    pub overwrite: bool,
+    pub busy: bool,
+    pub error: Option<String>,
 }
 
 /// The repository being read, and which of its tabs is open.
@@ -490,6 +526,8 @@ impl Modal {
             Modal::ChangePassphrase(s) => s.busy,
             Modal::ExportKeys(s) => s.busy,
             Modal::Document(s) => s.loading,
+            Modal::KeyBundle(s) => s.busy,
+            Modal::GitInit(s) => s.busy,
             Modal::RestoreOptions(s) => s.running,
             _ => false,
         }
@@ -699,6 +737,8 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::GitCommit(state) => show_git_commit(app, ctx, state),
         Modal::Document(state) => show_document(app, ctx, state),
         Modal::GitRepo(repo) => show_git_repo(app, ctx, repo),
+        Modal::KeyBundle(state) => show_key_bundle(app, ctx, state),
+        Modal::GitInit(state) => show_git_init(app, ctx, state),
     }
 }
 
@@ -1877,6 +1917,230 @@ fn show_git_repo(
         None
     } else {
         Some(Modal::GitRepo(state))
+    }
+}
+
+/// Sealing keys into a shared folder, or taking them out of one.
+///
+/// Asks for the master passphrase again. An unlocked window proves that
+/// somebody unlocked it at some point, which is exactly the assumption that
+/// gathering every private key on a machine into one portable file must not
+/// make — and the same goes for writing keys out of a bundle that came from a
+/// folder other machines can write to.
+fn show_key_bundle(app: &mut App, ctx: &egui::Context, mut state: KeyBundleState) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let mut go = false;
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-key-bundle",
+        ModalSize::Medium,
+        if state.sealing { copy::cred::BUNDLE_TITLE_SEAL } else { copy::cred::BUNDLE_TITLE_UNSEAL },
+        Some((if state.sealing { Icon::Lock } else { Icon::Download }, t.accent)),
+        state.busy,
+        |m| {
+            m.body(|ui| {
+                widgets::paragraph(
+                    ui,
+                    if state.sealing {
+                        copy::cred::BUNDLE_BODY_SEAL
+                    } else {
+                        copy::cred::BUNDLE_BODY_UNSEAL
+                    },
+                    Type::Body,
+                    t.text_secondary,
+                );
+                ui.add_space(space::M);
+                widgets::text(ui, &state.folder, Type::MonoSmall, t.text_muted);
+
+                ui.add_space(space::XL);
+                let mut revealed = false;
+                widgets::passphrase_field(
+                    ui,
+                    &mut state.passphrase,
+                    copy::cred::BUNDLE_PASSPHRASE,
+                    &mut revealed,
+                    state.error.as_deref(),
+                    400.0,
+                );
+                ui.add_space(space::S);
+                widgets::paragraph(ui, copy::cred::BUNDLE_WHY, Type::Small, t.text_muted);
+
+                if !state.sealing {
+                    ui.add_space(space::L);
+                    widgets::checkbox(
+                        ui,
+                        &mut state.overwrite,
+                        copy::cred::BUNDLE_OVERWRITE,
+                        Some(copy::cred::BUNDLE_OVERWRITE_HINT),
+                        true,
+                    );
+                }
+            });
+            m.footer(|ui| {
+                let label = if state.sealing { copy::cred::SEAL } else { copy::cred::UNSEAL };
+                if Button::primary(label)
+                    .enabled(!state.passphrase.is_empty() && !state.busy)
+                    .show(ui)
+                    .clicked()
+                {
+                    go = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    // Handled by `close` below.
+                }
+            });
+        },
+    );
+
+    if go {
+        let passphrase =
+            superbackup_core::ipc::protocol::SecretString::from_string(state.passphrase.clone());
+        // The typed passphrase does not stay in the dialog once it has been
+        // sent: the dialog can sit on screen for as long as the operation
+        // takes, and there is no reason for it to hold one.
+        state.passphrase.clear();
+        state.busy = true;
+        state.error = None;
+        let request = if state.sealing {
+            Request::CredentialSealKeys { folder: state.folder.clone(), passphrase }
+        } else {
+            Request::CredentialUnsealKeys {
+                folder: state.folder.clone(),
+                overwrite: state.overwrite,
+                passphrase,
+            }
+        };
+        app.ask(Intent::KeyBundle, request);
+        return Some(Modal::KeyBundle(state));
+    }
+    if close {
+        None
+    } else {
+        Some(Modal::KeyBundle(state))
+    }
+}
+
+/// Turning a folder into a repository, and optionally putting it on a host.
+///
+/// Three steps that are deliberately separate, and shown as three: init,
+/// create, push. Doing all three from one button is how a private project ends
+/// up on the internet — so this does the first two at most, and never the
+/// third. What lands on the host is an empty repository the local one points
+/// at; the first push is the user's, made when they have looked at what is
+/// about to leave the machine.
+fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState>) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let mut go = false;
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-git-init",
+        ModalSize::Medium,
+        &copy::git_init_title(&state.name),
+        Some((Icon::GitBranch, t.accent)),
+        state.busy,
+        |m| {
+            m.body(|ui| {
+                widgets::text(ui, state.path.display().to_string(), Type::MonoSmall, t.text_muted);
+                ui.add_space(space::L);
+
+                widgets::Field::new()
+                    .label(copy::git::INIT_BRANCH)
+                    .width(220.0)
+                    .show(ui, &mut state.branch);
+
+                ui.add_space(space::L);
+                widgets::checkbox(
+                    ui,
+                    &mut state.commit,
+                    copy::git::INIT_COMMIT,
+                    Some(copy::git::INIT_COMMIT_HINT),
+                    true,
+                );
+                if state.commit {
+                    ui.add_space(space::S);
+                    widgets::Field::new()
+                        .label(copy::git::INIT_MESSAGE)
+                        .width(440.0)
+                        .show(ui, &mut state.message);
+                }
+
+                ui.add_space(space::XL);
+                widgets::divider(ui);
+                ui.add_space(space::L);
+                widgets::checkbox(
+                    ui,
+                    &mut state.create_remote,
+                    copy::git::INIT_CREATE,
+                    Some(copy::git::INIT_CREATE_HINT),
+                    true,
+                );
+                if state.create_remote {
+                    ui.add_space(space::S);
+                    widgets::Field::new()
+                        .label(copy::git::INIT_REMOTE_NAME)
+                        .width(320.0)
+                        .show(ui, &mut state.remote_name);
+                    ui.add_space(space::M);
+                    // Private is the default and stays the default. A tool
+                    // that scans somebody's disk and offers to publish what it
+                    // finds must not have "public" as the value that happens
+                    // when nobody chose.
+                    let mut private = state.private;
+                    if widgets::checkbox(
+                        ui,
+                        &mut private,
+                        copy::git::INIT_PRIVATE,
+                        Some(copy::git::INIT_PRIVATE_HINT),
+                        true,
+                    )
+                    .clicked()
+                    {
+                        state.private = private;
+                    }
+                    ui.add_space(space::M);
+                    widgets::paragraph(ui, copy::git::INIT_NO_PUSH, Type::Small, t.text_muted);
+                }
+
+                if let Some(error) = &state.error {
+                    ui.add_space(space::L);
+                    widgets::paragraph(ui, error.clone(), Type::Small, t.danger.tint_text);
+                }
+            });
+            m.footer(|ui| {
+                let ready = !state.branch.trim().is_empty()
+                    && (!state.commit || !state.message.trim().is_empty())
+                    && (!state.create_remote || !state.remote_name.trim().is_empty());
+                if Button::primary(copy::git::INIT_CONFIRM)
+                    .enabled(ready && !state.busy)
+                    .show(ui)
+                    .clicked()
+                {
+                    go = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    // Handled by `close`.
+                }
+            });
+        },
+    );
+
+    if go {
+        state.busy = true;
+        state.error = None;
+        app.ask(
+            Intent::GitInit(Box::new((*state).clone())),
+            Request::GitInit {
+                path: state.path.display().to_string(),
+                branch: state.branch.trim().to_string(),
+                message: state.commit.then(|| state.message.trim().to_string()),
+            },
+        );
+        return Some(Modal::GitInit(state));
+    }
+    if close {
+        None
+    } else {
+        Some(Modal::GitInit(state))
     }
 }
 

@@ -223,6 +223,8 @@ impl App {
 
         self.git_table(ui, &rows, now);
 
+        self.git_candidates(ui, &inventory);
+
         for note in &inventory.notes {
             ui.add_space(space::M);
             widgets::paragraph(ui, note.clone(), Type::Small, t.warning.tint_text);
@@ -601,6 +603,119 @@ impl App {
                 .bullet(path.display().to_string())
                 .action(crate::gui::modals::ConfirmAction::GitTrust(path)),
             ));
+        }
+    }
+
+    /// Folders under the sources that are not repositories.
+    ///
+    /// The most exposed thing on a developer disk is a project nobody ever ran
+    /// `git init` in: no history, no remote, no second copy anywhere — and
+    /// invisible to a list of repositories, which is why it needs its own
+    /// place on this page rather than a line in a summary.
+    fn git_candidates(&mut self, ui: &mut Ui, inventory: &Inventory) {
+        let t = theme::tokens(ui.ctx());
+        if inventory.candidates.is_empty() {
+            return;
+        }
+        let projects = inventory.candidates.iter().filter(|c| c.looks_like_a_project).count();
+
+        ui.add_space(space::XL);
+        widgets::section_header(
+            ui,
+            copy::git::NOT_TRACKED,
+            Some(inventory.candidates.len()),
+            |_| {},
+        );
+        ui.add_space(space::S);
+        widgets::paragraph(
+            ui,
+            if projects > 0 {
+                copy::git_untracked_projects(projects)
+            } else {
+                copy::git::NOT_TRACKED_BODY.to_string()
+            },
+            Type::Small,
+            if projects > 0 { t.warning.tint_text } else { t.text_muted },
+        );
+        ui.add_space(space::M);
+
+        let mut start: Option<superbackup_core::git::Candidate> = None;
+        widgets::table_frame(ui, |ui| {
+            for candidate in &inventory.candidates {
+                let response = widgets::row_card(ui, None, |ui: &mut Ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                        Icon::Folder.paint(ui.painter(), rect, t.text_muted);
+                        ui.add_space(space::M);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            ui.horizontal(|ui| {
+                                widgets::text(
+                                    ui,
+                                    &candidate.name,
+                                    Type::BodyStrong,
+                                    t.text_primary,
+                                );
+                                if candidate.looks_like_a_project {
+                                    ui.add_space(space::S);
+                                    widgets::badge(
+                                        ui,
+                                        t.warning,
+                                        None,
+                                        copy::git::LOOKS_LIKE_A_PROJECT,
+                                    )
+                                    .on_hover_text(copy::git::LOOKS_LIKE_A_PROJECT_HINT);
+                                }
+                            });
+                            widgets::text(
+                                ui,
+                                candidate.path.display().to_string(),
+                                Type::MonoSmall,
+                                t.text_muted,
+                            );
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if Button::secondary(copy::git::START_TRACKING)
+                                .compact()
+                                .show(ui)
+                                .on_hover_text(copy::git::START_TRACKING_HINT)
+                                .clicked()
+                            {
+                                start = Some(candidate.clone());
+                            }
+                            widgets::text(
+                                ui,
+                                copy::git_entry_count(candidate.entries),
+                                Type::Small,
+                                t.text_muted,
+                            );
+                        });
+                    });
+                });
+                let _ = response;
+                ui.add_space(space::S);
+            }
+        });
+
+        if let Some(candidate) = start {
+            self.modal = Some(crate::gui::modals::Modal::GitInit(Box::new(
+                crate::gui::modals::GitInitState {
+                    path: candidate.path.clone(),
+                    name: candidate.name.clone(),
+                    branch: "main".to_string(),
+                    // A first commit by default: a repository whose first
+                    // commit is empty protects nothing, and the folder already
+                    // exists precisely because there is something in it.
+                    commit: true,
+                    message: format!("Start tracking {}", candidate.name),
+                    create_remote: false,
+                    remote_name: candidate.name.clone(),
+                    private: true,
+                    busy: false,
+                    error: None,
+                },
+            )));
         }
     }
 

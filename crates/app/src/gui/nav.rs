@@ -25,6 +25,8 @@ pub enum Section {
     /// Which backed-up folders are git repositories, and whether their work
     /// exists anywhere but this disk.
     Git,
+    /// The keys and tokens this machine signs in with.
+    Credentials,
     Restore,
     Activity,
     Settings,
@@ -32,12 +34,13 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::Dashboard,
         Section::Jobs,
         Section::Destinations,
         Section::Providers,
         Section::Git,
+        Section::Credentials,
         Section::Restore,
         Section::Activity,
         Section::Settings,
@@ -51,6 +54,7 @@ impl Section {
             Section::Destinations => copy::dest::TITLE,
             Section::Providers => copy::prov::TITLE,
             Section::Git => copy::git::TITLE,
+            Section::Credentials => copy::cred::TITLE,
             Section::Restore => copy::restore::TITLE,
             Section::Activity => copy::activity::TITLE,
             Section::Settings => copy::settings::TITLE,
@@ -66,6 +70,7 @@ impl Section {
             Section::Destinations => Icon::HardDrive,
             Section::Providers => Icon::KeyRound,
             Section::Git => Icon::GitBranch,
+            Section::Credentials => Icon::KeyRound,
             Section::Restore => Icon::History,
             Section::Activity => Icon::List,
             Section::Settings => Icon::Settings,
@@ -81,9 +86,10 @@ impl Section {
             Section::Destinations => Some(egui::Key::Num3),
             Section::Providers => Some(egui::Key::Num4),
             Section::Git => Some(egui::Key::Num5),
-            Section::Restore => Some(egui::Key::Num6),
-            Section::Activity => Some(egui::Key::Num7),
-            Section::Settings => Some(egui::Key::Num8),
+            Section::Credentials => Some(egui::Key::Num6),
+            Section::Restore => Some(egui::Key::Num7),
+            Section::Activity => Some(egui::Key::Num8),
+            Section::Settings => Some(egui::Key::Num9),
             Section::About => None,
         }
     }
@@ -100,6 +106,7 @@ impl Section {
             Section::Destinations => Route::Destinations,
             Section::Providers => Route::Providers,
             Section::Git => Route::Git,
+            Section::Credentials => Route::Credentials,
             Section::Restore => Route::Restore,
             Section::Activity => Route::Activity,
             Section::Settings => Route::Settings(SettingsSection::General),
@@ -169,6 +176,8 @@ pub enum Route {
     ProviderEditor(Uuid),
     NewProvider,
     Git,
+    /// The keys and tokens this machine signs in with.
+    Credentials,
     Restore,
     Activity,
     RunDetail(Uuid),
@@ -194,6 +203,7 @@ impl Route {
             }
             Route::Providers | Route::ProviderEditor(_) | Route::NewProvider => Section::Providers,
             Route::Git => Section::Git,
+            Route::Credentials => Section::Credentials,
             Route::Restore => Section::Restore,
             Route::Activity | Route::RunDetail(_) => Section::Activity,
             Route::Settings(_) => Section::Settings,
@@ -308,11 +318,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_rail_is_nine_items_in_the_documented_order() {
-        assert_eq!(Section::ALL.len(), 9);
+    fn the_rail_is_ten_items_in_the_documented_order() {
+        assert_eq!(Section::ALL.len(), 10);
         assert_eq!(Section::ALL[0], Section::Dashboard);
-        assert_eq!(Section::ALL[7], Section::Settings);
-        assert_eq!(Section::ALL[8], Section::About);
+        assert_eq!(Section::ALL[8], Section::Settings);
+        assert_eq!(Section::ALL[9], Section::About);
         assert!(Section::Settings.gap_before());
         assert!(Section::About.shortcut().is_none());
     }

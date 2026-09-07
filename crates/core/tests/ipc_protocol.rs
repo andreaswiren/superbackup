@@ -178,6 +178,39 @@ fn sample_requests() -> Vec<Request> {
         Request::GitTrust { path: "/w/thing".into() },
         Request::GitSetExternal { path: "/w/thing".into(), external: true },
         Request::GitReadDocument { path: "/w/thing".into(), document: "README.md".into() },
+        Request::CredentialList {},
+        Request::CredentialSetRole {
+            path: "/home/a/.ssh/id_ed25519".into(),
+            backed_up: true,
+            synced: false,
+        },
+        Request::CredentialSealKeys {
+            folder: "/w/shared".into(),
+            passphrase: SecretString::from_string("the master passphrase".into()),
+        },
+        Request::CredentialUnsealKeys {
+            folder: "/w/shared".into(),
+            overwrite: false,
+            passphrase: SecretString::from_string("the master passphrase".into()),
+        },
+        Request::GitInit {
+            path: "/w/thing".into(),
+            branch: "main".into(),
+            message: Some("Start tracking this".into()),
+        },
+        Request::GitAddRemote {
+            path: "/w/thing".into(),
+            name: "origin".into(),
+            url: "git@github.com:me/thing.git".into(),
+        },
+        Request::GitCreateRemote {
+            path: "/w/thing".into(),
+            name: "thing".into(),
+            owner: None,
+            private: true,
+            description: None,
+            credential: None,
+        },
         Request::DestinationTest { destination: "drive".into() },
         Request::DestinationClearRepository {
             destination: "drive".into(),

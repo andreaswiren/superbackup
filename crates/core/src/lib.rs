@@ -35,6 +35,7 @@
 #![warn(missing_debug_implementations, rust_2018_idioms)]
 
 pub mod config;
+pub mod credentials;
 pub mod crypto;
 pub mod engine;
 pub mod error;

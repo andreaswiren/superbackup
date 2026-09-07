@@ -856,6 +856,44 @@ pub struct DocumentReply {
     pub truncated: bool,
 }
 
+/// The keys and tokens this machine signs in with. Never any key material.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialsReply {
+    pub credentials: Vec<crate::credentials::Credential>,
+    /// Where the shared key bundle is written, when one is configured.
+    #[serde(default)]
+    pub sync_folder: Option<String>,
+}
+
+/// What a seal or unseal did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyBundleReply {
+    /// The bundle file, so the answer names the place rather than leaving it
+    /// to be assumed.
+    pub path: String,
+    /// Key file names — never their contents.
+    pub files: Vec<String>,
+    /// Which machine sealed the bundle that was read.
+    #[serde(default)]
+    pub from_machine: Option<String>,
+    /// Files left alone because they already existed here.
+    #[serde(default)]
+    pub skipped: Vec<String>,
+}
+
+/// A repository created on a git host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCreatedReply {
+    pub full_name: String,
+    pub clone_url: String,
+    pub web_url: String,
+    pub private: bool,
+    /// Which route created it: the GitHub CLI, or an API token.
+    pub via: String,
+    /// Whether the local repository now points at it.
+    pub remote_added: bool,
+}
+
 /// The git repositories found under a job's sources.
 ///
 /// The whole point is the states, not the list: a developer machine has forty
@@ -1440,6 +1478,12 @@ replies! {
         "What was erased from a destination, and from where."
     "git_inventory" GitInventory(GitInventoryReply)
         "The git repositories under a job's sources, and whether their work exists anywhere else."
+    "credentials" Credentials(CredentialsReply)
+        "The keys and tokens this machine signs in with."
+    "key_bundle" KeyBundle(KeyBundleReply)
+        "What a key seal or unseal did."
+    "git_created" GitCreated(GitCreatedReply)
+        "A repository created on a git host."
     "git_action" GitAction(GitActionReply)
         "What a pull, commit, push or trust did."
     "document" Document(DocumentReply)
@@ -2052,6 +2096,67 @@ protocol! {
             params {
                 path: String = "The repository's root folder, inside a configured job source.",
                 document: String = "The file name, which must be one the inventory reported for this repository.",
+            }
+
+        "cred.list" CredentialList => credential_list -> Credentials(CredentialsReply)
+            flags []
+            doc "The keys and tokens this machine signs in with. SSH keys are found in ~/.ssh and reported from their *public* half, their name and their permissions — a private key file is never read, except for a 128-byte header check that tells an encrypted key from an unencrypted one. No key material is ever returned by this command."
+            params {}
+
+        "cred.set_role" CredentialSetRole => credential_set_role -> Ack(AckReply)
+            flags [mutating]
+            doc "Include a key in the key backup, in the shared key bundle, or neither. Backing a key up copies it into your own encrypted repositories; syncing it puts it in a bundle other machines can open. Both are recorded in superbackup's configuration; neither moves anything on its own."
+            params {
+                path: String = "The private key's path, as `cred.list` reported it.",
+                backed_up: bool = "Include it in the key backup job.",
+                synced: bool = "Include it in the shared key bundle.",
+            }
+
+        "cred.seal_keys" CredentialSealKeys => credential_seal_keys -> KeyBundle(KeyBundleReply)
+            flags [mutating, needs_unlock, elevated, kdf]
+            doc "Write the keys marked for syncing into a sealed bundle at a folder other machines can read. THE BUNDLE IS ENCRYPTED UNDER YOUR MASTER PASSPHRASE and this is not optional: a private key written in the clear into OneDrive or a bucket is a private key given to every device on that account. What lands in the folder is useless without the passphrase."
+            params {
+                folder: String = "The shared folder. Inside OneDrive, or a folder a destination mirrors to a bucket.",
+                passphrase: SecretString = "The master passphrase, re-presented and verified. An unlocked vault alone is not enough to gather a machine's private keys into one file.",
+            }
+
+        "cred.unseal_keys" CredentialUnsealKeys => credential_unseal_keys -> KeyBundle(KeyBundleReply)
+            flags [mutating, needs_unlock, elevated, kdf]
+            doc "Read a sealed bundle from a shared folder and write its keys into this machine's ~/.ssh with owner-only permissions. Files that already exist are left alone unless `overwrite` is set, because the likeliest mistake here is unsealing an old bundle over the key this machine is using."
+            params {
+                folder: String = "The shared folder holding the bundle.",
+                overwrite: bool = "Replace keys that already exist here. Off by default.",
+                passphrase: SecretString = "The master passphrase the bundle was sealed under.",
+            }
+
+        "git.init" GitInit => git_init -> GitAction(GitActionReply)
+            flags [mutating]
+            doc "Turn a folder into a git repository. Creates nothing on any forge and pushes nothing — those are separate steps with separate consequences, and doing all three from one button is how a private project ends up on the internet. The path must be inside a configured job source."
+            params {
+                path: String = "The folder, inside a configured job source.",
+                branch: String = "The initial branch name, usually `main`.",
+                message: Option<String> = "Make a first commit with this message, including everything the folder holds that .gitignore does not exclude. Omit for an empty repository.",
+            }
+
+        "git.add_remote" GitAddRemote => git_add_remote -> GitAction(GitActionReply)
+            flags [mutating]
+            doc "Point a repository at a remote, or change where an existing one points. An address carrying a password is refused: git writes remote URLs into .git/config in the clear and prints them in its own error messages."
+            params {
+                path: String = "The repository's root folder, inside a configured job source.",
+                name: String = "The remote's name, usually `origin`.",
+                url: String = "Where it points.",
+            }
+
+        "git.create_remote" GitCreateRemote => git_create_remote -> GitCreated(GitCreatedReply)
+            flags [mutating, needs_unlock, elevated]
+            doc "Create a repository on a git host and point a local repository at it. Uses the GitHub CLI when it is signed in, which means superbackup never holds a GitHub token; otherwise it uses a token from the vault for GitLab, Gitea or Forgejo. NEW REPOSITORIES ARE PRIVATE unless `private` is explicitly false. Nothing is pushed: creating an empty repository is reversible in one click and pushing a tree that turned out to contain a .env is not."
+            params {
+                path: String = "The local repository, inside a configured job source.",
+                name: String = "The repository name on the host.",
+                owner: Option<String> = "The user or organisation. Omit for your own account.",
+                private: bool = "Private. Pass false deliberately to make it public.",
+                description: Option<String> = "An optional one-line description.",
+                credential: Option<String> = "Which stored credential to use, from `cred.list`. Omit to use the GitHub CLI.",
             }
 
         "git.trust" GitTrust => git_trust -> GitAction(GitActionReply)

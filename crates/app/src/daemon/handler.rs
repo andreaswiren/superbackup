@@ -258,6 +258,30 @@ impl DaemonHandler {
         }
     }
 
+    /// Check a re-presented master passphrase against the sealed vault, and
+    /// hand it back for use.
+    ///
+    /// Verified against the sealed bytes rather than against the cached master
+    /// key, for the same reason `vault.export_keys` does it: the cached key
+    /// proves only that *somebody* unlocked this daemon at some point, which
+    /// is exactly the assumption a command that gathers a machine's private
+    /// keys into one file must not make.
+    ///
+    /// An unlocked vault is not enough here. Sealing every SSH key on a
+    /// machine into a single portable file, or writing keys out of one, are
+    /// the two operations where "the screen was left unlocked" is the whole
+    /// attack — so both ask again.
+    async fn verified_master(&self, passphrase: SecretString) -> Result<Secret> {
+        let secret = passphrase.into_secret();
+        let sealed = {
+            let store = self.runtime.store.lock().await;
+            store.vault().sealed_bytes().to_vec()
+        };
+        superbackup_core::crypto::Vault::unlock(&sealed, &secret)
+            .map_err(|_| Error::BadPassphrase)?;
+        Ok(secret)
+    }
+
     /// Record that this destination was reached and written to just now.
     ///
     /// `Destination::last_verified_at` existed, was cleared on a key rotation,
@@ -1755,6 +1779,274 @@ impl Handler for DaemonHandler {
             path: file.display().to_string(),
             content,
             truncated,
+        })
+    }
+
+    async fn credential_list(&self, _ctx: &RequestContext) -> Result<CredentialsReply> {
+        let config = self.config().await;
+        let settings = &config.settings;
+        // Discovery reads the filesystem, so it runs off the async thread.
+        let mut credentials =
+            tokio::task::spawn_blocking(superbackup_core::credentials::Credential::discover)
+                .await
+                .map_err(|e| Error::Internal(format!("looking for keys did not finish: {e}")))?;
+
+        for credential in &mut credentials {
+            let path = std::path::PathBuf::from(&credential.id);
+            credential.backed_up = settings.backed_up_keys.iter().any(|p| p == &path);
+            credential.synced = settings.synced_keys.iter().any(|p| p == &path);
+        }
+        Ok(CredentialsReply {
+            credentials,
+            sync_folder: settings.key_sync_folder.as_ref().map(|p| p.display().to_string()),
+        })
+    }
+
+    async fn credential_set_role(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        backed_up: bool,
+        synced: bool,
+    ) -> Result<AckReply> {
+        // The path has to name a key this machine actually has. Otherwise the
+        // configuration accumulates entries for files that do not exist, and
+        // the key backup silently protects nothing.
+        let target = std::path::PathBuf::from(&path);
+        let known = tokio::task::spawn_blocking(superbackup_core::credentials::ssh::discover)
+            .await
+            .map_err(|e| Error::Internal(format!("looking for keys did not finish: {e}")))?;
+        if !known.iter().any(|k| k.private_path == target) {
+            return Err(Error::Validation(format!(
+                "{path} is not one of the keys found in this machine's key folder"
+            )));
+        }
+
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(path);
+        self.commit(move |config| {
+            let settings = &mut config.settings;
+            settings.backed_up_keys.retain(|p| p != &target);
+            settings.synced_keys.retain(|p| p != &target);
+            if backed_up {
+                settings.backed_up_keys.push(target.clone());
+            }
+            if synced {
+                settings.synced_keys.push(target.clone());
+            }
+            Ok(())
+        })
+        .await?;
+
+        self.runtime.record_event(Event::info(
+            "cred.role",
+            format!(
+                "{name}: {}",
+                match (backed_up, synced) {
+                    (true, true) => "backed up and shared with your other machines",
+                    (true, false) => "backed up",
+                    (false, true) => "shared with your other machines",
+                    (false, false) => "no longer backed up or shared",
+                }
+            ),
+        ));
+        Ok(AckReply {})
+    }
+
+    async fn credential_seal_keys(
+        &self,
+        _ctx: &RequestContext,
+        folder: String,
+        passphrase: SecretString,
+    ) -> Result<KeyBundleReply> {
+        self.require_unlocked().await?;
+        let passphrase = self.verified_master(passphrase).await?;
+        let config = self.config().await;
+        let keys = config.settings.synced_keys.clone();
+        if keys.is_empty() {
+            return Err(Error::Validation(
+                "no keys are marked for sharing. Mark one on the Credentials page first.".into(),
+            ));
+        }
+
+        let folder = std::path::PathBuf::from(folder.trim());
+        if !folder.is_absolute() {
+            return Err(Error::Validation("the shared folder must be an absolute path".into()));
+        }
+
+        // Every file of every marked pair: the public half travels with the
+        // private one, because a key without its `.pub` is a key ssh can still
+        // use and a person cannot identify.
+        let mut paths = Vec::new();
+        for key in &keys {
+            paths.push(key.clone());
+            let public = key.with_extension("pub");
+            if public.is_file() {
+                paths.push(public);
+            }
+        }
+
+        let machine = config.machine.label.clone();
+        let bundle = tokio::task::spawn_blocking(move || {
+            superbackup_core::credentials::KeyBundle::gather(&machine, &paths)
+        })
+        .await
+        .map_err(|e| Error::Internal(format!("reading the keys did not finish: {e}")))??;
+
+        let names: Vec<String> = bundle.files.iter().map(|f| f.name.clone()).collect();
+        let sealed = bundle.seal(&passphrase)?;
+        let target = folder.join(superbackup_core::credentials::BUNDLE_FILE);
+        tokio::fs::create_dir_all(&folder)
+            .await
+            .map_err(|e| Error::io(format!("creating {}", folder.display()), e))?;
+        superbackup_core::paths::write_atomic(&target, &sealed)?;
+
+        self.runtime.record_event(Event::info(
+            "cred.sealed",
+            format!(
+                "{} key files were sealed into {}. The bundle is encrypted under the master \
+                 passphrase; the folder holds no usable key.",
+                names.len(),
+                target.display()
+            ),
+        ));
+        Ok(KeyBundleReply {
+            path: target.display().to_string(),
+            files: names,
+            from_machine: None,
+            skipped: Vec::new(),
+        })
+    }
+
+    async fn credential_unseal_keys(
+        &self,
+        _ctx: &RequestContext,
+        folder: String,
+        overwrite: bool,
+        passphrase: SecretString,
+    ) -> Result<KeyBundleReply> {
+        self.require_unlocked().await?;
+        let passphrase = self.verified_master(passphrase).await?;
+        let folder = std::path::PathBuf::from(folder.trim());
+        let source = folder.join(superbackup_core::credentials::BUNDLE_FILE);
+        let sealed = tokio::fs::read(&source).await.map_err(|e| {
+            Error::io(format!("reading {}", source.display()), e)
+        })?;
+
+        let bundle = superbackup_core::credentials::KeyBundle::unseal(&sealed, &passphrase)?;
+        let from_machine = bundle.machine.clone();
+        let all: Vec<String> = bundle.files.iter().map(|f| f.name.clone()).collect();
+
+        let Some(ssh) = superbackup_core::credentials::ssh::ssh_dir() else {
+            return Err(Error::Config("this account has no home directory".into()));
+        };
+        let written = tokio::task::spawn_blocking(move || bundle.write_into(&ssh, overwrite))
+            .await
+            .map_err(|e| Error::Internal(format!("writing the keys did not finish: {e}")))??;
+
+        let skipped: Vec<String> =
+            all.into_iter().filter(|name| !written.contains(name)).collect();
+        self.runtime.record_event(Event::info(
+            "cred.unsealed",
+            format!(
+                "{} key files from \"{from_machine}\" were written into this machine's key \
+                 folder{}.",
+                written.len(),
+                if skipped.is_empty() {
+                    String::new()
+                } else {
+                    format!("; {} already existed and were left alone", skipped.len())
+                }
+            ),
+        ));
+        Ok(KeyBundleReply {
+            path: source.display().to_string(),
+            files: written,
+            from_machine: Some(from_machine),
+            skipped,
+        })
+    }
+
+    async fn git_init(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        branch: String,
+        message: Option<String>,
+    ) -> Result<GitActionReply> {
+        let target = self.git_target(&path).await?;
+        let outcome =
+            superbackup_core::git::init_repository(&target, message.as_deref(), &branch).await?;
+        self.record_git(&outcome);
+        Ok(GitActionReply { outcome })
+    }
+
+    async fn git_add_remote(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        name: String,
+        url: String,
+    ) -> Result<GitActionReply> {
+        let target = self.git_target(&path).await?;
+        let outcome = superbackup_core::git::add_remote(&target, &name, &url).await?;
+        self.record_git(&outcome);
+        Ok(GitActionReply { outcome })
+    }
+
+    async fn git_create_remote(
+        &self,
+        _ctx: &RequestContext,
+        path: String,
+        name: String,
+        owner: Option<String>,
+        private: bool,
+        description: Option<String>,
+        credential: Option<String>,
+    ) -> Result<GitCreatedReply> {
+        self.require_unlocked().await?;
+        let target = self.git_target(&path).await?;
+        let repo = superbackup_core::git::forge::NewRepo {
+            name,
+            owner,
+            description,
+            private,
+        };
+        repo.validate()?;
+
+        let created = match credential {
+            // The GitHub CLI: superbackup holds no token, and the user revokes
+            // it where they granted it.
+            None => superbackup_core::git::forge::create_with_gh(&repo).await?,
+            Some(_) => {
+                return Err(Error::Validation(
+                    "creating a repository with a stored token is not wired up in this build. \
+                     Sign in with the GitHub CLI (`gh auth login`) and superbackup will borrow \
+                     that, which is better anyway: it never holds a token of yours."
+                        .into(),
+                ))
+            }
+        };
+
+        // Point the local repository at it, but push nothing: creating an empty
+        // repository is reversible in one click and pushing a tree that turned
+        // out to hold a .env is not.
+        let remote = superbackup_core::git::add_remote(&target, "origin", &created.clone_url).await?;
+        self.runtime.record_event(Event::info(
+            "git.created",
+            format!(
+                "{} was created on {} and {} now points at it. Nothing has been pushed.",
+                created.full_name,
+                created.via,
+                target.display()
+            ),
+        ));
+        Ok(GitCreatedReply {
+            full_name: created.full_name,
+            clone_url: created.clone_url,
+            web_url: created.web_url,
+            private: created.private,
+            via: created.via,
+            remote_added: remote.ok,
         })
     }
 

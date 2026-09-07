@@ -1496,6 +1496,23 @@ pub mod git {
     pub const OPEN: &str = "Open the folder";
 
     pub const DETAILS: &str = "Show details";
+    pub const NOT_TRACKED: &str = "Not in git";
+    pub const NOT_TRACKED_BODY: &str = "Folders under your sources with no repository in them. They are backed up like everything else; they simply have no history and no remote.";
+    pub const LOOKS_LIKE_A_PROJECT: &str = "Looks like a project";
+    pub const LOOKS_LIKE_A_PROJECT_HINT: &str = "There is a manifest, a source folder or a README in here, so this is probably work rather than a folder somebody made and forgot.";
+    pub const START_TRACKING: &str = "Start tracking";
+    pub const START_TRACKING_HINT: &str = "Turn this folder into a git repository. Nothing is pushed anywhere.";
+    pub const INIT_BRANCH: &str = "Initial branch";
+    pub const INIT_COMMIT: &str = "Make a first commit";
+    pub const INIT_COMMIT_HINT: &str = "Include everything in the folder that .gitignore does not exclude. A repository whose first commit is empty protects nothing.";
+    pub const INIT_MESSAGE: &str = "Commit message";
+    pub const INIT_CREATE: &str = "Also create it on GitHub";
+    pub const INIT_CREATE_HINT: &str = "Uses the GitHub CLI, so superbackup never holds a token of yours. Sign in once with `gh auth login`.";
+    pub const INIT_REMOTE_NAME: &str = "Repository name on GitHub";
+    pub const INIT_PRIVATE: &str = "Private";
+    pub const INIT_PRIVATE_HINT: &str = "On unless you turn it off. This is your own code until you decide otherwise.";
+    pub const INIT_NO_PUSH: &str = "Nothing is pushed. An empty repository is created and this folder is pointed at it; the first push is yours to make once you have looked at what is about to leave the machine.";
+    pub const INIT_CONFIRM: &str = "Start tracking";
     pub const TAB_OVERVIEW: &str = "Overview";
     pub const TAB_BRANCHES: &str = "Branches";
     pub const TAB_WORKTREES: &str = "Working trees";
@@ -1598,6 +1615,46 @@ pub mod job_detail {
     pub const ACTIVITY: &str = "What this job reported";
     pub const NO_ACTIVITY: &str = "Nothing logged for this job yet.";
     pub const ALL_ACTIVITY: &str = "Open the full activity log";
+}
+
+/// The Credentials page: the keys and tokens this machine signs in with.
+pub mod cred {
+    pub const TITLE: &str = "Credentials";
+    pub const RESCAN: &str = "Look again";
+    pub const FAILED: &str = "The keys could not be listed";
+    pub const EMPTY: &str = "No SSH keys found";
+    pub const EMPTY_BODY: &str = "Nothing was found in this account's key folder. Keys made elsewhere will not appear here.";
+    pub const SEALED_TITLE: &str = "Keys are never copied in the clear";
+    pub const SEALED_BODY: &str = "Sharing a key seals it under your master passphrase first, so what lands in OneDrive or a bucket is useless without that passphrase. Superbackup reads a private key only to seal it; nothing here is ever displayed.";
+    pub const ENCRYPTED: &str = "Passphrase";
+    pub const ENCRYPTED_HINT: &str = "This key is protected by its own passphrase, so a copy of the file alone is not enough to use it.";
+    pub const UNENCRYPTED: &str = "No passphrase";
+    pub const UNENCRYPTED_HINT: &str = "This key has no passphrase of its own: anyone holding the file can use it. That is why superbackup will not copy it anywhere unsealed.";
+    pub const WIDE_OPEN: &str = "Readable by others";
+    pub const WIDE_OPEN_HINT: &str = "The file's permissions let other accounts on this machine read it. ssh itself will refuse to use a key like this.";
+    pub const FINGERPRINT_HINT: &str = "The fingerprint a forge shows next to this key in its settings. Click to copy.";
+    pub const BACK_UP: &str = "Back up";
+    pub const BACK_UP_HINT: &str = "Marks this key to be included in a key backup. Recording the choice is all this does in this build — no job copies these yet; sharing below is the route that works today.";
+    pub const SHARE: &str = "Share with my other machines";
+    pub const SHARE_HINT: &str = "Seal this key into a bundle in a shared folder, so another machine can unseal it with the master passphrase.";
+    pub const GH_BODY: &str = "The GitHub CLI is signed in on this machine, and superbackup borrows that rather than holding a token of its own. Nothing is stored here, and you revoke it where you granted it.";
+    pub const ACCOUNT: &str = "Account";
+    pub const SYNC_TITLE: &str = "Shared with your other machines";
+    pub const SYNC_NONE: &str = "No keys are marked for sharing. Tick one above to put it in a bundle other machines can open.";
+    pub const SYNC_FOLDER: &str = "Shared folder";
+    pub const SYNC_FOLDER_HINT: &str = "A folder inside OneDrive, or one a destination copies to a bucket. Only the sealed bundle is written here.";
+    pub const SEAL: &str = "Seal into the folder";
+    pub const SEAL_HINT: &str = "Write the marked keys into the shared folder, encrypted under your master passphrase.";
+    pub const UNSEAL: &str = "Take keys from the folder";
+    pub const UNSEAL_HINT: &str = "Read the bundle in that folder and write its keys into this machine's key folder. Existing keys are left alone unless you say otherwise.";
+    pub const BUNDLE_TITLE_SEAL: &str = "Seal your keys into the shared folder";
+    pub const BUNDLE_TITLE_UNSEAL: &str = "Take keys from the shared folder";
+    pub const BUNDLE_BODY_SEAL: &str = "Every key you marked for sharing is read and encrypted under your master passphrase. What lands in the folder is useless without it.";
+    pub const BUNDLE_BODY_UNSEAL: &str = "The bundle in that folder is decrypted and its keys written into this machine's key folder, with owner-only permissions.";
+    pub const BUNDLE_PASSPHRASE: &str = "Master passphrase";
+    pub const BUNDLE_WHY: &str = "Asked again because an unlocked window is not consent to gather every private key on this machine into one portable file.";
+    pub const BUNDLE_OVERWRITE: &str = "Replace keys that already exist here";
+    pub const BUNDLE_OVERWRITE_HINT: &str = "Off by default: the likeliest mistake here is unsealing an old bundle over the key this machine is currently using.";
 }
 
 pub mod restore {
@@ -1764,6 +1821,52 @@ pub fn prov_stored_hint(pending: usize) -> String {
 /// How much the last backup actually sent here.
 pub fn prov_last_write(bytes: u64) -> String {
     format!("{} written", format::bytes(bytes))
+}
+
+/// What was sealed, and where it went. The location matters: the whole point
+/// is that the user knows which folder now holds the bundle.
+pub fn cred_sealed(files: usize, path: &str) -> String {
+    format!("{files} key files sealed into {path}. The folder holds no usable key.")
+}
+
+/// What was taken out of a bundle, and what was left alone.
+pub fn cred_unsealed(written: usize, machine: &str, skipped: usize) -> String {
+    let mut text = format!("{written} key files from \"{machine}\" written into your key folder");
+    if skipped > 0 {
+        text.push_str(&format!("; {skipped} already existed and were left alone"));
+    }
+    text.push('.');
+    text
+}
+
+/// What was created, and the two facts that matter about it: whether it is
+/// private, and that nothing has been pushed to it.
+pub fn git_created(full_name: &str, private: bool, remote_added: bool) -> String {
+    let visibility = if private { "private" } else { "PUBLIC" };
+    let pointed = if remote_added { " and this folder now points at it" } else { "" };
+    format!("{full_name} created as {visibility}{pointed}. Nothing has been pushed yet.")
+}
+
+pub fn git_init_title(name: &str) -> String {
+    format!("Start tracking {name}")
+}
+
+/// How many of the untracked folders look like actual work. The count is the
+/// finding: three projects with no history is a different sentence from nine
+/// empty folders.
+pub fn git_untracked_projects(count: usize) -> String {
+    match count {
+        1 => "One of these looks like a project with no history and no remote — this backup is its only copy.".to_string(),
+        n => format!("{n} of these look like projects with no history and no remote — this backup is their only copy."),
+    }
+}
+
+pub fn git_entry_count(entries: usize) -> String {
+    match entries {
+        0 => "empty".to_string(),
+        1 => "1 item".to_string(),
+        n => format!("{n} items"),
+    }
 }
 
 pub fn restore_preview_title(name: &str) -> String {
