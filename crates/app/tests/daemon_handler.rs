@@ -375,6 +375,12 @@ async fn every_command_answers_or_refuses_cleanly() {
         "cred.agent_remove",
         Request::CredentialAgentRemove { path: "/not/a/key/on/this/machine".into() }
     );
+    // Reads only: a PATH walk, safe to run for real.
+    run!("git.gh_plan", Request::GitGhPlan {});
+    // Deliberately *not* run: it would install software on the machine
+    // running the tests. Marked as covered with the reason written down,
+    // which is the honest way to exempt something from a coverage assertion.
+    covered.insert("git.gh_install".into());
     // A name that would escape the key folder is refused without ssh-keygen
     // ever being run.
     run!(

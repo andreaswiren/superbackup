@@ -497,10 +497,35 @@ fn no_button_has_its_click_discarded() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui");
     let mut offences = Vec::new();
     visit(&root, &mut |path, text| {
-        for (number, line) in text.lines().enumerate() {
+        let lines: Vec<&str> = text.lines().collect();
+        for (number, line) in lines.iter().enumerate() {
             let trimmed = line.trim_start();
+            // Thrown away outright.
             if trimmed.starts_with("let _ = Button::") || trimmed.starts_with("let _ = widgets::") {
                 offences.push(format!("{}:{}: {}", path.display(), number + 1, trimmed));
+                continue;
+            }
+            // Read, then ignored. Two Cancel buttons were written this way,
+            // each with a comment claiming the modal's own `close` handled it
+            // — which covers the header cross and Escape, and never the
+            // button. An empty body is as dead as a discarded one, and reads
+            // more convincingly, so it is worth its own check.
+            if trimmed.contains(".clicked()") && trimmed.ends_with('{') {
+                let empty = lines[number + 1..]
+                    .iter()
+                    .take_while(|l| !l.trim_start().starts_with('}'))
+                    .all(|l| {
+                        let b = l.trim_start();
+                        b.is_empty() || b.starts_with("//")
+                    });
+                if empty {
+                    offences.push(format!(
+                        "{}:{}: click handled by nothing: {}",
+                        path.display(),
+                        number + 1,
+                        trimmed
+                    ));
+                }
             }
         }
     });

@@ -26,6 +26,7 @@
 
 pub mod cli;
 pub mod forge;
+pub mod gh;
 pub mod parse;
 
 use std::collections::VecDeque;
@@ -38,6 +39,7 @@ use crate::error::{Error, Result};
 use cli::{Git, LOCAL_TIMEOUT, REMOTE_TIMEOUT};
 
 pub use forge::Forge;
+pub use gh::{Installer, Plan as GhPlan};
 pub use parse::{LastCommit, Remote, RemoteLocation, Status};
 
 /// Folders never descended into while looking for repositories.

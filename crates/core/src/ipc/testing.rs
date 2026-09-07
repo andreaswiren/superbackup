@@ -1263,6 +1263,23 @@ impl Handler for MockHandler {
         Ok(AckReply {})
     }
 
+    async fn git_gh_plan(&self, _ctx: &RequestContext) -> Result<GhPlanReply> {
+        let _guard = self.enter("git.gh_plan").await?;
+        Ok(GhPlanReply {
+            plan: crate::git::gh::Plan {
+                installed: true,
+                installer: None,
+                can_run: false,
+                command: None,
+            },
+        })
+    }
+
+    async fn git_gh_install(&self, _ctx: &RequestContext) -> Result<AckReply> {
+        let _guard = self.enter("git.gh_install").await?;
+        Ok(AckReply {})
+    }
+
     async fn credential_agent_remove(
         &self,
         _ctx: &RequestContext,

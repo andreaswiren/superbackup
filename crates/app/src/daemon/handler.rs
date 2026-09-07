@@ -2157,6 +2157,23 @@ impl Handler for DaemonHandler {
         Ok(AckReply {})
     }
 
+    async fn git_gh_plan(&self, _ctx: &RequestContext) -> Result<GhPlanReply> {
+        // A PATH walk and a few `is_file` calls, off the runtime thread
+        // because it touches the filesystem.
+        let plan = tokio::task::spawn_blocking(superbackup_core::git::gh::plan)
+            .await
+            .map_err(|e| Error::Internal(format!("looking for the GitHub CLI failed: {e}")))?;
+        Ok(GhPlanReply { plan })
+    }
+
+    async fn git_gh_install(&self, _ctx: &RequestContext) -> Result<AckReply> {
+        // No parameters, by design: this installs software, and a function
+        // that installs software must not be one a caller can aim.
+        let detail = superbackup_core::git::gh::install().await?;
+        self.runtime.record_event(Event::info("git.gh_installed", detail));
+        Ok(AckReply {})
+    }
+
     async fn credential_agent_remove(
         &self,
         _ctx: &RequestContext,

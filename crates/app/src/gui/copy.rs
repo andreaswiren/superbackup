@@ -1550,6 +1550,18 @@ pub fn git_pulling_all(done: usize, total: usize) -> String {
 }
 
 pub mod git {
+    pub const GH_INSTALL: &str = "Install it now";
+    pub const GH_INSTALLED: &str =
+        "The GitHub CLI is installed. Sign in once with `gh auth login`.";
+    pub const GH_INSTALLING: &str = "Installing…";
+    pub const GH_INSTALL_HINT: &str =
+        "Installs the GitHub CLI with this machine's own package manager.";
+    pub const GH_INSTALL_BODY: &str =
+        "This can take a minute. Afterwards, sign in once with `gh auth login` — superbackup \
+         borrows that sign-in and never holds a token of yours.";
+    pub const COL_FOLDER: &str = "Folder";
+    pub const COL_LOOKS_LIKE: &str = "Looks like";
+    pub const COL_ITEMS: &str = "Items";
     pub const PULL_ALL: &str = "Pull the ones behind";
     pub const PULL_ALL_HINT: &str =
         "Fast-forward every repository whose remote has moved ahead, one at a time. Repositories \

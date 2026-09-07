@@ -575,6 +575,16 @@ impl App {
                 self.ask(Intent::AgentStatus, Request::CredentialAgentStatus {});
                 self.toasts.success(copy::cred::AGENT_ADDED);
             }
+            (Intent::InstallGh, Reply::Ack(_)) => {
+                // The dialog is still open behind this, with its error still
+                // on it. Clearing both is what makes the button look like it
+                // did something.
+                if let Some(Modal::GitInit(state)) = &mut self.modal {
+                    state.installing_gh = false;
+                    state.error = None;
+                }
+                self.toasts.success(copy::git::GH_INSTALLED);
+            }
             (Intent::AgentRemove, Reply::Ack(_)) => {
                 self.ask(Intent::AgentStatus, Request::CredentialAgentStatus {});
                 self.toasts.success(copy::cred::AGENT_REMOVED);
@@ -773,6 +783,17 @@ impl App {
                 // error state, it just cannot open keys unattended.
                 Intent::AgentStatus => self.screens.credentials.agent = None,
                 Intent::AgentAdd | Intent::AgentRemove => self.toasts.warning(payload.message),
+                Intent::InstallGh => {
+                    // Back onto the dialog's own error line, replacing
+                    // the "not installed" message with why installing
+                    // it did not work — which is where the user is
+                    // looking.
+                    if let Some(Modal::GitInit(state)) = &mut self.modal {
+                        state.installing_gh = false;
+                        state.error = Some(payload.message.clone());
+                    }
+                    self.toasts.warning(payload.message);
+                }
                 Intent::GenerateKey(_) => {
                     // The dialog stays open with the reason on it: a name that
                     // is already taken should be retyped, not restarted.

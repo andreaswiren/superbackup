@@ -274,6 +274,13 @@ impl App {
     pub(crate) fn show_job_editor(&mut self, ui: &mut Ui, id: Uuid) {
         let t = theme::tokens(ui.ctx());
         let Some(job) = self.data.job(&id).cloned() else {
+            // The way out of an editor whose job no longer exists.
+            //
+            // The click used to be read into an empty body, under a comment
+            // saying navigation happened "after the borrow ends" — which
+            // nothing did, so the only button on a dead page did nothing and
+            // there was no way back except the rail.
+            let mut leave = false;
             widgets::banner(
                 ui,
                 widgets::BannerKind::Warning,
@@ -281,10 +288,13 @@ impl App {
                 Some("It may have been deleted in another window."),
                 |ui| {
                     if Button::secondary(copy::jobs::TITLE).compact().show(ui).clicked() {
-                        // Navigation happens after the borrow ends.
+                        leave = true;
                     }
                 },
             );
+            if leave {
+                self.go(Route::Jobs);
+            }
             return;
         };
         self.screens.job_editor.load(&job);

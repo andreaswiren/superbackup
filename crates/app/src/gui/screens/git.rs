@@ -108,6 +108,11 @@ impl State {
 
 /// `UX_SPEC` §9. The repository name and its state never drop: without both,
 /// the row says nothing the screen exists to say.
+/// The "Not in git" grid. Fixed columns, so the folder name takes the rest.
+const CANDIDATE_MARK_W: f32 = 150.0;
+const CANDIDATE_ITEMS_W: f32 = 90.0;
+const CANDIDATE_ACTION_W: f32 = 150.0;
+
 const GIT_COLUMNS: [ColumnSpec; 7] = [
     ColumnSpec::keep("repo", 200.0),
     ColumnSpec::keep("state", 150.0),
@@ -260,6 +265,21 @@ impl App {
             return;
         }
 
+        // The whole page scrolls.
+        //
+        // It was the only screen without one, and the repository table is as
+        // long as the machine has repositories — nineteen here — so "Not in
+        // git" sat below the bottom of the window and could not be reached at
+        // all without maximising. A section you can only see at one window
+        // size is a section most people never see.
+        widgets::scroll_area(ui, "git", |ui| {
+            self.show_git_body(ui, &inventory, now);
+        });
+    }
+
+    fn show_git_body(&mut self, ui: &mut Ui, inventory: &Inventory, now: chrono::DateTime<chrono::Utc>) {
+        let t = theme::tokens(ui.ctx());
+        let inventory = inventory.clone();
         self.git_summary(ui, &inventory, now);
         ui.add_space(space::L);
 
@@ -746,50 +766,95 @@ impl App {
         ui.add_space(space::M);
 
         let mut start: Option<superbackup_core::git::Candidate> = None;
+        // The same data grid as the repository table above.
+        //
+        // These were cards-in-a-frame while everything else on the page was a
+        // table, so one list of folders was read one way and the list directly
+        // above it another. Nothing about "not in git" makes it a different
+        // kind of row.
         widgets::table_frame(ui, |ui| {
-            for candidate in &inventory.candidates {
-                let response = widgets::row_card(ui, None, |ui: &mut Ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-                        Icon::Folder.paint(ui.painter(), rect, t.text_muted);
-                        ui.add_space(space::M);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            ui.horizontal(|ui| {
-                                widgets::text(
-                                    ui,
-                                    &candidate.name,
-                                    Type::BodyStrong,
-                                    t.text_primary,
-                                );
-                                if candidate.looks_like_a_project {
-                                    ui.add_space(space::S);
-                                    widgets::badge(
-                                        ui,
-                                        t.warning,
-                                        None,
-                                        copy::git::LOOKS_LIKE_A_PROJECT,
-                                    )
-                                    .on_hover_text(copy::git::LOOKS_LIKE_A_PROJECT_HINT);
-                                }
-                            });
-                            widgets::text(
+            let gap = ui.spacing().item_spacing.x;
+            let name_width =
+                (ui.available_width() - CANDIDATE_MARK_W - CANDIDATE_ITEMS_W
+                    - CANDIDATE_ACTION_W
+                    - gap * 3.0)
+                    .max(200.0);
+            egui_extras::TableBuilder::new(ui)
+                .id_salt("git-candidates")
+                .sense(egui::Sense::click())
+                .cell_layout(Layout::left_to_right(Align::Center))
+                .column(egui_extras::Column::exact(name_width))
+                .column(egui_extras::Column::exact(CANDIDATE_MARK_W))
+                .column(egui_extras::Column::exact(CANDIDATE_ITEMS_W))
+                .column(egui_extras::Column::exact(CANDIDATE_ACTION_W))
+                .header(size::TABLE_HEADER_H, |mut header| {
+                    header.col(|ui| {
+                        widgets::table_header(ui, copy::git::COL_FOLDER, None);
+                    });
+                    header.col(|ui| {
+                        widgets::table_header(ui, copy::git::COL_LOOKS_LIKE, None);
+                    });
+                    header.col(|ui| {
+                        widgets::table_header(ui, copy::git::COL_ITEMS, None);
+                    });
+                    header.col(|ui| {
+                        widgets::table_header(ui, "", None);
+                    });
+                })
+                .body(|body| {
+                    body.rows(size::TABLE_ROW_H, inventory.candidates.len(), |mut row| {
+                        let index = row.index();
+                        let Some(candidate) = inventory.candidates.get(index) else {
+                            return;
+                        };
+                        row.col(|ui| {
+                            let icon_w = 16.0 + space::M;
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                            Icon::Folder.paint(ui.painter(), rect, t.text_muted);
+                            ui.add_space(space::M);
+                            // Name over path, centred in the row: the same
+                            // two-line cell the providers table uses, and for
+                            // the same reason a plain `vertical` would sit it
+                            // against the top edge.
+                            let room = (name_width - icon_w - space::M).max(120.0);
+                            widgets::stacked_cell(
                                 ui,
-                                candidate.path.display().to_string(),
-                                Type::MonoSmall,
-                                t.text_muted,
+                                &[Type::BodyStrong, Type::MonoSmall],
+                                |ui| {
+                                    widgets::elided(
+                                        ui,
+                                        &candidate.name,
+                                        Type::BodyStrong,
+                                        t.text_primary,
+                                        room,
+                                        false,
+                                    );
+                                    widgets::elided(
+                                        ui,
+                                        &candidate.path.display().to_string(),
+                                        Type::MonoSmall,
+                                        t.text_muted,
+                                        room,
+                                        false,
+                                    );
+                                },
                             );
                         });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if Button::secondary(copy::git::START_TRACKING)
-                                .compact()
-                                .show(ui)
-                                .on_hover_text(copy::git::START_TRACKING_HINT)
-                                .clicked()
-                            {
-                                start = Some(candidate.clone());
+                        row.col(|ui| {
+                            if candidate.looks_like_a_project {
+                                widgets::badge(
+                                    ui,
+                                    t.warning,
+                                    None,
+                                    copy::git::LOOKS_LIKE_A_PROJECT,
+                                )
+                                .on_hover_text(copy::git::LOOKS_LIKE_A_PROJECT_HINT);
+                            } else {
+                                widgets::muted_cell(ui, "—");
                             }
+                        });
+                        row.col(|ui| {
                             widgets::text(
                                 ui,
                                 copy::git_entry_count(candidate.entries),
@@ -797,16 +862,26 @@ impl App {
                                 t.text_muted,
                             );
                         });
+                        row.col(|ui| {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if Button::secondary(copy::git::START_TRACKING)
+                                    .compact()
+                                    .show(ui)
+                                    .on_hover_text(copy::git::START_TRACKING_HINT)
+                                    .clicked()
+                                {
+                                    start = Some(candidate.clone());
+                                }
+                            });
+                        });
                     });
                 });
-                let _ = response;
-                ui.add_space(space::S);
-            }
         });
 
         if let Some(candidate) = start {
             self.modal = Some(crate::gui::modals::Modal::GitInit(Box::new(
                 crate::gui::modals::GitInitState {
+                    installing_gh: false,
                     path: candidate.path.clone(),
                     name: candidate.name.clone(),
                     branch: "main".to_string(),

@@ -885,6 +885,12 @@ pub struct AgentStatusReply {
     pub status: crate::credentials::agent::AgentStatus,
 }
 
+/// Whether the GitHub CLI is here, and what could put it here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GhPlanReply {
+    pub plan: crate::git::gh::Plan,
+}
+
 /// The keys and tokens this machine signs in with. Never any key material.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialsReply {
@@ -1511,6 +1517,8 @@ replies! {
         "A key pair that now exists."
     "agent_status" AgentStatus(AgentStatusReply)
         "Which SSH agent is running and what it holds."
+    "gh_plan" GhPlan(GhPlanReply)
+        "Whether the GitHub CLI is installed, and what could install it here."
     "credentials" Credentials(CredentialsReply)
         "The keys and tokens this machine signs in with."
     "key_bundle" KeyBundle(KeyBundleReply)
@@ -2213,6 +2221,16 @@ protocol! {
             params {
                 path: String = "The private key's path, as `cred.list` reported it.",
             }
+
+        "git.gh_plan" GitGhPlan => git_gh_plan -> GhPlan(GhPlanReply)
+            flags []
+            doc "Whether the GitHub CLI is installed, and what could install it here. Reads only: asking installs nothing."
+            params {}
+
+        "git.gh_install" GitGhInstall => git_gh_install -> Ack(AckReply)
+            flags [mutating, elevated]
+            doc "Install the GitHub CLI with this machine's package manager - winget, Homebrew or pacman. THIS INSTALLS SOFTWARE. The package is a fixed identifier and no part of this request influences what is installed. Where the install would need a password superbackup refuses and returns the command to run instead, because a backup tool that asks for a root password is one to stop trusting."
+            params {}
 
         "cred.agent_remove" CredentialAgentRemove => credential_agent_remove -> Ack(AckReply)
             flags [mutating, elevated]

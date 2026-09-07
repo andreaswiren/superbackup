@@ -104,6 +104,8 @@ pub enum Intent {
     /// A key being loaded into the agent.
     AgentAdd,
     AgentRemove,
+    /// Installing the GitHub CLI from the dialog that needed it.
+    InstallGh,
     /// A key pair being made. Carries whether to open it once it exists.
     GenerateKey(bool),
     GitDocument,

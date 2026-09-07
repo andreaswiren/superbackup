@@ -190,6 +190,8 @@ fn sample_requests() -> Vec<Request> {
         Request::CredentialAgentStatus {},
         Request::CredentialAgentAdd { path: "/home/a/.ssh/id_ed25519".into() },
         Request::CredentialAgentRemove { path: "/home/a/.ssh/id_ed25519".into() },
+        Request::GitGhPlan {},
+        Request::GitGhInstall {},
         Request::CredentialSetRole {
             path: "/home/a/.ssh/id_ed25519".into(),
             backed_up: true,

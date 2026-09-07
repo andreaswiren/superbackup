@@ -497,6 +497,9 @@ pub struct GitInitState {
     pub private: bool,
     pub busy: bool,
     pub error: Option<String>,
+    /// True while the GitHub CLI is being installed from this dialog, so the
+    /// button cannot be pressed twice into two package-manager runs.
+    pub installing_gh: bool,
 }
 
 /// Which way the keys are going, and the passphrase that authorises it.
@@ -1986,6 +1989,7 @@ fn show_git_repo(
 fn show_key_bundle(app: &mut App, ctx: &egui::Context, mut state: KeyBundleState) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut go = false;
+    let mut dismissed = false;
     let (close, _) = widgets::modal(
         ctx,
         "sb-key-bundle",
@@ -2042,7 +2046,11 @@ fn show_key_bundle(app: &mut App, ctx: &egui::Context, mut state: KeyBundleState
                     go = true;
                 }
                 if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                    // Handled by `close` below.
+                    // `close` is set by the header cross and by Escape only,
+                    // never by this button — so "handled by close" was a
+                    // comment describing something that did not happen, and
+                    // Cancel did nothing at all.
+                    dismissed = true;
                 }
             });
         },
@@ -2069,7 +2077,7 @@ fn show_key_bundle(app: &mut App, ctx: &egui::Context, mut state: KeyBundleState
         app.ask(Intent::KeyBundle, request);
         return Some(Modal::KeyBundle(state));
     }
-    if close {
+    if close || dismissed {
         None
     } else {
         Some(Modal::KeyBundle(state))
@@ -2087,6 +2095,8 @@ fn show_key_bundle(app: &mut App, ctx: &egui::Context, mut state: KeyBundleState
 fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState>) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut go = false;
+    let mut dismissed = false;
+    let mut install_gh = false;
     let (close, _) = widgets::modal(
         ctx,
         "sb-git-init",
@@ -2160,6 +2170,29 @@ fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState
                 if let Some(error) = &state.error {
                     ui.add_space(space::L);
                     widgets::paragraph(ui, error.clone(), Type::Small, t.danger.tint_text);
+                    // The one error on this dialog with a fix superbackup can
+                    // perform. "Install it from cli.github.com" is a correct
+                    // sentence and a dead end: the user came here to do
+                    // something else, and sending them to a download page is
+                    // how a feature stops being used.
+                    if error.contains("GitHub CLI is not installed") {
+                        ui.add_space(space::M);
+                        ui.horizontal(|ui| {
+                            let mut button = Button::secondary(copy::git::GH_INSTALL)
+                                .icon(Icon::Download)
+                                .enabled(!state.installing_gh);
+                            if state.installing_gh {
+                                button = Button::secondary(copy::git::GH_INSTALLING)
+                                    .icon(Icon::Download)
+                                    .enabled(false);
+                            }
+                            if button.show(ui).on_hover_text(copy::git::GH_INSTALL_HINT).clicked() {
+                                install_gh = true;
+                            }
+                        });
+                        ui.add_space(space::XS);
+                        widgets::paragraph(ui, copy::git::GH_INSTALL_BODY, Type::Small, t.text_muted);
+                    }
                 }
             });
             m.footer(|ui| {
@@ -2174,12 +2207,19 @@ fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState
                     go = true;
                 }
                 if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
-                    // Handled by `close`.
+                    // See the note in `show_key_bundle`: `close` covers the
+                    // cross and Escape, not this.
+                    dismissed = true;
                 }
             });
         },
     );
 
+    if install_gh {
+        state.installing_gh = true;
+        app.ask(Intent::InstallGh, Request::GitGhInstall {});
+        return Some(Modal::GitInit(state));
+    }
     if go {
         state.busy = true;
         state.error = None;
@@ -2193,7 +2233,7 @@ fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState
         );
         return Some(Modal::GitInit(state));
     }
-    if close {
+    if close || dismissed {
         None
     } else {
         Some(Modal::GitInit(state))
