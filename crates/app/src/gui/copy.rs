@@ -2128,6 +2128,28 @@ pub mod set {
     pub const NOTIF_ON_FAILURE: &str = "When a backup fails";
     pub const NOTIF_ON_SUCCESS: &str = "When a backup succeeds";
     pub const NOTIF_ON_SUCCESS_BODY: &str = "Most people prefer silence when everything works.";
+    pub const DISK_TITLE: &str = "Disk space";
+    pub const DISK_LEAD: &str =
+        "Superbackup watches the volumes your destinations are written to, and its own folder.";
+    pub const DISK_WATCH: &str = "Warn me when a disk is running out of room";
+    pub const DISK_WATCH_BODY: &str =
+        "Checked every half hour. A full disk is the one failure that arrives without a fault: \
+         nothing is misconfigured and the backup simply stops working, every night, until \
+         somebody notices. Buckets are not checked — they have no free space to read.";
+    pub const DISK_WARN: &str = "Running low";
+    pub const DISK_WARN_BODY: &str =
+        "Worth knowing about. Recorded in the activity log once, when it starts and again when \
+         it recovers — not every half hour.";
+    pub const DISK_CRITICAL: &str = "Almost full";
+    pub const DISK_CRITICAL_BODY: &str =
+        "Backups here are about to start failing. This one also raises a notification.";
+    pub const DISK_UNIT_PERCENT: &str = "% free";
+    pub const DISK_UNIT_GB: &str = "GB free";
+    pub const DISK_OR: &str = "or under";
+    pub const DISK_ZERO: &str =
+        "Two thresholds because neither works alone: 5% of a 4 TB drive is 200 GB, which is not \
+         worth a warning, and 10 GB free on a 128 GB laptop is genuinely nearly full. Whichever \
+         is breached first raises it. Set either to 0 to switch that rule off.";
     pub const NOTIF_STALE: &str = "When a job has not succeeded for";
     pub const NOTIF_STALE_UNIT: &str = "days";
     pub const NOTIF_STALE_BODY: &str = "Set to 0 to turn this off, here and on the dashboard.";

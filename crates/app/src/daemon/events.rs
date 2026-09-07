@@ -406,7 +406,7 @@ async fn mark_destinations_verified(runtime: &Arc<Runtime>, run: &JobRun) {
 }
 
 /// Show a notification, honouring the start-up grace period.
-async fn notify(runtime: &Arc<Runtime>, notification: Notification) {
+pub(crate) async fn notify(runtime: &Arc<Runtime>, notification: Notification) {
     if runtime.uptime_seconds() < NOTIFICATION_GRACE_SECONDS {
         tracing::debug!(
             title = %notification.title,

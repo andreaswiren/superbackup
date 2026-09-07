@@ -20,6 +20,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use superbackup_core::secret::Secret;
+use superbackup_core::platform::disk::{DiskLevel, DiskReport};
+use superbackup_core::platform::notify::{Notification, NotificationKind};
 use superbackup_core::state::{Event, Severity, Trigger};
 
 use super::runtime::Runtime;
@@ -163,6 +165,149 @@ pub fn spawn_auto_lock(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
             .await;
         }
     })
+}
+
+/// How often the volumes are looked at.
+///
+/// Half an hour. A disk does not fill in seconds, and a check that ran every
+/// tick would spin up sleeping drives to ask a question whose answer changes
+/// slowly.
+const DISK_TICK: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Watch the free space on every volume superbackup writes to.
+///
+/// # Why the daemon and not the window
+///
+/// The failure this catches happens overnight, to a machine nobody is looking
+/// at, and the point is to have said something before the run that could not
+/// write. A check that only ran while the interface was open would report the
+/// problem exactly when the user could already see it.
+///
+/// # Why it does not repeat itself
+///
+/// A volume that is low is low every half hour until somebody clears it. The
+/// level is remembered per volume and an event is written only when it
+/// *changes*, so the activity log gets one line when a disk starts running out
+/// and one when it recovers, rather than forty-eight a day that train the user
+/// to ignore the log.
+pub fn spawn_disk_watch(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut shutdown = runtime.subscribe_shutdown();
+        let mut ticker = tokio::time::interval(DISK_TICK);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut seen: std::collections::HashMap<std::path::PathBuf, DiskLevel> =
+            std::collections::HashMap::new();
+        loop {
+            tokio::select! {
+                _ = shutdown.recv() => return,
+                _ = ticker.tick() => {}
+            }
+            for report in disk_reports(&runtime).await {
+                let previous = seen.insert(report.path.clone(), report.level);
+                if previous == Some(report.level) {
+                    continue;
+                }
+                match report.level {
+                    DiskLevel::Fine => {
+                        // Only worth saying when it *was* a problem, so a
+                        // healthy machine writes nothing at all.
+                        if matches!(previous, Some(DiskLevel::Low | DiskLevel::Critical)) {
+                            runtime.record_event(Event::info(
+                                "disk.recovered",
+                                format!("{} has room again. {}", report.label, report.message()),
+                            ));
+                        }
+                    }
+                    DiskLevel::Low => {
+                        runtime.record_event(Event::new(
+                            Severity::Warning,
+                            "disk.low",
+                            format!("Running out of room. {}", report.message()),
+                        ));
+                    }
+                    DiskLevel::Critical => {
+                        runtime.record_event(Event::new(
+                            Severity::Error,
+                            "disk.critical",
+                            format!(
+                                "Almost out of room, and backups here will start failing. {}",
+                                report.message()
+                            ),
+                        ));
+                        super::events::notify(
+                            &runtime,
+                            Notification::new(
+                                NotificationKind::Info,
+                                "A backup disk is almost full",
+                                report.message(),
+                            ),
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Every volume worth looking at, judged against the user's thresholds.
+///
+/// The destinations that are folders on this machine, plus superbackup's own
+/// data directory — which holds the vault, the state and the staging folder,
+/// and whose filling up breaks things that have nothing to do with any one
+/// destination.
+///
+/// S3 destinations are absent on purpose: a bucket has no free space to read,
+/// and inventing a figure for one would be worse than saying nothing.
+pub async fn disk_reports(runtime: &Arc<Runtime>) -> Vec<DiskReport> {
+    let config = { runtime.store.lock().await.config().clone() };
+    let settings = config.settings.disk_space;
+    if !settings.enabled {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    // One report per *volume*, not per destination: three folders on D: are
+    // one disk, and three identical warnings about it is two too many.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for destination in &config.destinations {
+        if !destination.enabled {
+            continue;
+        }
+        let Some(path) = destination.kind.local_path() else { continue };
+        if !seen.insert(volume_key(path)) {
+            continue;
+        }
+        if let Some(report) =
+            superbackup_core::platform::disk::assess(path, &destination.name, &settings)
+        {
+            out.push(report);
+        }
+    }
+    let own = runtime.paths.data_dir.clone();
+    if seen.insert(volume_key(&own)) {
+        if let Some(report) = superbackup_core::platform::disk::assess(
+            &own,
+            "Superbackup's own folder",
+            &settings,
+        ) {
+            out.push(report);
+        }
+    }
+    out
+}
+
+/// What counts as "the same disk" for the purpose of not saying it twice.
+///
+/// The path's root: `C:\` on Windows, `/` on Unix. Crude — two mount points
+/// under `/` are one key when they are really two filesystems — but wrong in
+/// the safe direction, because the cost is one warning instead of two rather
+/// than a volume nobody was told about.
+fn volume_key(path: &std::path::Path) -> String {
+    path.components()
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Try to open the vault from the OS keychain at startup.

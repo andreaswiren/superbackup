@@ -379,6 +379,10 @@ pub struct Settings {
     pub skip_on_metered: bool,
     /// Do not start scheduled jobs while running on battery.
     pub skip_on_battery: bool,
+    /// Warn when a volume superbackup writes to is running out of room.
+    /// See [`crate::platform::disk`].
+    #[serde(default)]
+    pub disk_space: crate::platform::disk::DiskSpaceSettings,
     /// Run schedules that elapsed while the PC was asleep or powered off.
     pub run_missed_on_start: bool,
     /// Wake this machine from sleep when a scheduled job is due, and hold it
@@ -435,6 +439,7 @@ impl Default for Settings {
             skip_on_metered: true,
             skip_on_battery: false,
             run_missed_on_start: true,
+            disk_space: Default::default(),
             wake_for_backups: false,
             auto_lock_minutes: 30,
             use_os_keychain: false,

@@ -906,6 +906,64 @@ impl App {
             );
         }
 
+        // -- disk space ---------------------------------------------------
+        ui.add_space(space::H3);
+        widgets::form_group(ui, copy::set::DISK_TITLE, Some(copy::set::DISK_LEAD));
+
+        let mut disk = self.data.settings.disk_space;
+        let on = disk.enabled;
+        if widgets::toggle(ui, &mut disk.enabled, copy::set::DISK_WATCH, None, true).clicked() {
+            changed = true;
+        }
+        ui.add_space(space::S);
+        widgets::paragraph_at(ui, copy::set::DISK_WATCH_BODY, Type::Small, t.text_muted, 560.0);
+
+        ui.add_space(space::L);
+        // Two thresholds per level, because neither works alone: a percentage
+        // is meaningless on a 4 TB drive and an absolute is meaningless on a
+        // 128 GB one. Either being breached raises the warning.
+        for (title, body, percent, gigabytes) in [
+            (
+                copy::set::DISK_WARN,
+                copy::set::DISK_WARN_BODY,
+                &mut disk.warn_percent,
+                &mut disk.warn_gigabytes,
+            ),
+            (
+                copy::set::DISK_CRITICAL,
+                copy::set::DISK_CRITICAL_BODY,
+                &mut disk.critical_percent,
+                &mut disk.critical_gigabytes,
+            ),
+        ] {
+            widgets::text(ui, title, Type::BodyStrong, t.text_primary);
+            ui.add_space(space::XS);
+            widgets::paragraph_at(ui, body, Type::Small, t.text_muted, 560.0);
+            ui.add_space(space::S);
+            ui.horizontal(|ui| {
+                let mut p = *percent as u32;
+                widgets::number(ui, &mut p, 0..=50, copy::set::DISK_UNIT_PERCENT, on, title);
+                if p as u8 != *percent {
+                    *percent = p as u8;
+                    changed = true;
+                }
+                ui.add_space(space::M);
+                widgets::text(ui, copy::set::DISK_OR, Type::Small, t.text_muted);
+                ui.add_space(space::M);
+                let mut g = *gigabytes;
+                widgets::number(ui, &mut g, 0..=1024, copy::set::DISK_UNIT_GB, on, title);
+                if g != *gigabytes {
+                    *gigabytes = g;
+                    changed = true;
+                }
+            });
+            ui.add_space(space::L);
+        }
+        widgets::paragraph_at(ui, copy::set::DISK_ZERO, Type::Small, t.text_muted, 560.0);
+        if changed {
+            self.data.settings.disk_space = disk;
+        }
+
         if changed {
             self.save_settings();
         }

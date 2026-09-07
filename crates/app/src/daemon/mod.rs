@@ -270,6 +270,10 @@ pub async fn run(
     events::pump_engine_events(Arc::clone(&runtime), scheduler.subscribe());
     runtime.set_scheduler(scheduler.clone());
     lifecycle::spawn_auto_lock(Arc::clone(&runtime));
+    // Watch the volumes destinations are written to. A disk that fills
+    // overnight is the one failure that arrives without a fault, and the
+    // point is to have said so before the run that could not write.
+    lifecycle::spawn_disk_watch(Arc::clone(&runtime));
 
     // 8. An unattended machine unlocks itself here, when the user asked for it.
     lifecycle::try_keychain_unlock(&runtime).await;

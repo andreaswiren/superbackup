@@ -39,6 +39,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 pub mod autostart;
+pub mod disk;
 pub mod gdrive;
 pub mod identity;
 pub mod notify;
@@ -57,6 +58,7 @@ pub use gdrive::{DriveMode, GoogleDriveAccount};
 pub use identity::{list_machines, list_machines_for, write_manifest, MachineRecord};
 pub use notify::{Notification, NotificationKind, Notifier, NotifyOutcome};
 pub use onedrive::{OneDriveAccount, OneDriveKind, SyncState, Validation, ValidationIssue};
+pub use disk::{DiskLevel, DiskReport, DiskSpaceSettings};
 pub use power::{Metered, PowerSource, PowerStatus, WakeDetector};
 pub use wake::{StayAwake, WakeSupport, WakeTimer};
 pub use service::{ServiceOptions, ServiceScope, ServiceState, ServiceStatus};
