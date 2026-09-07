@@ -824,7 +824,20 @@ impl App {
         let mut view_error = false;
         let mut menu_action: Option<&'static str> = None;
 
-        let frame = widgets::card(ui, |ui| {
+        // The card senses its own clicks, registered *before* its contents.
+        //
+        // egui breaks a hit-test tie by taking the last widget registered, and
+        // an `interact` over the card's rect after the buttons are drawn is
+        // exactly that: it sat on top of "Run now", swallowed the click, and
+        // opened the job instead of starting it. The button never saw the
+        // press at all, so the job did not quietly run underneath — it simply
+        // did not run.
+        //
+        // `UiBuilder::sense` registers the container's own widget when the Ui
+        // is created, so every control inside it is registered later and wins.
+        let frame = ui
+            .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+                widgets::card(ui, |ui| {
             ui.set_height(size::JOB_CARD_H - 32.0);
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = space::S;
@@ -995,10 +1008,12 @@ impl App {
                     });
                 }
             }
-        });
+                })
+            })
+            .response;
 
         // The 3px status spine — the only place a status colour touches a card.
-        let rect = frame.response.rect;
+        let rect = frame.rect;
         ui.painter().rect_filled(
             Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
             egui::CornerRadius { nw: 10, sw: 10, ne: 0, se: 0 },
@@ -1018,15 +1033,10 @@ impl App {
         }
 
         // The whole card opens the job — except where a control on it has just
-        // been used.
-        //
-        // This `interact` covers the card's full rectangle and runs after the
-        // buttons are drawn, so a click on "Run now" registered here as well:
-        // the job *did* start, and then the editor opened on top of it, which
-        // from the outside looked exactly like the button navigating instead
-        // of running. Anything already handled this frame wins.
+        // been used. The guard stays as a second line of defence, but the
+        // ordering above is what actually keeps the buttons working.
         let handled = run || enable || view_error || menu_action.is_some();
-        let card = ui.interact(rect, egui::Id::new("job-card").with(job.id), Sense::click());
+        let card = frame.clone();
         if card.clicked() && !handled {
             open = true;
         }

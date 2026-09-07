@@ -1656,6 +1656,19 @@ pub mod git {
 
 /// One job's status page.
 pub mod job_detail {
+    pub const SNAPSHOTS: &str = "Snapshots";
+    pub const SNAPSHOTS_SEARCH: &str = "Search by date, time or id";
+    pub const SNAPSHOTS_EMPTY: &str =
+        "No snapshots yet. They appear here once this job has written to a repository.";
+    pub const SNAPSHOTS_NO_MATCH: &str = "No snapshot matches that.";
+    pub const SNAPSHOTS_NONE: &str =
+        "This job writes only to folder mirrors, which keep a plain copy rather than snapshots.";
+    pub const COL_SIZE: &str = "Size";
+    pub const COL_FILES: &str = "Files";
+    pub const COL_SNAPSHOT: &str = "Snapshot";
+    pub const SNAPSHOT_OPEN: &str = "Browse";
+    pub const SNAPSHOT_OPEN_HINT: &str =
+        "Open this snapshot in Restore, to look inside it or take files out of it.";
     pub const GONE: &str = "That job no longer exists";
     pub const GONE_BODY: &str = "It was deleted, or the configuration was replaced.";
     pub const NEVER_RUN: &str = "Never run";

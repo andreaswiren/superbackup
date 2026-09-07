@@ -3034,6 +3034,122 @@ pub fn menu_item_danger(ui: &mut Ui, label: &str, enabled: bool) -> bool {
 mod tests {
     use super::*;
 
+
+    /// A clickable container must not swallow its own buttons' clicks.
+    ///
+    /// egui breaks a hit-test tie by taking the **last** widget registered —
+    /// "in case of a tie, take the last one = the one on top". So a container
+    /// made clickable by an `ui.interact` over its rect *after* its contents
+    /// are drawn sits on top of every button inside it. That is what the
+    /// dashboard's job cards did: "Run now" never saw the press, and the card
+    /// opened the job instead of starting it.
+    ///
+    /// `UiBuilder::sense` registers the container's own widget when the Ui is
+    /// created, before its children, so the children win. This drives a real
+    /// click through a real context to prove which, because the difference is
+    /// invisible in the source and I had assumed the opposite.
+    #[test]
+    fn a_clickable_container_does_not_steal_its_buttons_clicks() {
+        // Where both the container and the button are.
+        let click_at = egui::pos2(50.0, 50.0);
+
+        // `true` = the inner button reported the click.
+        fn run(late_interact: bool, click_at: egui::Pos2) -> (bool, bool) {
+            let ctx = egui::Context::default();
+            ctx.set_fonts(egui::FontDefinitions::empty());
+            let mut button_clicked = false;
+            let mut container_clicked = false;
+
+            // Two passes: the first lays out, the second delivers the click.
+            for pass in 0..2 {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(200.0, 200.0),
+                    )),
+                    ..Default::default()
+                };
+                if pass == 1 {
+                    input.events = vec![
+                        egui::Event::PointerMoved(click_at),
+                        egui::Event::PointerButton {
+                            pos: click_at,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: Default::default(),
+                        },
+                        egui::Event::PointerButton {
+                            pos: click_at,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: Default::default(),
+                        },
+                    ];
+                }
+                let _ = ctx.run(input, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let area = egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(120.0, 120.0),
+                        );
+                        if late_interact {
+                            // The broken shape: contents first, container after.
+                            let inner = ui.allocate_new_ui(
+                                egui::UiBuilder::new().max_rect(area),
+                                |ui| {
+                                    ui.allocate_response(
+                                        egui::vec2(100.0, 100.0),
+                                        Sense::click(),
+                                    )
+                                },
+                            );
+                            button_clicked = inner.inner.clicked();
+                            let card = ui.interact(
+                                area,
+                                egui::Id::new("late-card"),
+                                Sense::click(),
+                            );
+                            container_clicked = card.clicked();
+                        } else {
+                            // The fixed shape: the container senses itself.
+                            let inner = ui.scope_builder(
+                                egui::UiBuilder::new()
+                                    .max_rect(area)
+                                    .sense(Sense::click()),
+                                |ui| {
+                                    ui.allocate_response(
+                                        egui::vec2(100.0, 100.0),
+                                        Sense::click(),
+                                    )
+                                },
+                            );
+                            button_clicked = inner.inner.clicked();
+                            container_clicked = inner.response.clicked();
+                        }
+                    });
+                });
+            }
+            (button_clicked, container_clicked)
+        }
+
+        // The premise: registered late, the container takes the click and the
+        // button never sees it. This is the bug, asserted so the test would
+        // have failed against the old code.
+        let (button, container) = run(true, click_at);
+        assert!(
+            !button && container,
+            "a container interacted with after its contents steals the click \
+             (button: {button}, container: {container})"
+        );
+
+        // The fix: the button wins.
+        let (button, _container) = run(false, click_at);
+        assert!(
+            button,
+            "a container that senses itself must leave its buttons clickable"
+        );
+    }
+
     /// A fixed-width cell must occupy the width it asked for.
     ///
     /// `allocate_ui_with_layout` does not, and egui says so in its own

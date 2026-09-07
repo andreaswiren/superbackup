@@ -662,6 +662,9 @@ impl App {
             (Intent::Snapshots(id), Reply::Snapshots(list)) => {
                 self.screens.restore.snapshots_arrived(*id, list.snapshots.clone());
             }
+            (Intent::JobSnapshots(_), Reply::Snapshots(list)) => {
+                self.screens.job_detail.arrived(list.snapshots.clone());
+            }
             (Intent::Browse(id, path), Reply::Listing(listing)) => {
                 self.screens.restore.listing_arrived(*id, path.clone(), listing.clone());
             }
@@ -817,6 +820,9 @@ impl App {
                     self.screens.destination_editor.repository_failed(payload)
                 }
                 Intent::Snapshots(_) | Intent::Browse(_, _) => self.screens.restore.failed(payload),
+                Intent::JobSnapshots(_) => {
+                    self.screens.job_detail.failed(payload.message);
+                }
                 Intent::PreviewJob(job_id, _) => self.screens.preview.failed(job_id, payload),
                 Intent::KopiaProbe => self.screens.settings.kopia_probe_failed(payload),
                 Intent::CheckKey(id) => {

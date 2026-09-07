@@ -113,6 +113,10 @@ pub enum Intent {
     /// back anyway.
     GitAction,
     Snapshots(uuid::Uuid),
+    /// The same listing, but for one job's own page rather than the
+    /// restore browser. A separate intent so a reply cannot land in the
+    /// wrong screen's cache.
+    JobSnapshots(uuid::Uuid),
     Browse(uuid::Uuid, String),
     Restore,
     /// A job run was requested; the name is carried so the toast can say which.

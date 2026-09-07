@@ -32,6 +32,84 @@ use crate::gui::widgets::{self, Button};
 /// below it are still on the same screen.
 const RECENT_RUNS: usize = 8;
 
+/// The snapshot table's geometry. Shared by its header and its rows, and kept
+/// by `fixed_cell` rather than requested and quietly given up.
+const SNAPSHOT_HEADER_H: f32 = 18.0;
+const SNAPSHOT_ROW_H: f32 = 26.0;
+const SNAP_WHEN_W: f32 = 150.0;
+const SNAP_SIZE_W: f32 = 90.0;
+const SNAP_FILES_W: f32 = 90.0;
+
+/// What the job's own snapshot list is showing.
+///
+/// Kept per job rather than globally: opening one job's page and then
+/// another's must not leave the second showing the first's snapshots while it
+/// waits, which is the shape of bug where somebody restores from the wrong
+/// backup.
+#[derive(Default)]
+pub struct State {
+    /// The job whose snapshots `snapshots` holds.
+    pub job: Option<Uuid>,
+    /// Which of the job's destinations is being listed.
+    pub destination: Option<Uuid>,
+    pub snapshots: Vec<superbackup_core::ipc::protocol::SnapshotInfo>,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// Free text over the date, the time and the snapshot id.
+    pub search: String,
+}
+
+impl State {
+    /// Switching jobs clears the list rather than leaving the last one on
+    /// screen under a new heading.
+    pub fn focus(&mut self, job: Uuid) -> bool {
+        if self.job == Some(job) {
+            return false;
+        }
+        *self = State { job: Some(job), ..State::default() };
+        true
+    }
+
+    pub fn requested(&mut self, destination: Uuid) {
+        self.destination = Some(destination);
+        self.loading = true;
+        self.error = None;
+    }
+
+    pub fn arrived(
+        &mut self,
+        snapshots: Vec<superbackup_core::ipc::protocol::SnapshotInfo>,
+    ) {
+        self.snapshots = snapshots;
+        self.loading = false;
+        self.error = None;
+    }
+
+    pub fn failed(&mut self, why: String) {
+        self.loading = false;
+        self.error = Some(why);
+    }
+
+    /// The snapshots matching the search box.
+    ///
+    /// Matched against the *rendered* local date and time as well as the id,
+    /// so typing "2026-08-15" or "14:" finds what the user is looking at
+    /// rather than what the wire format happens to say.
+    pub fn matching(&self) -> Vec<&superbackup_core::ipc::protocol::SnapshotInfo> {
+        let needle = self.search.trim().to_lowercase();
+        self.snapshots
+            .iter()
+            .filter(|s| {
+                if needle.is_empty() {
+                    return true;
+                }
+                let shown = crate::gui::format::absolute(s.created_at).to_lowercase();
+                shown.contains(&needle) || s.id.to_lowercase().contains(&needle)
+            })
+            .collect()
+    }
+}
+
 impl App {
     pub(crate) fn job_detail_actions(&mut self, ui: &mut Ui, id: Uuid) {
         let Some(job) = self.data.job(&id).cloned() else { return };
@@ -78,10 +156,247 @@ impl App {
             self.job_detail_running(ui, id, now);
             self.job_detail_runs(ui, id, now);
             ui.add_space(space::XL);
+            self.job_detail_snapshots(ui, &job);
+            ui.add_space(space::XL);
             self.job_detail_events(ui, id, now);
             ui.add_space(space::XL);
             let _ = t;
         });
+    }
+
+    /// The job's own snapshots, searchable, with a way into each.
+    ///
+    /// # Why here and not only in Restore
+    ///
+    /// Restore starts from a *destination* and asks you to work out which of
+    /// its snapshots belong to the job you had in mind. Starting from the job
+    /// is the other direction, and it is the one somebody has in mind when
+    /// they are already looking at a job's page wondering what it holds.
+    ///
+    /// The list is asked for once per job per visit rather than on every
+    /// frame: it is a call against remote storage, and a page that made one on
+    /// every repaint would be unusable on exactly the setup it describes.
+    fn job_detail_snapshots(&mut self, ui: &mut Ui, job: &superbackup_core::model::Job) {
+        let t = theme::tokens(ui.ctx());
+
+        // Which destination to list. The job's first usable one, unless the
+        // user has picked another below.
+        let usable: Vec<(Uuid, String)> = job
+            .destination_ids
+            .iter()
+            .filter_map(|id| self.data.destination(id))
+            .filter(|d| d.enabled && d.kind.is_repository())
+            .map(|d| (d.id, d.name.clone()))
+            .collect();
+
+        widgets::section_header(
+            ui,
+            copy::job_detail::SNAPSHOTS,
+            Some(self.screens.job_detail.snapshots.len()),
+            |_| {},
+        );
+        ui.add_space(space::M);
+
+        if usable.is_empty() {
+            // A mirror has no snapshots to list, and saying "none" would read
+            // as "this job has never run".
+            widgets::paragraph(ui, copy::job_detail::SNAPSHOTS_NONE, Type::Small, t.text_muted);
+            return;
+        }
+
+        // Fresh page, or a job switched under it: ask once.
+        let switched = self.screens.job_detail.focus(job.id);
+        let target = self
+            .screens
+            .job_detail
+            .destination
+            .filter(|id| usable.iter().any(|(d, _)| d == id))
+            .unwrap_or(usable[0].0);
+        if switched || self.screens.job_detail.destination.is_none() {
+            self.ask_job_snapshots(job, target);
+        }
+
+        // Where from, when the job writes to more than one place. A
+        // repository per destination means a different set of snapshots in
+        // each, and "the job's snapshots" is not one list.
+        let mut chosen = target;
+        if usable.len() > 1 {
+            let labels: Vec<&str> = usable.iter().map(|(_, name)| name.as_str()).collect();
+            let mut index = usable.iter().position(|(id, _)| *id == target).unwrap_or(0);
+            widgets::segmented(ui, &mut index, &labels);
+            chosen = usable[index.min(usable.len() - 1)].0;
+            ui.add_space(space::M);
+        }
+
+        widgets::Field::new()
+            .width(280.0)
+            .placeholder(copy::job_detail::SNAPSHOTS_SEARCH)
+            .show(ui, &mut self.screens.job_detail.search);
+        ui.add_space(space::M);
+
+        if self.screens.job_detail.loading {
+            widgets::spinner(ui, 18.0, t.accent);
+            return;
+        }
+        if let Some(error) = self.screens.job_detail.error.clone() {
+            widgets::paragraph(ui, error, Type::Small, t.danger.tint_text);
+            return;
+        }
+
+        let matching = self.screens.job_detail.matching();
+        if matching.is_empty() {
+            let empty = if self.screens.job_detail.snapshots.is_empty() {
+                copy::job_detail::SNAPSHOTS_EMPTY
+            } else {
+                copy::job_detail::SNAPSHOTS_NO_MATCH
+            };
+            widgets::paragraph(ui, empty, Type::Small, t.text_muted);
+            return;
+        }
+
+        let mut restore: Option<String> = None;
+        widgets::table_frame(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_min_height(SNAPSHOT_HEADER_H);
+                widgets::fixed_cell(
+                    ui,
+                    SNAP_WHEN_W,
+                    SNAPSHOT_HEADER_H,
+                    Layout::left_to_right(Align::Center),
+                    |ui| widgets::table_header(ui, copy::job_detail::COL_WHEN, None),
+                );
+                widgets::fixed_cell(
+                    ui,
+                    SNAP_SIZE_W,
+                    SNAPSHOT_HEADER_H,
+                    Layout::right_to_left(Align::Center),
+                    |ui| widgets::table_header(ui, copy::job_detail::COL_SIZE, None),
+                );
+                widgets::fixed_cell(
+                    ui,
+                    SNAP_FILES_W,
+                    SNAPSHOT_HEADER_H,
+                    Layout::right_to_left(Align::Center),
+                    |ui| widgets::table_header(ui, copy::job_detail::COL_FILES, None),
+                );
+                ui.add_space(space::M);
+                let rest = ui.available_width().max(60.0);
+                widgets::fixed_cell(
+                    ui,
+                    rest,
+                    SNAPSHOT_HEADER_H,
+                    Layout::left_to_right(Align::Center),
+                    |ui| widgets::table_header(ui, copy::job_detail::COL_SNAPSHOT, None),
+                );
+            });
+            widgets::divider(ui);
+
+            for snapshot in matching {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(SNAPSHOT_ROW_H + 6.0);
+                    widgets::fixed_cell(
+                        ui,
+                        SNAP_WHEN_W,
+                        SNAPSHOT_ROW_H,
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            widgets::text(
+                                ui,
+                                format::absolute(snapshot.created_at),
+                                Type::Small,
+                                t.text_primary,
+                            )
+                            .on_hover_text(format::absolute_zoned(snapshot.created_at));
+                        },
+                    );
+                    widgets::fixed_cell(
+                        ui,
+                        SNAP_SIZE_W,
+                        SNAPSHOT_ROW_H,
+                        Layout::right_to_left(Align::Center),
+                        |ui| {
+                            widgets::text(
+                                ui,
+                                snapshot
+                                    .total_bytes
+                                    .map(format::bytes)
+                                    .unwrap_or_else(|| "—".to_string()),
+                                Type::MonoSmall,
+                                t.text_secondary,
+                            );
+                        },
+                    );
+                    widgets::fixed_cell(
+                        ui,
+                        SNAP_FILES_W,
+                        SNAPSHOT_ROW_H,
+                        Layout::right_to_left(Align::Center),
+                        |ui| {
+                            widgets::text(
+                                ui,
+                                snapshot
+                                    .file_count
+                                    .map(format::count)
+                                    .unwrap_or_else(|| "—".to_string()),
+                                Type::MonoSmall,
+                                t.text_muted,
+                            );
+                        },
+                    );
+                    ui.add_space(space::M);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if Button::secondary(copy::job_detail::SNAPSHOT_OPEN)
+                            .compact()
+                            .show(ui)
+                            .on_hover_text(copy::job_detail::SNAPSHOT_OPEN_HINT)
+                            .clicked()
+                        {
+                            restore = Some(snapshot.id.clone());
+                        }
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            let room = ui.available_width().max(60.0);
+                            widgets::elided(
+                                ui,
+                                &snapshot.id,
+                                Type::MonoSmall,
+                                t.text_muted,
+                                room,
+                                false,
+                            );
+                        });
+                    });
+                });
+                widgets::divider(ui);
+            }
+        });
+
+        if chosen != target {
+            self.ask_job_snapshots(job, chosen);
+        }
+        if let Some(id) = restore {
+            // Hand the restore browser the destination *and* the snapshot, so
+            // it opens on the one that was clicked rather than on whatever it
+            // was showing last.
+            self.screens.restore.select(target);
+            self.screens.restore.selected_snapshot = Some(id);
+            self.go(Route::Restore);
+        }
+    }
+
+    /// Ask the daemon for this job's snapshots at one destination.
+    fn ask_job_snapshots(&mut self, job: &superbackup_core::model::Job, destination: Uuid) {
+        self.screens.job_detail.requested(destination);
+        self.ask(
+            crate::gui::daemon::Intent::JobSnapshots(destination),
+            superbackup_core::ipc::protocol::Request::SnapshotList {
+                destination: destination.to_string(),
+                // Filtered by the daemon rather than here: a job that shares a
+                // destination with five others would otherwise pull every
+                // snapshot in the repository across the wire to show eight.
+                job: Some(job.id.to_string()),
+                limit: 0,
+            },
+        );
     }
 
     /// What this job is, and what it did last.
