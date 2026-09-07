@@ -1200,6 +1200,10 @@ pub mod prov {
     pub const TITLE: &str = "Storage providers";
     pub const NEW: &str = "Add a storage provider";
     pub const SEARCH: &str = "Search providers";
+    pub const COL_STORED: &str = "Stored";
+    pub const COL_LAST_WRITE: &str = "Last write";
+    pub const NOT_MEASURED: &str = "not measured";
+    pub const NEVER_WRITTEN: &str = "never";
     pub const USED_BY_NONE: &str = "Not used yet";
     pub const NO_TLS: &str = "This provider is set to plain HTTP.";
 
@@ -1492,6 +1496,31 @@ pub mod git {
     pub const OPEN: &str = "Open the folder";
 
     pub const DETAILS: &str = "Show details";
+    pub const TAB_OVERVIEW: &str = "Overview";
+    pub const TAB_BRANCHES: &str = "Branches";
+    pub const TAB_WORKTREES: &str = "Working trees";
+    pub const TAB_DOCUMENTS: &str = "Documents";
+    pub const OV_BRANCH: &str = "Checked out";
+    pub const OV_LAST_COMMIT: &str = "Last commit";
+    pub const OV_SUBJECT: &str = "Message";
+    pub const OV_AUTHOR: &str = "Author";
+    pub const OV_CHANGES: &str = "Working tree";
+    pub const NEVER: &str = "never";
+    pub const IN_SYNC: &str = "Level with its upstream.";
+    pub const NEVER_PUSHED_BODY: &str =
+        "A branch with no upstream has never left this machine. Its commits exist here and in this backup, and nowhere else.";
+    pub const COL_TRACKING: &str = "Tracking";
+    pub const DETACHED: &str = "Detached HEAD";
+    pub const DETACHED_HINT: &str =
+        "This tree is on no branch. Commits made here become unreachable at the next checkout.";
+    pub const PRUNABLE_HINT: &str =
+        "git considers this working tree stale: the folder it points at is gone. `git worktree prune` removes the record.";
+    pub const WORKTREES_BODY: &str =
+        "Each working tree has its own checked-out branch and its own uncommitted changes. Only one of them is the folder shown in the list.";
+    pub const NO_DOCUMENTS: &str = "No README, CHANGELOG, LICENSE or CONTRIBUTING in this repository's root folder.";
+    pub const DOCUMENTS_NOTE: &str =
+        "Shown as text. Nothing in a document is fetched, and a link opens only when you click it.";
+
     pub const BRANCHES: &str = "Branches";
     pub const WORKTREES: &str = "Working trees";
     pub const REMOTES: &str = "Remotes";
@@ -1559,6 +1588,11 @@ pub mod job_detail {
     pub const NO_DESTINATIONS: &str = "No destinations, so this job has nowhere to write.";
     pub const MISSING_DEST: &str = "This destination no longer exists.";
     pub const RUNS: &str = "Recent runs";
+    pub const COL_WHEN: &str = "Started";
+    pub const COL_RESULT: &str = "Result";
+    pub const COL_UPLOADED: &str = "Uploaded";
+    pub const COL_TOOK: &str = "Took";
+    pub const COL_WHERE: &str = "Destinations";
     pub const NO_RUNS: &str = "This job has not run yet.";
     pub const ALL_RUNS: &str = "See every run in Activity";
     pub const ACTIVITY: &str = "What this job reported";
@@ -1671,6 +1705,69 @@ pub fn restore_browse_restore_n(count: usize) -> String {
 /// find out about days later.
 pub fn restore_finished_toast(target: &str) -> String {
     format!("Restore finished into {target}.")
+}
+
+/// "3 staged, 1 unstaged, 27 untracked" — or that there is nothing to report,
+/// which is the answer people are usually hoping for.
+pub fn git_changes(staged: u32, unstaged: u32, untracked: u32, conflicted: u32) -> String {
+    let mut parts = Vec::new();
+    for (n, what) in [
+        (staged, "staged"),
+        (unstaged, "unstaged"),
+        (untracked, "untracked"),
+        (conflicted, "conflicted"),
+    ] {
+        if n > 0 {
+            parts.push(format!("{n} {what}"));
+        }
+    }
+    if parts.is_empty() {
+        return "clean".to_string();
+    }
+    parts.join(", ")
+}
+
+/// How many branches were never pushed. The count is the finding.
+pub fn git_never_pushed(count: usize) -> String {
+    match count {
+        1 => "1 branch has never been pushed".to_string(),
+        n => format!("{n} branches have never been pushed"),
+    }
+}
+
+pub fn git_worktrees(count: usize) -> String {
+    format!("{count} working trees")
+}
+
+/// The heading over a file read out of a backup. It says plainly that this is
+/// a copy from a snapshot, because the one thing a reader must not conclude is
+/// that they are looking at the live file.
+/// Which destinations refused, by name. "1 destination(s) failed" told the
+/// reader a count when what they needed was which one.
+pub fn job_runs_failed(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => format!("{one} failed"),
+        many => format!("{} failed", many.join(", ")),
+    }
+}
+
+/// What the stored figure covers, and what it does not.
+pub fn prov_stored_hint(pending: usize) -> String {
+    match pending {
+        0 => "Space occupied across every destination on this account, as last measured.".into(),
+        1 => "One destination on this account has not been measured yet, so the real figure is larger.".into(),
+        n => format!("{n} destinations on this account have not been measured yet, so the real figure is larger."),
+    }
+}
+
+/// How much the last backup actually sent here.
+pub fn prov_last_write(bytes: u64) -> String {
+    format!("{} written", format::bytes(bytes))
+}
+
+pub fn restore_preview_title(name: &str) -> String {
+    format!("{name} — from the backup")
 }
 
 pub fn restore_options_title(count: usize) -> String {

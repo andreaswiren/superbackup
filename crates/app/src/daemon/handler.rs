@@ -769,6 +769,62 @@ fn git_roots(
     Ok(roots)
 }
 
+/// Read a previewed file back as text, when that is what it is.
+///
+/// A README, a licence, a changelog or a config pulled out of a backup is
+/// something the user wants to *look at*. Handing it to the operating system
+/// opens an editor over a copy in a cache directory — surprising, and easy to
+/// mistake for the real file, which is exactly the mistake a restore tool must
+/// not encourage.
+///
+/// Only by extension, and only up to a cap. Sniffing content would mean
+/// reading a file of unknown size to decide whether to read it.
+fn preview_text(path: &std::path::Path, size: u64) -> (Option<String>, bool) {
+    /// Beyond this, reading it in a dialog is not what anybody wants.
+    const MAX_BYTES: usize = 512 * 1024;
+
+    const TEXT: &[&str] = &[
+        "md", "markdown", "txt", "rst", "adoc", "log", "json", "toml", "yaml", "yml", "ini",
+        "cfg", "conf", "csv", "xml", "sql", "sh", "ps1", "bat", "rs", "go", "py", "js", "ts",
+        "tsx", "jsx", "c", "h", "cpp", "hpp", "java", "rb", "php", "css", "html", "lock",
+    ];
+    let named = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .map(|e| TEXT.contains(&e.as_str()))
+        .unwrap_or(false)
+        // LICENSE, README and friends often have no extension at all.
+        || path
+            .file_name()
+            .map(|n| {
+                let stem = n.to_string_lossy().to_ascii_uppercase();
+                superbackup_core::git::parse::DOCUMENTS.contains(&stem.as_str())
+            })
+            .unwrap_or(false);
+    if !named {
+        return (None, false);
+    }
+
+    let Ok(bytes) = std::fs::read(path) else { return (None, false) };
+    let truncated = bytes.len() > MAX_BYTES;
+    let slice = if truncated { &bytes[..MAX_BYTES] } else { &bytes[..] };
+    // Valid UTF-8 or nothing: a file whose extension says text and whose bytes
+    // say otherwise is a file this should not be guessing about.
+    match std::str::from_utf8(slice) {
+        Ok(text) => (Some(text.to_string()), truncated),
+        // A truncated read can split a multi-byte character; that is not a
+        // reason to refuse the whole file.
+        Err(error) if truncated && error.valid_up_to() > 0 => (
+            Some(String::from_utf8_lossy(&slice[..error.valid_up_to()]).into_owned()),
+            true,
+        ),
+        Err(_) => {
+            let _ = size;
+            (None, false)
+        }
+    }
+}
+
 fn is_object_id(candidate: &str) -> bool {
     let Some(rest) = candidate.strip_prefix('k') else { return false };
     rest.len() > 32 && rest.chars().all(|c| c.is_ascii_hexdigit())
@@ -2686,10 +2742,13 @@ impl Handler for DaemonHandler {
             "snapshot.previewed",
             format!("A copy of {name} was restored for inspection."),
         ));
+        let (text, text_truncated) = preview_text(&landed, size_bytes);
         Ok(PreviewReply {
             path: landed.display().to_string(),
             size_bytes,
             executable: looks_executable(&name),
+            text,
+            text_truncated,
         })
     }
 

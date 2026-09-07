@@ -86,6 +86,8 @@ pub enum Intent {
     /// The clearing itself.
     ClearRepository(uuid::Uuid),
     /// One of a repository's own documents, for the reading panel.
+    /// Space used at one destination, for the providers page.
+    DestinationStats(uuid::Uuid),
     GitDocument,
     GitInventory,
     /// A pull, commit, push or trust. The path is not carried: the screen

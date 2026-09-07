@@ -307,7 +307,21 @@ impl App {
                 // it. Restoring something from a backup is not consent to run
                 // it, so those are shown in their folder instead.
                 let path = std::path::PathBuf::from(&reply.path);
-                if reply.executable {
+                // Text is read here rather than handed to the system. A README
+                // pulled out of a backup opens an editor over a copy in a
+                // cache directory otherwise — surprising, and easy to mistake
+                // for the real file, which is the mistake a restore tool must
+                // not encourage.
+                if let Some(text) = reply.text.clone() {
+                    self.modal = Some(Modal::Document(crate::gui::modals::DocumentState {
+                        title: copy::restore_preview_title(name),
+                        path: reply.path.clone(),
+                        content: text,
+                        truncated: reply.text_truncated,
+                        loading: false,
+                        error: None,
+                    }));
+                } else if reply.executable {
                     let shown = path.parent().map(|p| p.to_path_buf()).unwrap_or(path);
                     let _ = open::that_detached(&shown);
                     self.toasts.warning(copy::restore_preview_runnable(name));
@@ -508,6 +522,9 @@ impl App {
             (Intent::ClearRepository(_), Reply::Cleared(cleared)) => {
                 self.toasts.success(copy::toast_cleared(cleared.removed, &cleared.location));
                 self.ask(Intent::Destinations, Request::DestinationList {});
+            }
+            (Intent::DestinationStats(id), Reply::StorageStats(stats)) => {
+                self.data.destination_stats.insert(*id, (*stats).clone());
             }
             (Intent::GitDocument, Reply::Document(document)) => {
                 if let Some(Modal::Document(state)) = &mut self.modal {

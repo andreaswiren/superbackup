@@ -26,6 +26,16 @@ use crate::gui::widgets::{self, Button};
 /// eliding it too hard is how the numbers stop being readable.
 const STATS_W: f32 = 380.0;
 
+/// The height of the three tiles across the top of the dashboard.
+///
+/// One number for all three. They were each given the same box and then each
+/// drew a card that sized itself to its own content — it never filled the
+/// width it was given, and its height was only a floor — so the three came out
+/// at different widths and
+/// different heights, in a row whose whole job is to be scanned at a glance.
+/// Tall enough for the busiest of them, which is the seven-day strip.
+const HEALTH_TILE_H: f32 = 64.0;
+
 impl App {
     pub(crate) fn dashboard_actions(&mut self, ui: &mut Ui) {
         let gate = self.data.gate(Action::RunJob);
@@ -153,13 +163,17 @@ impl App {
 
             // Tile 1 — overall health.
             let failed = health == superbackup_core::state::Health::Failed;
-            ui.allocate_ui_with_layout(Vec2::new(tile, 88.0), Layout::top_down(Align::Min), |ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(tile, HEALTH_TILE_H + 32.0),
+                Layout::top_down(Align::Min),
+                |ui| {
                 widgets::card_tinted(
                     ui,
                     failed.then_some(t.danger.tint_bg),
                     failed.then(|| theme::alpha(t.danger.mark, 0.4)),
                     |ui| {
-                        ui.set_height(56.0);
+                        ui.set_width(ui.available_width());
+                    ui.set_height(HEALTH_TILE_H);
                         ui.horizontal(|ui| {
                             let (rect, response) =
                                 ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
@@ -237,9 +251,13 @@ impl App {
             });
 
             // Tile 2 — next scheduled run.
-            ui.allocate_ui_with_layout(Vec2::new(tile, 88.0), Layout::top_down(Align::Min), |ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(tile, HEALTH_TILE_H + 32.0),
+                Layout::top_down(Align::Min),
+                |ui| {
                 widgets::card(ui, |ui| {
-                    ui.set_height(56.0);
+                    ui.set_width(ui.available_width());
+                    ui.set_height(HEALTH_TILE_H);
                     ui.spacing_mut().item_spacing.y = space::XS;
                     widgets::text(ui, copy::dash::NEXT_LABEL, Type::Micro, t.text_muted);
                     match self.data.next_scheduled() {
@@ -293,9 +311,13 @@ impl App {
             });
 
             // Tile 3 — the last seven days.
-            ui.allocate_ui_with_layout(Vec2::new(tile, 88.0), Layout::top_down(Align::Min), |ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(tile, HEALTH_TILE_H + 32.0),
+                Layout::top_down(Align::Min),
+                |ui| {
                 widgets::card(ui, |ui| {
-                    ui.set_height(56.0);
+                    ui.set_width(ui.available_width());
+                    ui.set_height(HEALTH_TILE_H);
                     ui.spacing_mut().item_spacing.y = space::XS;
                     widgets::text(ui, copy::dash::WEEK_LABEL, Type::Micro, t.text_muted);
                     let days = self.data.last_seven_days(now);

@@ -443,7 +443,14 @@ pub enum Modal {
     /// One repository's full detail. A dialog rather than a panel under the
     /// table: the table is taller than the window, so anything below it is
     /// somewhere the reader never looks.
-    GitRepo(Box<superbackup_core::git::GitRepo>),
+    GitRepo(Box<GitRepoState>),
+}
+
+/// The repository being read, and which of its tabs is open.
+#[derive(Debug, Clone)]
+pub struct GitRepoState {
+    pub repo: superbackup_core::git::GitRepo,
+    pub tab: super::screens::git::RepoTab,
 }
 
 /// The document being read, and how far it has got.
@@ -1766,6 +1773,7 @@ fn show_git_commit(
 /// One of a repository's own documents, rendered for reading.
 fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Option<Modal> {
     let t = theme::tokens(ctx);
+    let mut follow: Option<String> = None;
     let (close, _) = widgets::modal(
         ctx,
         "sb-document",
@@ -1787,7 +1795,8 @@ fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Op
                 }
                 let width = ui.available_width();
                 widgets::scroll_area(ui, "sb-document-body", |ui| {
-                    widgets::markdown(ui, &state.content, width - space::XL);
+                    let blocks = super::markdown::parse(&state.content);
+                    follow = super::markdown::render(ui, &blocks, width - space::XL);
                     if state.truncated {
                         ui.add_space(space::L);
                         widgets::paragraph(
@@ -1804,6 +1813,12 @@ fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Op
             });
         },
     );
+    // A link out of somebody else's document opens only because the reader
+    // clicked it, and only to http, https or mailto — see the `markdown`
+    // module, which refuses to make anything else a link at all.
+    if let Some(url) = follow {
+        let _ = open::that_detached(&url);
+    }
     let _ = app;
     if close {
         None
@@ -1816,7 +1831,7 @@ fn show_document(app: &mut App, ctx: &egui::Context, state: DocumentState) -> Op
 fn show_git_repo(
     app: &mut App,
     ctx: &egui::Context,
-    repo: Box<superbackup_core::git::GitRepo>,
+    mut state: Box<GitRepoState>,
 ) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let now = chrono::Utc::now();
@@ -1825,13 +1840,18 @@ fn show_git_repo(
         ctx,
         "sb-git-repo",
         ModalSize::Large,
-        &repo.name,
+        &state.repo.name,
         Some((Icon::GitBranch, t.accent)),
         false,
         |m| {
             m.body(|ui| {
                 widgets::scroll_area(ui, "sb-git-repo-body", |ui| {
-                    action = super::screens::git::git_details(ui, &repo, now);
+                    action = super::screens::git::git_details(
+                        ui,
+                        &state.repo,
+                        &mut state.tab,
+                        now,
+                    );
                 });
             });
             m.footer(|ui| {
@@ -1848,7 +1868,7 @@ fn show_git_repo(
             super::screens::git::GitDetailAction::ReadDocument(_)
                 | super::screens::git::GitDetailAction::SetExternal(_)
         );
-        app.git_detail_action(&repo, action);
+        app.git_detail_action(&state.repo, action);
         if opens_another {
             return None;
         }
@@ -1856,7 +1876,7 @@ fn show_git_repo(
     if close {
         None
     } else {
-        Some(Modal::GitRepo(repo))
+        Some(Modal::GitRepo(state))
     }
 }
 

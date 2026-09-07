@@ -814,6 +814,20 @@ pub struct PreviewReply {
     /// an executable, a script, a shortcut. The caller is expected to show
     /// such a file rather than launch it.
     pub executable: bool,
+    /// The file itself, for a text file small enough to read in place.
+    ///
+    /// A README pulled out of a backup is something the user wants to *look
+    /// at*, and handing it to the operating system opens an editor over a copy
+    /// in a cache directory — which is both surprising and easy to mistake for
+    /// the real file. Text comes back inline so it can be read inside
+    /// superbackup instead; anything else is left to the system as before.
+    ///
+    /// Absent when the file is not text, is too large, or is not valid UTF-8.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// True when `text` is only the beginning of a longer file.
+    #[serde(default)]
+    pub text_truncated: bool,
 }
 
 /// A sealed configuration document, ready to be written to a file.

@@ -16,7 +16,7 @@
 //! visit, would be a screen that made the machine slower for as long as it was
 //! open. It runs when asked and says when it last ran.
 
-use egui::{Align, Layout, Ui};
+use egui::{Align, Layout, Sense, Ui, Vec2};
 
 use superbackup_core::git::{GitRepo, Inventory, RepoState};
 use superbackup_core::ipc::protocol::Request;
@@ -537,7 +537,9 @@ impl App {
         // leaves the table exactly as you left it.
         if let Some(path) = expand {
             if let Some(repo) = rows.iter().find(|r| r.path == path).cloned() {
-                self.modal = Some(crate::gui::modals::Modal::GitRepo(Box::new(repo)));
+                self.modal = Some(crate::gui::modals::Modal::GitRepo(Box::new(
+                    crate::gui::modals::GitRepoState { repo, tab: RepoTab::default() },
+                )));
             }
         }
 
@@ -662,108 +664,234 @@ pub enum GitDetailAction {
     ReadDocument(String),
 }
 
+/// Which part of a repository is on screen.
+///
+/// Tabs rather than one long scroll: a repository with twenty branches and
+/// four working trees pushed its remotes and its documents off the bottom, and
+/// the reader had to know they were down there to go looking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RepoTab {
+    #[default]
+    Overview,
+    Branches,
+    Worktrees,
+    Documents,
+}
+
+impl RepoTab {
+    pub const ALL: [RepoTab; 4] =
+        [RepoTab::Overview, RepoTab::Branches, RepoTab::Worktrees, RepoTab::Documents];
+}
+
 /// Everything about one repository, as a body that can be put anywhere.
+///
+/// Returns what the reader asked for; nothing is acted on here, so this can be
+/// rendered inside a dialog where the whole `App` is not available to borrow.
 pub fn git_details(
     ui: &mut Ui,
     repo: &GitRepo,
+    tab: &mut RepoTab,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Option<GitDetailAction> {
-        let t = theme::tokens(ui.ctx());
-        let mut open_url: Option<String> = None;
-        let mut set_external: Option<bool> = None;
-        let mut read_document: Option<String> = None;
+    let t = theme::tokens(ui.ctx());
+    let mut action = None;
 
+    // -- header: what this is, and the one decision about it ----------------
+    ui.horizontal(|ui| {
+        widgets::badge(ui, git_status(repo.state(), &t), None, repo.state().label())
+            .on_hover_text(repo.state().explanation());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let label = if repo.external {
+                copy::git::UNMARK_EXTERNAL
+            } else {
+                copy::git::MARK_EXTERNAL
+            };
+            if Button::secondary(label).show(ui).on_hover_text(copy::git::EXTERNAL_HINT).clicked() {
+                action = Some(GitDetailAction::SetExternal(!repo.external));
+            }
+        });
+    });
+    ui.add_space(space::XS);
+    widgets::text(ui, repo.path.display().to_string(), Type::MonoSmall, t.text_muted);
+    ui.add_space(space::L);
+
+    // -- tabs ---------------------------------------------------------------
+    let labels: Vec<String> = RepoTab::ALL
+        .iter()
+        .map(|candidate| match candidate {
+            RepoTab::Overview => copy::git::TAB_OVERVIEW.to_string(),
+            RepoTab::Branches => format!("{} ({})", copy::git::TAB_BRANCHES, repo.branches.len()),
+            RepoTab::Worktrees => {
+                format!("{} ({})", copy::git::TAB_WORKTREES, repo.worktrees.len())
+            }
+            RepoTab::Documents => {
+                format!("{} ({})", copy::git::TAB_DOCUMENTS, repo.documents.len())
+            }
+        })
+        .collect();
+    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let mut selected = RepoTab::ALL.iter().position(|c| c == tab).unwrap_or(0);
+    if widgets::segmented(ui, &mut selected, &refs).changed() {
+        *tab = RepoTab::ALL[selected.min(RepoTab::ALL.len() - 1)];
+    }
+    ui.add_space(space::L);
+
+    match tab {
+        RepoTab::Overview => {
+            if let Some(found) = overview(ui, repo, now, &t) {
+                action = Some(found);
+            }
+        }
+        RepoTab::Branches => branches(ui, repo, now, &t),
+        RepoTab::Worktrees => worktrees(ui, repo, &t),
+        RepoTab::Documents => {
+            if let Some(found) = documents(ui, repo, &t) {
+                action = Some(found);
+            }
+        }
+    }
+    action
+}
+
+/// The answers to "what is this and where does it go".
+fn overview(
+    ui: &mut Ui,
+    repo: &GitRepo,
+    now: chrono::DateTime<chrono::Utc>,
+    t: &theme::Tokens,
+) -> Option<GitDetailAction> {
+    let mut action = None;
+
+    widgets::kv(ui, copy::git::OV_BRANCH, repo.branch.as_deref().unwrap_or("—"), false);
+    widgets::kv(
+        ui,
+        copy::git::OV_LAST_COMMIT,
+        &match repo.last_commit_at {
+            Some(at) => format::relative(at, now),
+            None => copy::git::NEVER.to_string(),
+        },
+        false,
+    );
+    if let Some(subject) = &repo.last_commit_summary {
+        widgets::kv(ui, copy::git::OV_SUBJECT, subject, false);
+    }
+    if let Some(author) = &repo.last_commit_author {
+        widgets::kv(ui, copy::git::OV_AUTHOR, author, false);
+    }
+    widgets::kv(
+        ui,
+        copy::git::OV_CHANGES,
+        &copy::git_changes(repo.staged, repo.unstaged, repo.untracked, repo.conflicted),
+        false,
+    );
+
+    ui.add_space(space::L);
+    widgets::text(ui, copy::git::REMOTES, Type::H3, t.text_primary);
+    ui.add_space(space::S);
+    if repo.remotes.is_empty() {
+        widgets::paragraph(ui, copy::git::NO_REMOTES, Type::Small, t.warning.tint_text);
+    }
+    for remote in &repo.remotes {
         widgets::card(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                widgets::text(ui, &repo.name, Type::H2, t.text_primary);
+                widgets::text(ui, &remote.name, Type::BodyStrong, t.text_primary);
+                ui.add_space(space::S);
+                widgets::neutral_badge(ui, remote.forge.label(), None);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let label = if repo.external {
-                        copy::git::UNMARK_EXTERNAL
-                    } else {
-                        copy::git::MARK_EXTERNAL
-                    };
-                    if Button::secondary(label)
-                        .show(ui)
-                        .on_hover_text(copy::git::EXTERNAL_HINT)
-                        .clicked()
-                    {
-                        set_external = Some(!repo.external);
+                    if let Some(url) = &remote.web_url {
+                        if widgets::link(ui, copy::git::OPEN_REMOTE).clicked() {
+                            action = Some(GitDetailAction::OpenUrl(url.clone()));
+                        }
                     }
                 });
             });
-            widgets::text(ui, repo.path.display().to_string(), Type::MonoSmall, t.text_muted);
-
-            if !repo.documents.is_empty() {
-                ui.add_space(space::L);
-                widgets::text(ui, copy::git::DOCUMENTS, Type::H3, t.text_primary);
+            ui.add_space(space::XS);
+            widgets::text(ui, &remote.url, Type::MonoSmall, t.text_muted);
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                widgets::text(ui, copy::git::AUTH, Type::Small, t.text_muted);
                 ui.add_space(space::XS);
-                ui.horizontal_wrapped(|ui| {
-                    for document in &repo.documents {
-                        if Button::secondary(&document.name)
-                            .icon(Icon::FileText)
-                            .compact()
-                            .show(ui)
-                            .clicked()
-                        {
-                            read_document = Some(document.name.clone());
-                        }
-                    }
-                });
-            }
+                widgets::text(ui, remote.auth.label(), Type::Small, t.text_secondary)
+                    .on_hover_text(remote.auth.detail());
+            });
+        });
+        ui.add_space(space::S);
+    }
+    if !repo.remotes.is_empty() {
+        ui.add_space(space::XS);
+        widgets::paragraph(ui, copy::git::AUTH_NOTE, Type::Small, t.text_muted);
+    }
+    action
+}
 
-            ui.add_space(space::L);
-            widgets::text(ui, copy::git::REMOTES, Type::H3, t.text_primary);
-            ui.add_space(space::XS);
-            if repo.remotes.is_empty() {
-                widgets::paragraph(ui, copy::git::NO_REMOTES, Type::Small, t.warning.tint_text);
-            }
-            for remote in &repo.remotes {
-                ui.horizontal(|ui| {
-                    widgets::text(ui, format!("{}:", remote.name), Type::BodyStrong, t.text_primary);
-                    widgets::text(ui, remote.forge.label(), Type::Small, t.text_muted);
-                    if let Some(url) = &remote.web_url {
-                        if widgets::link(ui, copy::git::OPEN_REMOTE).clicked() {
-                            open_url = Some(url.clone());
-                        }
-                    }
-                });
-                widgets::text(ui, &remote.url, Type::MonoSmall, t.text_muted);
-                ui.horizontal(|ui| {
-                    widgets::text(ui, copy::git::AUTH, Type::Small, t.text_muted);
-                    let response =
-                        widgets::text(ui, remote.auth.label(), Type::Small, t.text_secondary);
-                    response.on_hover_text(remote.auth.detail());
-                });
-                ui.add_space(space::S);
-            }
-            if !repo.remotes.is_empty() {
-                widgets::paragraph(ui, copy::git::AUTH_NOTE, Type::Small, t.text_muted);
-            }
+/// Every branch, as a table. Unpushed work hides on a branch nobody has looked
+/// at in months, and a table is what makes twenty of them readable.
+fn branches(ui: &mut Ui, repo: &GitRepo, now: chrono::DateTime<chrono::Utc>, t: &theme::Tokens) {
+    if repo.branches.is_empty() {
+        widgets::paragraph(ui, copy::git::NO_BRANCHES, Type::Small, t.text_muted);
+        return;
+    }
+    let never_pushed = repo.branches.iter().filter(|b| b.upstream.is_none()).count();
+    if never_pushed > 0 {
+        widgets::banner(
+            ui,
+            widgets::BannerKind::Warning,
+            &copy::git_never_pushed(never_pushed),
+            Some(copy::git::NEVER_PUSHED_BODY),
+            |_| {},
+        );
+        ui.add_space(space::M);
+    }
 
-            ui.add_space(space::L);
-            widgets::text(ui, copy::git::BRANCHES, Type::H3, t.text_primary);
-            ui.add_space(space::XS);
-            if repo.branches.is_empty() {
-                widgets::paragraph(ui, copy::git::NO_BRANCHES, Type::Small, t.text_muted);
-            }
-            for branch in &repo.branches {
-                ui.horizontal(|ui| {
-                    widgets::text(
-                        ui,
-                        &branch.name,
-                        if branch.current { Type::BodyStrong } else { Type::Body },
-                        t.text_primary,
-                    );
-                    if branch.current {
-                        widgets::neutral_badge(ui, copy::git::CURRENT, None);
-                    }
-                    if branch.checked_out_elsewhere {
-                        widgets::neutral_badge(ui, copy::git::ELSEWHERE, None);
-                    }
-                    match (&branch.upstream, branch.ahead, branch.behind) {
-                        // A branch with no upstream has never been pushed, and
-                        // on this screen that is the finding, not a detail.
+    widgets::table_frame(ui, |ui| {
+        let width = ui.available_width();
+        let name_w = (width * 0.42).clamp(160.0, 420.0);
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(name_w, 18.0),
+                Layout::left_to_right(Align::Center),
+                |ui| widgets::table_header(ui, copy::git::COL_BRANCH, None),
+            );
+            ui.allocate_ui_with_layout(
+                Vec2::new(150.0, 18.0),
+                Layout::left_to_right(Align::Center),
+                |ui| widgets::table_header(ui, copy::git::COL_TRACKING, None),
+            );
+            widgets::table_header(ui, copy::git::COL_LAST, None);
+        });
+        widgets::divider(ui);
+
+        for branch in &repo.branches {
+            ui.horizontal(|ui| {
+                ui.set_min_height(30.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(name_w, 26.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        if branch.current {
+                            widgets::text(ui, "●", Type::Small, t.success.mark)
+                                .on_hover_text(copy::git::CURRENT);
+                            ui.add_space(space::XS);
+                        }
+                        widgets::elided(
+                            ui,
+                            &branch.name,
+                            if branch.current { Type::BodyStrong } else { Type::Body },
+                            t.text_primary,
+                            name_w - 40.0,
+                            false,
+                        );
+                        if branch.checked_out_elsewhere {
+                            ui.add_space(space::XS);
+                            widgets::neutral_badge(ui, copy::git::ELSEWHERE, None);
+                        }
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    Vec2::new(150.0, 26.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| match (&branch.upstream, branch.ahead, branch.behind) {
                         (None, _, _) => {
                             widgets::text(
                                 ui,
@@ -772,71 +900,138 @@ pub fn git_details(
                                 t.warning.tint_text,
                             );
                         }
-                        (Some(_), 0, 0) => {}
-                        (Some(_), ahead, behind) => {
+                        (Some(upstream), 0, 0) => {
+                            widgets::elided(
+                                ui,
+                                upstream,
+                                Type::Small,
+                                t.text_muted,
+                                140.0,
+                                true,
+                            )
+                            .on_hover_text(copy::git::IN_SYNC);
+                        }
+                        (Some(upstream), ahead, behind) => {
                             let label = match (ahead, behind) {
                                 (a, 0) => format!("+{a}"),
                                 (0, b) => format!("-{b}"),
                                 (a, b) => format!("+{a} -{b}"),
                             };
-                            widgets::text(ui, label, Type::MonoSmall, t.warning.tint_text);
+                            widgets::text(ui, label, Type::MonoSmall, t.warning.tint_text)
+                                .on_hover_text(upstream);
                         }
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if let Some(at) = branch.last_commit {
+                    },
+                );
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    match branch.last_commit {
+                        Some(at) => {
                             widgets::text(ui, format::relative(at, now), Type::Small, t.text_muted);
                         }
-                    });
-                });
-                if !branch.subject.is_empty() {
-                    let width = ui.available_width().max(120.0);
-                    widgets::elided(ui, &branch.subject, Type::Small, t.text_muted, width, false);
-                }
-                ui.add_space(space::XS);
-            }
-
-            ui.add_space(space::L);
-            widgets::text(ui, copy::git::WORKTREES, Type::H3, t.text_primary);
-            ui.add_space(space::XS);
-            if repo.worktrees.len() <= 1 {
-                widgets::paragraph(ui, copy::git::ONE_WORKTREE, Type::Small, t.text_muted);
-            }
-            for tree in &repo.worktrees {
-                ui.horizontal(|ui| {
-                    widgets::text(
-                        ui,
-                        &tree.path,
-                        Type::MonoSmall,
-                        if tree.main { t.text_primary } else { t.text_secondary },
-                    );
-                    if tree.main {
-                        widgets::neutral_badge(ui, copy::git::MAIN_TREE, None);
+                        None => widgets::muted_cell(ui, "—"),
                     }
-                    if let Some(branch) = &tree.branch {
-                        widgets::text(ui, branch, Type::Small, t.text_muted);
+                    if !branch.subject.is_empty() {
+                        let room = ui.available_width().max(80.0);
+                        widgets::elided(
+                            ui,
+                            &branch.subject,
+                            Type::Small,
+                            t.text_muted,
+                            room,
+                            false,
+                        )
+                        .on_hover_text(&branch.subject);
+                    }
+                });
+            });
+            widgets::divider(ui);
+        }
+    });
+}
+
+/// Linked working trees. A repository with three of them has three sets of
+/// uncommitted changes, and only one of them is the folder you are looking at.
+fn worktrees(ui: &mut Ui, repo: &GitRepo, t: &theme::Tokens) {
+    if repo.worktrees.len() > 1 {
+        widgets::banner(
+            ui,
+            widgets::BannerKind::Info,
+            &copy::git_worktrees(repo.worktrees.len()),
+            Some(copy::git::WORKTREES_BODY),
+            |_| {},
+        );
+        ui.add_space(space::M);
+    }
+    if repo.worktrees.is_empty() {
+        widgets::paragraph(ui, copy::git::ONE_WORKTREE, Type::Small, t.text_muted);
+        return;
+    }
+
+    for tree in &repo.worktrees {
+        widgets::card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                if tree.main {
+                    widgets::neutral_badge(ui, copy::git::MAIN_TREE, None);
+                    ui.add_space(space::S);
+                }
+                match &tree.branch {
+                    Some(branch) => {
+                        widgets::text(ui, branch, Type::BodyStrong, t.text_primary);
+                    }
+                    None => {
+                        widgets::text(ui, copy::git::DETACHED, Type::BodyStrong, t.warning.tint_text)
+                            .on_hover_text(copy::git::DETACHED_HINT);
+                    }
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if tree.prunable {
+                        widgets::neutral_badge(ui, copy::git::PRUNABLE, Some(Icon::AlertTriangle))
+                            .on_hover_text(copy::git::PRUNABLE_HINT);
                     }
                     if tree.locked {
                         widgets::neutral_badge(ui, copy::git::LOCKED, Some(Icon::Lock));
                     }
-                    if tree.prunable {
-                        widgets::neutral_badge(ui, copy::git::PRUNABLE, Some(Icon::AlertTriangle));
-                    }
                 });
-            }
+            });
+            ui.add_space(space::XS);
+            let room = ui.available_width().max(120.0);
+            widgets::elided(ui, &tree.path, Type::MonoSmall, t.text_muted, room, true)
+                .on_hover_text(&tree.path);
         });
-
-        if let Some(url) = open_url {
-            return Some(GitDetailAction::OpenUrl(url));
-        }
-        if let Some(document) = read_document {
-            return Some(GitDetailAction::ReadDocument(document));
-        }
-        if let Some(external) = set_external {
-            return Some(GitDetailAction::SetExternal(external));
-        }
-        None
+        ui.add_space(space::S);
+    }
 }
 
+/// The repository's own documents, offered to read.
+fn documents(ui: &mut Ui, repo: &GitRepo, t: &theme::Tokens) -> Option<GitDetailAction> {
+    if repo.documents.is_empty() {
+        widgets::paragraph(ui, copy::git::NO_DOCUMENTS, Type::Small, t.text_muted);
+        return None;
+    }
+    let mut action = None;
+    for document in &repo.documents {
+        let response = widgets::row_card(ui, None, |ui: &mut Ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                Icon::FileText.paint(ui.painter(), rect, t.text_secondary);
+                ui.add_space(space::M);
+                widgets::text(ui, &document.name, Type::BodyStrong, t.text_primary);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    widgets::text(ui, format::bytes(document.bytes), Type::Small, t.text_muted);
+                });
+            });
+        });
+        if response.response.interact(Sense::click()).clicked() {
+            action = Some(GitDetailAction::ReadDocument(document.name.clone()));
+        }
+        ui.add_space(space::S);
+    }
+    ui.add_space(space::S);
+    widgets::paragraph(ui, copy::git::DOCUMENTS_NOTE, Type::Small, t.text_muted);
+    action
+}
 impl App {
     /// Send one action and mark the screen busy until it answers.
     pub(crate) fn git_act(&mut self, request: Request, path: std::path::PathBuf) {

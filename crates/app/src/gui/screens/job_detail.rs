@@ -11,7 +11,7 @@
 //! Settings are one button away, rather than the only thing here.
 
 use chrono::{DateTime, Utc};
-use egui::{Align, Layout, Ui, Vec2};
+use egui::{Align, Layout, Sense, Ui, Vec2};
 use uuid::Uuid;
 
 use superbackup_core::state::{JobRun, RunStatus};
@@ -229,6 +229,11 @@ impl App {
     }
 
     /// The last few runs, newest first.
+    ///
+    /// A table with columns that line up, not a stack of cards each holding a
+    /// badge and a run-on line. Runs are compared down a column — did it get
+    /// slower, is it uploading less, when did the failures start — and cards
+    /// make every one of those comparisons an eye-scan across ragged text.
     fn job_detail_runs(&mut self, ui: &mut Ui, id: Uuid, now: DateTime<Utc>) {
         let t = theme::tokens(ui.ctx());
         let mut runs: Vec<JobRun> =
@@ -245,41 +250,131 @@ impl App {
             return;
         }
 
+        const WHEN_W: f32 = 130.0;
+        const STATUS_W: f32 = 170.0;
+        const UP_W: f32 = 110.0;
+        const TOOK_W: f32 = 90.0;
+
         let mut open: Option<Uuid> = None;
         widgets::table_frame(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (label, width) in [
+                    (copy::job_detail::COL_WHEN, WHEN_W),
+                    (copy::job_detail::COL_RESULT, STATUS_W),
+                ] {
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(width, 18.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| widgets::table_header(ui, label, None),
+                    );
+                }
+                // Numbers are right-aligned to each other, which is the only
+                // way a column of sizes can be compared at a glance.
+                for (label, width) in [
+                    (copy::job_detail::COL_UPLOADED, UP_W),
+                    (copy::job_detail::COL_TOOK, TOOK_W),
+                ] {
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(width, 18.0),
+                        Layout::right_to_left(Align::Center),
+                        |ui| widgets::table_header(ui, label, None),
+                    );
+                }
+                ui.add_space(space::M);
+                widgets::table_header(ui, copy::job_detail::COL_WHERE, None);
+            });
+            widgets::divider(ui);
+
             for run in &runs {
-                let response = widgets::row_card(ui, None, |ui: &mut Ui| {
-                    ui.horizontal(|ui| {
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(150.0, 20.0),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                widgets::text(
-                                    ui,
-                                    format::relative(run.started_at, now),
-                                    Type::Small,
-                                    t.text_primary,
-                                );
-                            },
-                        );
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(170.0, 20.0),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                widgets::status_badge(ui, run.status);
-                            },
-                        );
-                        widgets::text(
+                let response = ui.horizontal(|ui| {
+                    ui.set_min_height(32.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(WHEN_W, 26.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            widgets::text(
+                                ui,
+                                format::relative(run.started_at, now),
+                                Type::Small,
+                                t.text_primary,
+                            )
+                            .on_hover_text(format::absolute(run.started_at));
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(STATUS_W, 26.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            widgets::status_badge(ui, run.status);
+                        },
+                    );
+                    let uploaded: u64 =
+                        run.destinations.iter().map(|d| d.progress.bytes_uploaded).sum();
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(UP_W, 26.0),
+                        Layout::right_to_left(Align::Center),
+                        |ui| {
+                            widgets::text(
+                                ui,
+                                format::bytes(uploaded),
+                                Type::MonoSmall,
+                                if uploaded == 0 { t.text_muted } else { t.text_secondary },
+                            );
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(TOOK_W, 26.0),
+                        Layout::right_to_left(Align::Center),
+                        |ui| {
+                            let took = run.finished_at.map(|finished| {
+                                format::duration((finished - run.started_at).num_seconds().max(0))
+                            });
+                            match took {
+                                Some(took) => {
+                                    widgets::text(ui, took, Type::MonoSmall, t.text_secondary);
+                                }
+                                None => widgets::muted_cell(ui, "—"),
+                            }
+                        },
+                    );
+                    ui.add_space(space::M);
+                    // Which destinations, and whether any of them refused —
+                    // "1 destination failed" was buried in a sentence before,
+                    // and it is the reason anybody opens a run.
+                    let failed: Vec<&str> = run
+                        .destinations
+                        .iter()
+                        .filter(|d| d.status == RunStatus::Failed)
+                        .map(|d| d.destination_name.as_str())
+                        .collect();
+                    if failed.is_empty() {
+                        let names: Vec<&str> =
+                            run.destinations.iter().map(|d| d.destination_name.as_str()).collect();
+                        let room = ui.available_width().max(60.0);
+                        widgets::elided(
                             ui,
-                            run_line(run),
-                            Type::MonoSmall,
+                            &names.join(", "),
+                            Type::Small,
                             t.text_muted,
+                            room,
+                            false,
                         );
-                    });
+                    } else {
+                        let room = ui.available_width().max(60.0);
+                        widgets::elided(
+                            ui,
+                            &copy::job_runs_failed(&failed),
+                            Type::Small,
+                            t.danger.tint_text,
+                            room,
+                            false,
+                        );
+                    }
                 });
-                if response.response.clicked() {
+                if response.response.interact(Sense::click()).clicked() {
                     open = Some(run.run_id);
                 }
+                widgets::divider(ui);
             }
         });
         if let Some(run_id) = open {
@@ -350,20 +445,4 @@ impl App {
             self.go(Route::Activity);
         }
     }
-}
-
-/// One run in a line: how much moved, and how long it took.
-fn run_line(run: &JobRun) -> String {
-    let mut parts = Vec::new();
-    let uploaded: u64 = run.destinations.iter().map(|d| d.progress.bytes_uploaded).sum();
-    parts.push(format!("{} up", format::bytes(uploaded)));
-    if let Some(finished) = run.finished_at {
-        let seconds = (finished - run.started_at).num_seconds().max(0);
-        parts.push(format::duration(seconds));
-    }
-    let failed = run.destinations.iter().filter(|d| d.status == RunStatus::Failed).count();
-    if failed > 0 {
-        parts.push(format!("{failed} destination(s) failed"));
-    }
-    parts.join(" · ")
 }

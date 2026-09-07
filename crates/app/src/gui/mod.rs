@@ -27,6 +27,7 @@ pub mod data;
 pub mod fixtures;
 pub mod format;
 pub mod icons;
+pub mod markdown;
 pub mod modals;
 pub mod nav;
 pub mod render;

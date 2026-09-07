@@ -130,6 +130,47 @@ Nothing yet.
 - **Clicking a job on the Jobs page** opens its status page, as it already
   did from the dashboard.
 
+- **A real Markdown viewer.** Headings, bold, italic, inline code, fenced
+  code with horizontal scroll (a wrapped command line is one you cannot
+  copy), nested and numbered lists, block quotes, rules, pipe tables, and
+  links that show their destination and open only when clicked.
+
+  Written rather than pulled in, because what it displays is a file out of a
+  repository that may not be yours: no HTML, no images, nothing fetched, and
+  only `http`, `https` and `mailto` are treated as links at all — a
+  `javascript:` URL in somebody else's README is not a link, it is an
+  attempt. Eight tests, including that one.
+
+- **Markdown from inside a backup.** Double-clicking a text file in the
+  restore browser shows it in that viewer instead of handing it to the
+  operating system, which used to open an editor over a copy in a cache
+  directory — surprising, and easy to mistake for the live file.
+
+- **The repository dialog is organised.** Overview, Branches, Working trees
+  and Documents, each with a count. Branches are a table with tracking state
+  and a banner naming how many have never been pushed; working trees say
+  which is the main one, which are detached, and which git considers stale.
+
+- **Usage on the storage providers page**: how much each account holds,
+  when it was last written to and how much that wrote. A figure that has not
+  been measured yet reads as "not measured" rather than as zero, and a
+  partial total is marked with a `+`.
+
+### Fixed
+
+- **The three dashboard tiles were three different sizes.** Each was given
+  the same box and then drew a card that sized itself to its own content, so
+  none of them filled the width it was given and each was as tall as its own
+  text needed.
+
+- **The recent runs list was cards inside cards.** It is a table now, with
+  the numbers right-aligned to each other, because runs are compared down a
+  column — did it get slower, is it uploading less, when did the failures
+  start. Failed destinations are named rather than counted.
+
+- **The storage providers name column** sat above the row it belonged to.
+
+
 
 
 

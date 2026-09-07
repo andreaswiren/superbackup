@@ -14,7 +14,9 @@ use std::collections::{BTreeMap, VecDeque};
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
-use superbackup_core::ipc::protocol::{ErrorPayload, Reply, ServiceReply, VersionReply};
+use superbackup_core::ipc::protocol::{
+    ErrorPayload, Reply, ServiceReply, StorageStatsReply, VersionReply,
+};
 use superbackup_core::model::{Destination, DestinationKind, Job, Settings, StorageProvider};
 use superbackup_core::state::{Event, Health, JobRun, JobSummary, RunStatus, StatusSnapshot};
 
@@ -33,6 +35,13 @@ pub struct Data {
     pub destinations: Vec<Destination>,
     pub providers: Vec<StorageProvider>,
     pub history: Vec<JobRun>,
+    /// Space used at each destination, as the daemon last reported it.
+    ///
+    /// Cached figures, not recomputed on every visit: a repository stat can be
+    /// a slow call against remote storage, and a page that made one per
+    /// destination on every render would make the application feel broken on
+    /// exactly the setup this exists to describe.
+    pub destination_stats: std::collections::HashMap<Uuid, StorageStatsReply>,
     pub events: Vec<Event>,
     /// False once a request has come back as `DaemonUnreachable`.
     pub link_up: bool,
@@ -840,5 +849,67 @@ mod tests {
         let days = d.last_seven_days(Utc::now());
         assert_eq!(days.len(), 7);
         assert!(days[0].date < days[6].date);
+    }
+}
+
+/// What an account is actually holding, and when it was last written to.
+///
+/// A provider row said only that credentials worked and how many destinations
+/// used them. The questions people have about object storage are "how much am
+/// I paying for" and "is anything still arriving", and neither was answerable
+/// from this page — or from anywhere in the application.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProviderUsage {
+    /// Bytes occupied across every destination on this provider, as the
+    /// daemon last computed them. `None` while nothing has been reported yet,
+    /// which is not the same as zero and must not be shown as it.
+    pub stored_bytes: Option<u64>,
+    /// The destinations whose figures are still missing, so the column can say
+    /// it is incomplete rather than quietly understating a bill.
+    pub pending: usize,
+    /// When a backup last finished writing here, and how much it sent.
+    pub last_write: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_write_bytes: u64,
+}
+
+impl Data {
+    /// Add up what one provider is holding, from what has been reported.
+    pub fn provider_usage(&self, provider: Uuid) -> ProviderUsage {
+        let mine: Vec<Uuid> = self
+            .destinations
+            .iter()
+            .filter(|d| d.kind.provider_id() == Some(&provider))
+            .map(|d| d.id)
+            .collect();
+
+        let mut usage = ProviderUsage::default();
+        for id in &mine {
+            match self.destination_stats.get(id).and_then(|s| s.stored_bytes) {
+                Some(bytes) => {
+                    *usage.stored_bytes.get_or_insert(0) += bytes;
+                }
+                None => usage.pending += 1,
+            }
+        }
+
+        // The last run that actually wrote to one of these, and what it sent.
+        // Runs are searched newest first; `history` is not guaranteed sorted,
+        // so this compares rather than taking the first match.
+        for run in &self.history {
+            for destination in &run.destinations {
+                if !mine.contains(&destination.destination_id) {
+                    continue;
+                }
+                if destination.progress.bytes_uploaded == 0 {
+                    continue;
+                }
+                let at = destination.finished_at.unwrap_or(run.started_at);
+                if usage.last_write.is_none_or(|previous| at > previous) {
+                    usage.last_write = Some(at);
+                    usage.last_write_bytes = destination.progress.bytes_uploaded;
+                }
+            }
+        }
+        usage
     }
 }

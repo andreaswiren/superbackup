@@ -1157,6 +1157,8 @@ impl Handler for MockHandler {
     ) -> Result<PreviewReply> {
         let _guard = self.enter("snapshot.preview").await?;
         Ok(PreviewReply {
+            text: None,
+            text_truncated: false,
             path: format!("/tmp/superbackup-preview/{path}"),
             size_bytes: 11,
             executable: false,

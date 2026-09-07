@@ -8,6 +8,8 @@ use uuid::Uuid;
 use superbackup_core::model::{ProviderKind, StorageProvider};
 
 use crate::gui::app::App;
+use crate::gui::daemon::Intent;
+use superbackup_core::ipc::protocol::Request;
 use crate::gui::copy;
 use crate::gui::data::Action;
 use crate::gui::format;
@@ -21,6 +23,9 @@ use crate::gui::widgets::{self, Button};
 #[derive(Default)]
 pub struct State {
     pub search: String,
+    /// Destinations whose figures have already been asked for, so the page
+    /// asks once rather than on every frame.
+    pub stats_asked: std::collections::HashSet<uuid::Uuid>,
 }
 
 /// `UX_SPEC.md` §9.1. Endpoint is the remainder; last verified drops first.
@@ -30,10 +35,15 @@ pub struct State {
 /// builder draws but the budget does not know about is unaccounted overflow.
 /// This table happened to have enough slack to hide it; the activity table did
 /// not, and drew its card past the window edge at the minimum size.
-const PROVIDER_COLUMNS: [ColumnSpec; 5] = [
+const PROVIDER_COLUMNS: [ColumnSpec; 7] = [
     ColumnSpec::keep("flavour", 36.0),
     ColumnSpec::keep("name", 190.0),
-    ColumnSpec::keep("used_by", 120.0),
+    ColumnSpec::keep("used_by", 110.0),
+    // What the account is holding and when anything last arrived: the two
+    // questions people actually have about object storage, and neither was
+    // answerable anywhere in the application before.
+    ColumnSpec::droppable("stored", 100.0, 3),
+    ColumnSpec::droppable("last_write", 150.0, 2),
     ColumnSpec::droppable("verified", 104.0, 1),
     ColumnSpec::keep("actions", 104.0),
 ];
@@ -66,6 +76,28 @@ impl App {
             return;
         }
 
+        // Ask for figures we do not have yet, once, for the destinations on
+        // screen. Cached rather than recomputed (`refresh: false`): a repository
+        // stat can be a slow call against remote storage, and one per
+        // destination on every frame would make this page unusable on exactly
+        // the setup it exists to describe.
+        let missing: Vec<uuid::Uuid> = self
+            .data
+            .destinations
+            .iter()
+            .filter(|d| d.kind.provider_id().is_some())
+            .map(|d| d.id)
+            .filter(|id| !self.data.destination_stats.contains_key(id))
+            .filter(|id| !self.screens.providers.stats_asked.contains(id))
+            .collect();
+        for id in missing {
+            self.screens.providers.stats_asked.insert(id);
+            self.ask(
+                Intent::DestinationStats(id),
+                Request::DestinationStats { destination: id.to_string(), refresh: false },
+            );
+        }
+
         let needle = self.screens.providers.search.trim().to_lowercase();
         let rows: Vec<StorageProvider> = self
             .data
@@ -91,9 +123,23 @@ impl App {
 
         widgets::table_frame(ui, |ui| {
             let gap = ui.spacing().item_spacing.x;
-            let fixed =
-                36.0 + 190.0 + 120.0 + 104.0 + if has("verified") { 104.0 + gap } else { 0.0 };
-            let endpoint_width = (ui.available_width() - fixed - gap * 4.0).max(180.0);
+            // Every fixed column that is actually shown, plus a gap between
+            // each pair — computed rather than written out, because the two
+            // hand-maintained lists (this sum and the builder below) drifted
+            // apart the moment columns were added and the table ran off the
+            // right edge of the window.
+            let mut fixed = 36.0 + 190.0 + 110.0 + 104.0;
+            let mut columns = 5.0; // the four above, plus the endpoint itself
+            for (key, width) in
+                [("stored", 100.0_f32), ("last_write", 150.0), ("verified", 104.0)]
+            {
+                if has(key) {
+                    fixed += width;
+                    columns += 1.0;
+                }
+            }
+            let endpoint_width =
+                (ui.available_width() - fixed - gap * (columns - 1.0)).max(160.0);
             let mut builder = egui_extras::TableBuilder::new(ui)
                 .id_salt("providers")
                 // Rows are clickable, and a table senses `hover` unless it is
@@ -105,7 +151,13 @@ impl App {
                 .column(egui_extras::Column::exact(36.0))
                 .column(egui_extras::Column::exact(190.0))
                 .column(egui_extras::Column::exact(endpoint_width))
-                .column(egui_extras::Column::exact(120.0));
+                .column(egui_extras::Column::exact(110.0));
+            if has("stored") {
+                builder = builder.column(egui_extras::Column::exact(100.0));
+            }
+            if has("last_write") {
+                builder = builder.column(egui_extras::Column::exact(150.0));
+            }
             if has("verified") {
                 builder = builder.column(egui_extras::Column::exact(104.0));
             }
@@ -125,6 +177,16 @@ impl App {
                     header.col(|ui| {
                         widgets::table_header(ui, copy::col::USED_BY, None);
                     });
+                    if has("stored") {
+                        header.col(|ui| {
+                            widgets::table_header(ui, copy::prov::COL_STORED, None);
+                        });
+                    }
+                    if has("last_write") {
+                        header.col(|ui| {
+                            widgets::table_header(ui, copy::prov::COL_LAST_WRITE, None);
+                        });
+                    }
                     if has("verified") {
                         header.col(|ui| {
                             widgets::table_header(ui, copy::col::LAST_VERIFIED, None);
@@ -142,6 +204,7 @@ impl App {
                         };
                         let ProviderKind::S3 { endpoint, region, tls, flavour, .. } =
                             &provider.kind;
+                        let usage = self.data.provider_usage(provider.id);
 
                         row.col(|ui| {
                             let (rect, response) =
@@ -150,6 +213,16 @@ impl App {
                             response.on_hover_text(flavour.title());
                         });
                         row.col(|ui| {
+                            // Centred in the row, not stacked from its top.
+                            // `ui.vertical` starts at the top of the cell, so
+                            // a one-line name sat above the icon and the
+                            // badges beside it while every other column was
+                            // centred — the same misalignment the jobs table
+                            // had. The block is centred as a whole, so a name
+                            // with a note under it still reads as one unit.
+                            ui.with_layout(
+                                Layout::left_to_right(Align::Center),
+                                |ui| {
                             ui.vertical(|ui| {
                                 ui.spacing_mut().item_spacing.y = 0.0;
                                 widgets::elided(
@@ -171,6 +244,8 @@ impl App {
                                     );
                                 }
                             });
+                                },
+                            );
                         });
                         row.col(|ui| {
                             ui.horizontal(|ui| {
@@ -213,6 +288,57 @@ impl App {
                                     .on_hover_text(names.join("\n"));
                             }
                         });
+                        if has("stored") {
+                            row.col(|ui| {
+                                // `None` is not zero: a figure that has not
+                                // been reported yet must not read as an empty
+                                // bucket, which is the one wrong impression
+                                // this column could give.
+                                match usage.stored_bytes {
+                                    Some(bytes) => {
+                                        let text = if usage.pending > 0 {
+                                            format!("{}+", format::bytes(bytes))
+                                        } else {
+                                            format::bytes(bytes)
+                                        };
+                                        widgets::text(
+                                            ui,
+                                            text,
+                                            Type::MonoSmall,
+                                            t.text_secondary,
+                                        )
+                                        .on_hover_text(copy::prov_stored_hint(usage.pending));
+                                    }
+                                    None => {
+                                        widgets::muted_cell(ui, copy::prov::NOT_MEASURED);
+                                    }
+                                }
+                            });
+                        }
+                        if has("last_write") {
+                            row.col(|ui| match usage.last_write {
+                                Some(at) => {
+                                    ui.vertical(|ui| {
+                                        ui.spacing_mut().item_spacing.y = 0.0;
+                                        widgets::text(
+                                            ui,
+                                            format::relative_past(at, now),
+                                            Type::Small,
+                                            t.text_secondary,
+                                        );
+                                        widgets::text(
+                                            ui,
+                                            copy::prov_last_write(usage.last_write_bytes),
+                                            Type::MonoSmall,
+                                            t.text_muted,
+                                        );
+                                    });
+                                }
+                                None => {
+                                    widgets::muted_cell(ui, copy::prov::NEVER_WRITTEN);
+                                }
+                            });
+                        }
                         if has("verified") {
                             row.col(|ui| match provider.last_verified_at {
                                 Some(at) => {
