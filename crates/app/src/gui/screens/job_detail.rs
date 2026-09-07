@@ -376,9 +376,21 @@ impl App {
         if let Some(id) = restore {
             // Hand the restore browser the destination *and* the snapshot, so
             // it opens on the one that was clicked rather than on whatever it
-            // was showing last.
+            // was showing last — and then actually ask for its root listing.
+            //
+            // Setting the selection alone was not enough: the restore screen
+            // requests a listing when *it* selects a snapshot, so arriving
+            // pre-selected skipped the request and the browser sat on "Reading
+            // directory…" for ever, reading nothing.
             self.screens.restore.select(target);
-            self.screens.restore.selected_snapshot = Some(id);
+            // Both requests, because the restore screen makes each of them in
+            // response to a *click it handled itself* — the snapshot list when
+            // a destination is picked, the listing when a snapshot is. Arriving
+            // pre-selected skips both, which left the browser reading nothing
+            // beside a snapshot list that was never fetched.
+            self.request_snapshots(target);
+            self.screens.restore.selected_snapshot = Some(id.clone());
+            self.request_browse(target, id, String::new());
             self.go(Route::Restore);
         }
     }

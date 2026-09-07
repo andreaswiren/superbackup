@@ -1849,6 +1849,8 @@ pub mod restore {
     pub const BROWSE_SHOW_SELECTION: &str = "Show selection";
     pub const BROWSE_CLEAR: &str = "Clear";
     pub const BROWSE_READING: &str = "Reading directory…";
+    pub const BROWSE_PICK: &str =
+        "Choose a snapshot to look inside it.";
     pub const BROWSE_SNAPSHOT: &str = "Snapshot";
     pub const BROWSE_RESTORE_ONE: &str = "Restore 1 item";
     pub const BROWSE_RESTORE_THIS: &str = "Restore this…";

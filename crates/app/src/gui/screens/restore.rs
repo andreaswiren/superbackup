@@ -770,7 +770,16 @@ impl App {
 
         let listing = self.screens.restore.listing.clone();
         let Some(listing) = listing else {
-            widgets::text(ui, copy::restore::BROWSE_READING, Type::Small, t.text_muted);
+            // Nothing in flight and nothing to show. Saying "Reading
+            // directory…" here was a lie that looked exactly like a hang:
+            // whatever went wrong, no read was happening. Which of the two
+            // states this is decides what the user should do next.
+            let text = if self.screens.restore.selected_snapshot.is_none() {
+                copy::restore::BROWSE_PICK
+            } else {
+                copy::restore::BROWSE_READING
+            };
+            widgets::text(ui, text, Type::Small, t.text_muted);
             return;
         };
 
