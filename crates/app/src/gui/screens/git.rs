@@ -44,6 +44,19 @@ pub struct State {
     /// and a second commit cannot be started on top of the first.
     pub acting: bool,
     pub failed: Option<String>,
+    /// Repositories still to pull in a "refresh them all" run.
+    ///
+    /// One at a time, because `git_act` is single-flight and twenty
+    /// concurrent `git pull` processes against twenty working trees is not a
+    /// refresh, it is a load test.
+    pub pull_queue: std::collections::VecDeque<std::path::PathBuf>,
+    /// How many the run started with, so progress can be reported as "3 of 12"
+    /// rather than a spinner that says nothing.
+    pub pull_total: usize,
+    /// Repositories the bulk run could not pull, named at the end. Reported
+    /// together rather than as a toast each, which on a laptop that has been
+    /// closed for a week would be a stack of twenty.
+    pub pull_failed: Vec<String>,
 }
 
 impl State {
@@ -69,6 +82,27 @@ impl State {
     pub fn action_finished(&mut self) {
         self.acting = false;
         self.acting_on = None;
+    }
+
+    /// True while a "refresh them all" run is in flight.
+    pub fn pulling_all(&self) -> bool {
+        self.pull_total > 0
+    }
+
+    /// How far through, for the button's label.
+    pub fn pull_progress(&self) -> (usize, usize) {
+        (self.pull_total.saturating_sub(self.pull_queue.len()), self.pull_total)
+    }
+
+    pub fn start_bulk_pull(&mut self, paths: Vec<std::path::PathBuf>) {
+        self.pull_total = paths.len();
+        self.pull_queue = paths.into();
+        self.pull_failed.clear();
+    }
+
+    pub fn bulk_pull_finished(&mut self) {
+        self.pull_total = 0;
+        self.pull_queue.clear();
     }
 }
 
@@ -96,6 +130,45 @@ impl App {
             .clicked()
         {
             self.scan_git();
+        }
+
+        // Refresh every repository that says a pull is recommended.
+        //
+        // Only those: running `git pull` in a clean, up-to-date repository
+        // spawns a network round-trip to do nothing, and doing that across
+        // forty repositories is how a "refresh" becomes a two-minute freeze.
+        let behind: Vec<std::path::PathBuf> = self
+            .screens
+            .git
+            .inventory
+            .as_ref()
+            .map(|inventory| {
+                inventory
+                    .repos
+                    .iter()
+                    .filter(|r| matches!(r.state(), RepoState::PullRecommended))
+                    .map(|r| r.path.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let pulling = self.screens.git.pulling_all();
+        let mut pull_all = Button::secondary(copy::git::PULL_ALL)
+            .icon(Icon::Download)
+            .enabled(!scanning && !behind.is_empty() && !pulling);
+        // Owned outside the branch: `Button` borrows its label, so a String
+        // built inside the `if` would not outlive the button.
+        let progress = {
+            let (done, total) = self.screens.git.pull_progress();
+            copy::git_pulling_all(done, total)
+        };
+        if pulling {
+            pull_all = Button::secondary(&progress).icon(Icon::Download).enabled(false);
+        } else if behind.is_empty() {
+            pull_all = pull_all.disabled_because(copy::git::PULL_ALL_NONE);
+        }
+        if pull_all.show(ui).on_hover_text(copy::git::PULL_ALL_HINT).clicked() {
+            self.screens.git.start_bulk_pull(behind);
+            self.pull_next_repository();
         }
 
         let mut check = self.screens.git.check_remotes;
@@ -1280,5 +1353,56 @@ mod tests {
             assert!(explanation.len() > 30, "{state:?}: {explanation}");
             assert!(explanation.ends_with('.'), "{state:?}: {explanation}");
         }
+    }
+
+    /// The bulk pull walks the queue once and stops, and reports at the end.
+    ///
+    /// The failure worth guarding is the sequencing: a run that re-armed
+    /// itself, or one that stopped at the first repository git declined,
+    /// would both look plausible on screen. The first never ends; the second
+    /// silently refreshes three of forty.
+    #[test]
+    fn a_bulk_pull_visits_every_repository_and_survives_a_refusal() {
+        let mut state = State::default();
+        assert!(!state.pulling_all(), "idle to begin with");
+
+        let paths: Vec<std::path::PathBuf> =
+            ["/a", "/b", "/c"].iter().map(std::path::PathBuf::from).collect();
+        state.start_bulk_pull(paths.clone());
+        assert!(state.pulling_all());
+        assert_eq!(state.pull_progress(), (0, 3));
+
+        // Walk it the way the reply handler does.
+        let mut visited = Vec::new();
+        while let Some(path) = state.pull_queue.pop_front() {
+            visited.push(path);
+            // The middle one is refused; the run must carry on regardless.
+            if visited.len() == 2 {
+                state.pull_failed.push("git said no".into());
+            }
+        }
+        assert_eq!(visited, paths, "every repository, in order, once each");
+        assert_eq!(state.pull_progress(), (3, 3));
+        assert_eq!(state.pull_failed.len(), 1, "the refusal is kept for the summary");
+
+        state.bulk_pull_finished();
+        assert!(!state.pulling_all(), "and the run ends rather than re-arming");
+        assert_eq!(state.pull_progress(), (0, 0));
+    }
+
+    /// The summary names the count and carries git's own words, capped so a
+    /// laptop closed for a fortnight cannot produce a toast taller than the
+    /// window.
+    #[test]
+    fn the_bulk_pull_summary_is_specific_and_bounded() {
+        let clean = crate::gui::copy::git_pulled_all(4);
+        assert!(clean.contains('4'), "{clean}");
+
+        let failures: Vec<String> = (0..9).map(|i| format!("repo-{i} refused")).collect();
+        let message = crate::gui::copy::git_pull_all_failed(12, &failures);
+        assert!(message.contains("3 of 12"), "how many worked: {message}");
+        assert!(message.contains("repo-0 refused"), "and git's own words: {message}");
+        assert!(message.contains("4 more"), "the rest are counted, not listed: {message}");
+        assert!(!message.contains("repo-8"), "and not all nine are printed: {message}");
     }
 }

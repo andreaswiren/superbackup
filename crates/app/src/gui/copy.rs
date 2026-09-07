@@ -1513,7 +1513,50 @@ pub fn git_open_on_web(url: &str) -> String {
 {url}")
 }
 
+/// The end of a "refresh them all" run that went cleanly.
+pub fn git_pulled_all(total: usize) -> String {
+    match total {
+        1 => "One repository was brought up to date.".to_string(),
+        n => format!("{n} repositories were brought up to date."),
+    }
+}
+
+/// The end of one that did not. Names how many, then git's own words: the
+/// user has to act on those in a terminal, and a paraphrase is one they
+/// cannot search for.
+pub fn git_pull_all_failed(total: usize, failed: &[String]) -> String {
+    let ok = total.saturating_sub(failed.len());
+    let mut out = format!(
+        "{ok} of {total} brought up to date. {} could not be pulled:",
+        failed.len()
+    );
+    // Capped: a laptop closed for a fortnight can produce a great many, and a
+    // toast tall enough to cover the window is one nobody reads.
+    for detail in failed.iter().take(5) {
+        out.push_str("
+");
+        out.push_str(detail);
+    }
+    if failed.len() > 5 {
+        out.push_str(&format!("
+…and {} more.", failed.len() - 5));
+    }
+    out
+}
+
+/// The bulk-pull button while it is working.
+pub fn git_pulling_all(done: usize, total: usize) -> String {
+    format!("Pulling {done} of {total}…")
+}
+
 pub mod git {
+    pub const PULL_ALL: &str = "Pull the ones behind";
+    pub const PULL_ALL_HINT: &str =
+        "Fast-forward every repository whose remote has moved ahead, one at a time. Repositories \
+         with local changes, a diverged branch or no upstream are left alone — choosing what to \
+         do with those is your decision, not a refresh button's.";
+    pub const PULL_ALL_NONE: &str =
+        "Nothing is behind its remote. Turn on \"check remotes\" and scan to find out.";
     pub const TITLE: &str = "Git";
     pub const SUBTITLE: &str =
         "Which of the folders you back up are git repositories, and whether their work exists anywhere else.";

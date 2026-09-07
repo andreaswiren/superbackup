@@ -647,6 +647,18 @@ impl App {
             (Intent::GitAction, Reply::GitAction(reply)) => {
                 self.screens.git.action_finished();
                 let outcome = &reply.outcome;
+                // Inside a "refresh them all" run, each repository is not
+                // worth a toast and certainly not worth a rescan: twenty
+                // pulls would mean twenty rescans, each spawning three
+                // processes per repository. Failures are collected and said
+                // once, at the end.
+                if self.screens.git.pulling_all() {
+                    if !outcome.ok {
+                        self.screens.git.pull_failed.push(outcome.detail.clone());
+                    }
+                    self.pull_next_repository();
+                    return;
+                }
                 if outcome.ok {
                     self.toasts.success(outcome.detail.clone());
                 } else {
@@ -798,6 +810,15 @@ impl App {
                 }
                 Intent::GitAction => {
                     self.screens.git.action_finished();
+                    if self.screens.git.pulling_all() {
+                        // A refusal from the daemon counts the same as a
+                        // refusal from git: named at the end, and the run
+                        // carries on rather than stopping at the first
+                        // repository that would not move.
+                        self.screens.git.pull_failed.push(payload.message);
+                        self.pull_next_repository();
+                        return;
+                    }
                     self.toasts.warning(payload.message);
                 }
                 // Errors that belong to a screen are rendered by that screen.
@@ -858,6 +879,37 @@ impl App {
                 false
             }
         }
+    }
+
+    /// Pull the next repository in a "refresh them all" run, or finish it.
+    ///
+    /// Sequential on purpose. `git_act` is single-flight, and twenty
+    /// concurrent `git pull` processes against twenty working trees is not a
+    /// refresh — it would saturate the disk, the network and the remote's
+    /// rate limit at once, and produce a screen where nothing can be told
+    /// apart.
+    pub fn pull_next_repository(&mut self) {
+        let Some(path) = self.screens.git.pull_queue.pop_front() else {
+            // Done. One summary, one rescan.
+            let total = self.screens.git.pull_total;
+            let failed = std::mem::take(&mut self.screens.git.pull_failed);
+            self.screens.git.bulk_pull_finished();
+            if failed.is_empty() {
+                self.toasts.success(copy::git_pulled_all(total));
+            } else {
+                // The count first, then git's own words for each, because the
+                // user has to act on those in a terminal.
+                self.toasts.warning(copy::git_pull_all_failed(total, &failed));
+            }
+            self.scan_git();
+            return;
+        };
+        self.git_act(
+            superbackup_core::ipc::protocol::Request::GitPull {
+                path: path.display().to_string(),
+            },
+            path,
+        );
     }
 
     pub fn request_run(&mut self, job: &Job) {
