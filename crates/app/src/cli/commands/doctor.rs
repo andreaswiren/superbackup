@@ -325,6 +325,42 @@ fn vault_checks(ctx: &mut Ctx, daemon: Option<&Daemon>) -> Vec<DoctorCheck> {
         },
         None => out.push(check("vault.unlocked", "the vault is unlocked", CheckStatus::Skipped)),
     }
+
+    // Auto-lock with no cached key means scheduled backups stop the moment
+    // nobody is at the machine.
+    //
+    // This is the arrangement that produced a night of "Missed scheduled run"
+    // on a computer that was switched on the whole time: the vault locks
+    // itself after the idle timer, and every scheduled run from then until
+    // somebody types the passphrase is skipped. Each setting is reasonable on
+    // its own, which is exactly why the combination needs saying out loud.
+    if let Some(daemon) = daemon {
+        if let Ok(reply) = reply!(daemon, Request::SettingsGet {}, Settings) {
+            let settings = reply.settings;
+            if settings.auto_lock_minutes > 0 && !settings.use_os_keychain {
+                out.push(with_hint(
+                    with_detail(
+                        check(
+                            "vault.unattended",
+                            "scheduled backups can run unattended",
+                            CheckStatus::Warn,
+                        ),
+                        format!(
+                            "the vault locks itself after {} minutes and the key is not cached,                              so every scheduled run is skipped until someone unlocks it by hand",
+                            settings.auto_lock_minutes
+                        ),
+                    ),
+                    "Either cache the key (`superbackup config set use_os_keychain true`, which                      lets anything that can read your keychain read your backups) or stop the                      vault locking itself (`superbackup config set auto_lock_minutes 0`).",
+                ));
+            } else {
+                out.push(check(
+                    "vault.unattended",
+                    "scheduled backups can run unattended",
+                    CheckStatus::Pass,
+                ));
+            }
+        }
+    }
     out
 }
 

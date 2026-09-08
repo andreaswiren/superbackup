@@ -97,6 +97,7 @@ fn snapshot() -> StatusSnapshot {
 
 fn running(job_id: Uuid, name: &str) -> JobRun {
     JobRun {
+        skipped_because: None,
         run_id: Uuid::new_v4(),
         job_id,
         job_name: name.into(),

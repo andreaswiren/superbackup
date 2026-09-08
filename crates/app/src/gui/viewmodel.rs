@@ -912,6 +912,13 @@ pub fn visible_events<'a>(
 /// `2 succeeded, 1 failed` — the destination summary an activity row owes the
 /// user. A run that partly failed never renders as a plain success.
 pub fn destination_summary(run: &JobRun) -> String {
+    // A skipped run has no destinations, so the count below is always "0 of 0
+    // succeeded" — which is true, says nothing, and reads like a run that
+    // could not reach anything. The reason it did not run is the only useful
+    // thing this cell can carry.
+    if let Some(reason) = &run.skipped_because {
+        return reason.clone();
+    }
     let total = run.destinations.len();
     let ok = run
         .destinations
@@ -1377,6 +1384,7 @@ mod tests {
 
     fn preview_run(destinations: Vec<DestinationRun>) -> JobRun {
         JobRun {
+            skipped_because: None,
             run_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             job_name: "Dev folders".into(),
@@ -1784,6 +1792,7 @@ mod tests {
 
     fn run(statuses: Vec<RunStatus>) -> JobRun {
         let mut run = JobRun {
+            skipped_because: None,
             run_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             job_name: "Dev code".into(),

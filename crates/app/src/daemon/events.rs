@@ -113,6 +113,7 @@ async fn handle(runtime: &Arc<Runtime>, event: EngineEvent) {
             // Tracked from the moment it is queued, so `job.stop` on a run
             // that has not started yet still finds its job.
             runtime.set_active(JobRun {
+                skipped_because: None,
                 run_id,
                 job_id,
                 job_name,
@@ -218,30 +219,52 @@ async fn handle(runtime: &Arc<Runtime>, event: EngineEvent) {
             // seven "Development · Queued" cards started hours apart, one per
             // scheduler tick since the vault was locked, none of which could
             // ever finish because none had started.
+            // A locked machine is not a failing one.
+            //
+            // Every tick that finds a job due while the vault is locked emits
+            // one of these, so a laptop closed overnight produced a row an
+            // hour — eight identical "Missed scheduled run" entries crowding
+            // the real backups out of the recent list, and a notification for
+            // each. Nothing changed on that machine while it was off, and the
+            // run is re-queued the moment it unlocks, so the honest record is
+            // *one* line saying backups are not running, not one per tick.
+            let first_time = reason != SkipReason::VaultLocked
+                || runtime.note_blocked_by_lock(job_id);
             if let Some(run_id) = run_id {
                 if let Some(mut run) = runtime.clear_active(&run_id) {
-                    // Recorded rather than discarded: "it did not run and I do
-                    // not know why" is the failure that makes people stop
-                    // trusting a backup tool, and a scheduled run that was
-                    // missed is exactly what a user scanning history is
-                    // looking for.
-                    run.status = RunStatus::Skipped;
-                    run.finished_at = Some(chrono::Utc::now());
-                    runtime.persisted.lock().await.record(run);
-                    super::save_state(runtime).await;
+                    // Still recorded, because "it did not run and I do not
+                    // know why" is the failure that makes people stop trusting
+                    // a backup tool — but once.
+                    if first_time {
+                        run.status = RunStatus::Skipped;
+                        run.finished_at = Some(chrono::Utc::now());
+                        // Carried on the run, so a list can say why without
+                        // the reader going to the event log. A skipped run has
+                        // no destinations, so every list showed "0 of 0
+                        // succeeded" — true, useless, and easy to read as a
+                        // run that reached nothing.
+                        run.skipped_because = Some(reason.describe().to_string());
+                        runtime.persisted.lock().await.record(run);
+                        super::save_state(runtime).await;
+                    }
                 }
             }
             // The scheduler drains blocked runs rather than queueing them, so
             // the daemon has to remember this one itself if the vault is the
             // reason. See `Runtime::blocked_by_lock`.
-            if reason == SkipReason::VaultLocked {
-                runtime.note_blocked_by_lock(job_id);
+            if reason == SkipReason::VaultLocked && first_time {
+                // Once per locked stretch, not once per tick. The tray icon
+                // and the locked screen already say the vault is shut; a
+                // notification repeating it hourly is how people learn to
+                // dismiss this program's notifications without reading them.
                 notify(
                     runtime,
                     Notification::new(
                         NotificationKind::ServiceError,
-                        "A backup was skipped",
-                        format!("\"{job_name}\" was due. Unlock superbackup to run it."),
+                        "Backups are not running",
+                        format!(
+                            "\"{job_name}\" was due and superbackup is locked. Unlock it and                              anything missed runs straight away."
+                        ),
                     )
                     .with_job(job_id),
                 )

@@ -269,6 +269,7 @@ fn destination_run(
 /// the whole product exists to make visible.
 pub fn active_run() -> JobRun {
     let mut run = JobRun {
+        skipped_because: None,
         run_id: RUN_ACTIVE,
         job_id: JOB_DEV,
         job_name: "Dev code".into(),
@@ -360,6 +361,7 @@ pub fn partial_failure_run() -> JobRun {
     ];
 
     let mut run = JobRun {
+        skipped_because: None,
         run_id: RUN_PARTIAL,
         job_id: JOB_DEV,
         job_name: "Dev code".into(),
@@ -392,6 +394,7 @@ pub fn history() -> Vec<JobRun> {
         {
             let started = Utc::now() - Duration::days(day) - Duration::hours(index as i64 * 5 + 3);
             let mut run = JobRun {
+                skipped_because: None,
                 run_id: if day == 0 && index == 0 { RUN_CLEAN } else { Uuid::new_v4() },
                 job_id,
                 job_name: name.into(),

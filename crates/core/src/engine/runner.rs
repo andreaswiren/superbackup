@@ -328,6 +328,7 @@ impl Runner {
         // source moves here and nowhere else.
         let plan = plan_destinations(&request.destinations);
         let mut run = JobRun {
+            skipped_because: None,
             run_id: request.run_id,
             job_id: request.job.id,
             job_name: request.job.name.clone(),

@@ -249,6 +249,14 @@ pub struct JobRun {
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub destinations: Vec<DestinationRun>,
+    /// Why a `Skipped` run did not happen.
+    ///
+    /// A skipped run has no destinations, so every list rendered it as "0 of 0
+    /// succeeded" — which is true, tells the reader nothing, and looks
+    /// alarmingly like a run that failed to reach anything. The reason was in
+    /// the event log the whole time and nowhere a person would look.
+    #[serde(default)]
+    pub skipped_because: Option<String>,
 }
 
 impl JobRun {
@@ -573,6 +581,7 @@ mod tests {
 
     fn run(destinations: Vec<DestinationRun>) -> JobRun {
         JobRun {
+            skipped_because: None,
             run_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             job_name: "j".into(),

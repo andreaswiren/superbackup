@@ -717,6 +717,7 @@ fn sample_preview_run() -> superbackup_core::state::JobRun {
         skipped_reason: None,
     };
     JobRun {
+        skipped_because: None,
         run_id: uuid::Uuid::new_v4(),
         job_id: fixtures::JOB_DEV,
         job_name: "Dev folders".into(),

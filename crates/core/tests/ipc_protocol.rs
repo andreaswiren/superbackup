@@ -332,6 +332,7 @@ fn sample_requests() -> Vec<Request> {
 /// One value of every [`Reply`] variant.
 fn sample_replies() -> Vec<Reply> {
     let run = JobRun {
+        skipped_because: None,
         run_id: Uuid::nil(),
         job_id: Uuid::nil(),
         job_name: "documents".into(),

@@ -95,14 +95,53 @@ fn read(shared: &Shared) -> String {
 /// tests that used it would collide with each other and with any real daemon
 /// on the developer's machine.
 pub fn unique_endpoint(tag: &str) -> String {
-    let unique = format!("{}-{}-{}", std::process::id(), tag, uuid::Uuid::new_v4().simple());
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
+        let unique = format!("{}-{}-{}", std::process::id(), tag, uuid::Uuid::new_v4().simple());
         format!(r"\\.\pipe\superbackup-cli-{unique}")
-    } else {
-        let dir = std::env::temp_dir().join(format!("sb-cli-{unique}"));
-        let _ = std::fs::create_dir_all(&dir);
-        dir.join("sb.sock").display().to_string()
     }
+    #[cfg(not(windows))]
+    {
+        // A short, private directory: see `short_socket_path`.
+        let _ = tag;
+        short_socket_path("sbc")
+    }
+}
+
+/// A short unique socket path that fits in `sockaddr_un`.
+///
+/// # The limit nobody sees on Windows or Linux
+///
+/// A Unix socket path lives in `sun_path`, which is **104 bytes on macOS** and
+/// 108 on Linux — a limit in the kernel struct, not the filesystem. `bind` on
+/// a longer path fails with an error that says nothing about length.
+///
+/// On Linux `std::env::temp_dir()` is `/tmp`, so a generous name fits and
+/// nobody notices. On macOS it is `/var/folders/xx/<28 characters>/T/`, about
+/// fifty — and a name built from a pid, a tag and a full UUID, inside a
+/// subdirectory of its own, took the total well past the limit. Every test
+/// that bound an endpoint failed there and only there.
+#[cfg(not(windows))]
+fn short_socket_path(prefix: &str) -> String {
+    // A private directory of our own, with a short name.
+    //
+    // The directory is not incidental: `Server::bind` restricts the socket's
+    // *parent* to 0700, which is the control that keeps another local user out
+    // of the endpoint. Putting the socket straight in the system temp folder
+    // to save characters made bind try to chmod `/tmp`, which is not ours —
+    // "Operation not permitted", and every test that binds one failed. Short
+    // and private, not short instead of private.
+    let unique = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let dir = std::env::temp_dir().join(format!("{prefix}{unique}"));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("s");
+    let shown = path.display().to_string();
+    assert!(
+        shown.len() < 100,
+        "the socket path is {} bytes, and sun_path holds 104 on macOS: {shown}",
+        shown.len()
+    );
+    shown
 }
 
 /// A live IPC server backed by [`MockHandler`], plus the runtime driving it.

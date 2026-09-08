@@ -249,32 +249,45 @@ impl App {
                 }
 
                 ui.add_space(space::M);
-                ui.horizontal(|ui| {
-                    let mut backed_up = credential.backed_up;
-                    if widgets::checkbox(
-                        ui,
-                        &mut backed_up,
-                        copy::cred::BACK_UP,
-                        Some(copy::cred::BACK_UP_HINT),
-                        true,
-                    )
-                    .clicked()
+                // Two columns of an explicit half-width each.
+                //
+                // A checkbox with helper text wraps that text to the width it
+                // is given, and inside a plain `horizontal` the first one is
+                // given everything left in the row. Its helper then filled the
+                // card, and the second checkbox began past the right edge —
+                // which is exactly how "Share with my other machines"
+                // disappeared off the side of the page.
+                let column = ((ui.available_width() - space::XL) / 2.0).max(220.0);
+                ui.horizontal_top(|ui| {
+                    for (index, (label, hint, value)) in [
+                        (copy::cred::BACK_UP, copy::cred::BACK_UP_HINT, credential.backed_up),
+                        (copy::cred::SHARE, copy::cred::SHARE_HINT, credential.synced),
+                    ]
+                    .into_iter()
+                    .enumerate()
                     {
-                        change =
-                            Some((credential.id.clone(), backed_up, credential.synced));
-                    }
-                    ui.add_space(space::XL);
-                    let mut synced = credential.synced;
-                    if widgets::checkbox(
-                        ui,
-                        &mut synced,
-                        copy::cred::SHARE,
-                        Some(copy::cred::SHARE_HINT),
-                        true,
-                    )
-                    .clicked()
-                    {
-                        change = Some((credential.id.clone(), credential.backed_up, synced));
+                        // Width fixed, height left to grow with the wrapped
+                        // helper: the two hints are different lengths and
+                        // pinning a height would clip the longer one.
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(column, 0.0),
+                            Layout::top_down(Align::Min),
+                            |ui| {
+                                ui.set_min_width(column);
+                                let mut on = value;
+                                if widgets::checkbox(ui, &mut on, label, Some(hint), true).clicked()
+                                {
+                                    change = Some(if index == 0 {
+                                        (credential.id.clone(), on, credential.synced)
+                                    } else {
+                                        (credential.id.clone(), credential.backed_up, on)
+                                    });
+                                }
+                            },
+                        );
+                        if index == 0 {
+                            ui.add_space(space::XL);
+                        }
                     }
                 });
             }

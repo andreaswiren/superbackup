@@ -545,8 +545,16 @@ impl Runtime {
     }
 
     /// Remember that a scheduled run was dropped because the vault was locked.
-    pub fn note_blocked_by_lock(&self, job_id: Uuid) {
-        recover(&self.blocked_by_lock).insert(job_id);
+    /// Returns true the *first* time this job is blocked in a locked stretch.
+    ///
+    /// The set is emptied on unlock, so "newly inserted" means "this is the
+    /// first occurrence since the vault was last open" — which is the only
+    /// moment worth telling the user about. Every scheduler tick afterwards
+    /// finds the same job due and blocked for the same reason, and saying so
+    /// each time produced a notification an hour and a history full of
+    /// identical rows.
+    pub fn note_blocked_by_lock(&self, job_id: Uuid) -> bool {
+        recover(&self.blocked_by_lock).insert(job_id)
     }
 
     /// Take the blocked set, leaving it empty. Called exactly once per unlock.

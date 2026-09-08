@@ -697,6 +697,7 @@ mod tests {
 
     fn run_with(destinations: Vec<RunStatus>) -> JobRun {
         JobRun {
+            skipped_because: None,
             run_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             job_name: "Dev code".into(),

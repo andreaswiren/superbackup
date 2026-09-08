@@ -96,6 +96,20 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary: superbackup
             archive: tar.gz
+          # ARM Linux on a native ARM runner rather than a cross-compile.
+          # The binary links GTK, libxdo and appindicator for the tray, and
+          # cross-compiling those means ARM versions of every -dev package on
+          # an x86 host; building where it runs is the shorter road and the
+          # one that actually tests the result.
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: superbackup
+            archive: tar.gz
+          # Windows on ARM, for Snapdragon laptops. Same reasoning.
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            binary: superbackup.exe
+            archive: zip
           - os: macos-latest
             target: aarch64-apple-darwin
             binary: superbackup

@@ -561,6 +561,7 @@ mod tests {
     fn run(name: &str, job_id: Uuid, fraction: f32) -> JobRun {
         let total = 1000u64;
         JobRun {
+            skipped_because: None,
             run_id: Uuid::new_v4(),
             job_id,
             job_name: name.into(),

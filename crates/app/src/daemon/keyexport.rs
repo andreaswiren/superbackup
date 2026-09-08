@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn the_document_carries_the_key_and_the_command_to_use_it() {
-        let dest = repository("Archive", r"D:\backups\archive");
+        let dest = repository("Archive", &abs("/backups/archive"));
         let handle = dest.passphrase_ref.clone().expect("a handle");
         let mut store = store_with(vec![dest]);
         store
@@ -547,7 +547,7 @@ mod tests {
         // The key is present, in groups, and so is the command that uses it.
         assert!(export.document.contains("KEYKEYKE  YKEYKEYK"), "{}", export.document);
         assert!(export.document.contains("kopia repository connect filesystem"));
-        assert!(export.document.contains(r"D:\backups\archive"));
+        assert!(export.document.contains(&abs("/backups/archive")));
         assert!(export.document.contains("AES256-GCM-HMAC-SHA256"));
         assert!(export.document.contains("Studio"));
         // The warning has to be in the file itself, not only in the interface.
@@ -558,7 +558,8 @@ mod tests {
     #[test]
     fn a_destination_with_no_key_is_listed_rather_than_dropped() {
         // A repository whose secret was never stored, plus a folder mirror.
-        let store = store_with(vec![repository("Broken", r"D:\b"), mirror("Copy", r"E:\c")]);
+        let store =
+            store_with(vec![repository("Broken", &abs("/b")), mirror("Copy", &abs("/c"))]);
         let export = build(&store, Utc::now());
         assert_eq!(export.exported, 0);
         assert_eq!(export.omitted.len(), 2);
@@ -571,7 +572,7 @@ mod tests {
 
     #[test]
     fn a_reason_for_omission_never_carries_key_material() {
-        let dest = repository("Odd", r"D:\odd");
+        let dest = repository("Odd", &abs("/odd"));
         let handle = dest.passphrase_ref.clone().expect("a handle");
         let mut store = store_with(vec![dest]);
         // Non-UTF-8 key material: printable text is impossible, and the reason
@@ -586,10 +587,10 @@ mod tests {
 
     #[test]
     fn a_replica_says_whose_key_it_shares() {
-        let root = repository("Primary", r"D:\primary");
+        let root = repository("Primary", &abs("/primary"));
         let root_id = root.id;
         let handle = root.passphrase_ref.clone().expect("a handle");
-        let mut replica = repository("Offsite copy", r"E:\offsite");
+        let mut replica = repository("Offsite copy", &abs("/offsite"));
         replica.replicate_from = Some(root_id);
         replica.passphrase_ref = None;
         // A replica carries no encryption settings either: `sync-to` copies the

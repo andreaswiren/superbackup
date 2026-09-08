@@ -222,12 +222,56 @@ pub fn fresh_home(name: &str) -> (PathBuf, Paths) {
 
 /// An endpoint no other test — and no developer's daemon — will collide with.
 pub fn private_endpoint(name: &str) -> String {
-    let unique = format!("{name}-{}-{}", std::process::id(), Uuid::new_v4().simple());
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
+        let unique = format!("{name}-{}-{}", std::process::id(), Uuid::new_v4().simple());
         format!(r"\\.\pipe\sb-test-{unique}")
-    } else {
-        std::env::temp_dir().join(format!("sb-test-{unique}.sock")).display().to_string()
     }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        short_socket_path("sbt")
+    }
+}
+
+/// A short unique socket path that fits in `sockaddr_un`.
+///
+/// # The limit nobody sees on Windows or Linux
+///
+/// A Unix socket path lives in `sun_path`, which is **104 bytes on macOS** and
+/// 108 on Linux — a limit in the kernel struct, not the filesystem. `bind` on
+/// a longer path fails, with an error that says nothing about length.
+///
+/// On Linux `std::env::temp_dir()` is `/tmp`, five characters, so a generous
+/// name fits and nobody notices. On macOS it is
+/// `/var/folders/xx/<28 characters>/T/`, about fifty — and a name built from a
+/// pid, a test tag and a full UUID took the total past 104. Every test that
+/// binds an endpoint failed there, and only there, which is how this survived
+/// while Windows and Linux looked fine.
+///
+/// The unique part is now short, and the result is checked: a panic naming the
+/// length is worth a great deal more than sixty tests failing with "invalid
+/// argument".
+#[cfg(not(windows))]
+fn short_socket_path(prefix: &str) -> String {
+    // A private directory of our own, with a short name.
+    //
+    // The directory is not incidental: `Server::bind` restricts the socket's
+    // *parent* to 0700, which is the control that keeps another local user out
+    // of the endpoint. Putting the socket straight in the system temp folder
+    // to save characters made bind try to chmod `/tmp`, which is not ours.
+    // Short *and* private, not short instead of private.
+    let unique = &Uuid::new_v4().simple().to_string()[..8];
+    let dir = std::env::temp_dir().join(format!("{prefix}{unique}"));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("s");
+    let shown = path.display().to_string();
+    assert!(
+        shown.len() < 100,
+        "the socket path is {} bytes, and sun_path holds 104 on macOS: {shown}",
+        shown.len()
+    );
+    shown
 }
 
 // ---------------------------------------------------------------------------

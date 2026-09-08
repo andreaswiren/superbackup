@@ -14,6 +14,128 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.7.0] - 2026-09-08
+
+### Added
+
+- **Warn before a disk fills.** Superbackup watches the volumes its
+  destinations are written to, and its own folder, every half hour. Two
+  thresholds per level, because neither works alone: five per cent of a 4 TB
+  drive is 200 GB and not worth a warning, while ten gigabytes free on a
+  128 GB laptop genuinely is. Both adjustable, either set to zero to switch
+  that rule off. The level is remembered per volume, so the log gets one line
+  when a disk starts running out and one when it recovers rather than
+  forty-eight a day. Buckets are not checked: they have no free space to read,
+  and inventing a figure is worse than silence.
+
+- **A job's page lists its own snapshots**, searchable by date, time or id,
+  with a way into the restore browser for each. Restore starts from a
+  destination and asks which of its snapshots belong to the job you had in
+  mind; this is the other direction, which is the one you have in mind while
+  looking at a job.
+
+- **"Pull the ones behind"** on the Git page fast-forwards every repository
+  whose remote has moved, one at a time. Only those: `git pull` in an
+  up-to-date repository is a network round-trip to do nothing. Repositories
+  with local changes, a diverged branch or no upstream are left alone, because
+  choosing between a merge and a rebase is your decision and not a refresh
+  button's.
+
+- **A globe button on each repository row**, with the address as its tooltip.
+
+- **The GitHub CLI installs from the dialog that wants it**, using winget,
+  Homebrew or pacman. Not superbackup's own downloader, which exists for
+  kopia: kopia is a private dependency in our own folder, while `gh` is your
+  tool — it goes on your PATH, holds your credentials and needs updating, and
+  a second copy invisible to `gh --version` in your terminal would be worse
+  than none. Where the install would need a password it refuses and shows you
+  the command, because a backup tool that asks for a root password is one to
+  stop trusting.
+
+- **Destinations can be marked as reachable from your other machines**, and
+  those are offered as one-click choices for the key-sharing folder.
+
+- **Release builds now cover ARM**: Linux `aarch64` and Windows `aarch64`
+  alongside the existing x86-64 Windows and Linux and both macOS
+  architectures. Built on native ARM runners rather than cross-compiled — the
+  binary links GTK, libxdo and appindicator for the tray, and building where
+  it runs is both shorter and the only version that has actually been run.
+
+### Fixed
+
+- **The test suite has never passed on Linux or macOS**, so the release
+  workflow has never produced an artefact for either. Windows was the only
+  platform anybody watched go green, and every release run has been red since
+  the first one.
+
+  Two causes. Fixtures in the key-export tests wrote `D:ackupsrchive`
+  literals, which are *relative* paths on Linux and macOS, so configuration
+  validation refused them — a helper that returns an absolute path for the
+  running platform was already there and simply not used. And every test that
+  binds an IPC endpoint failed on macOS: a Unix socket path lives in
+  `sun_path`, which holds 104 bytes there, and a name built from a pid, a test
+  tag and a full UUID under `/var/folders/xx/<28 characters>/T/` went past it.
+  `bind` says nothing about length when it refuses. The names are now short,
+  and still inside a private directory, because the directory is what
+  `Server::bind` restricts to 0700 to keep other local users out — short *and*
+  private, not short instead of private.
+
+- **A locked vault produced a notification and a history row every hour.** A
+  machine that is switched on but idle locks itself after the auto-lock timer,
+  and every scheduled run from then until somebody types the passphrase is
+  skipped — so one evening produced eight identical "Missed scheduled run"
+  entries that crowded the real backups out of the list. It is now recorded
+  once per locked stretch. `doctor` also warns when auto-lock is on and the key
+  is not cached, because each setting is reasonable alone and the combination
+  silently stops scheduled backups.
+
+- **A skipped run said "0 of 0 succeeded"**, which is true, tells the reader
+  nothing, and reads like a run that could not reach anything. It now says why
+  it did not run.
+
+- **Ten controls were drawn, clickable, and wired to nothing.** A discarded
+  `Response` renders identically to a working button, so no rendering test
+  would notice and `#[must_use]` cannot help — `let _ =` is exactly the syntax
+  that suppresses it. Three were worse: the click was read into an empty body
+  under a comment claiming something else handled it, which reads far more
+  convincingly. Among them were both buttons on the first-run screen shown
+  when kopia is missing, the dashboard's "View error" on a failed destination,
+  and the only button on a job editor whose job had been deleted. There is now
+  a test that fails on either shape.
+
+- **"Run now" on a dashboard card opened the job instead of running it.** egui
+  breaks a hit-test tie by taking the last widget registered, and the card's
+  interaction covered the whole rect *after* its buttons were drawn — so it sat
+  on top of them and the button never saw the press.
+
+- **The Git page could not scroll.** It was the only screen without a scroll
+  area, so with nineteen repositories the "Not in git" section sat below the
+  window and could not be reached without maximising. That list is now the
+  same data grid as the repositories above it rather than cards in a frame.
+
+- **The Storage providers name column sat above its row**, and the previous
+  fix was the cause: wrapping the name in a centred layout of its own replaced
+  the table cell's own centred layout with one anchored to the top.
+
+- **The recent-runs header did not line up with its columns.**
+  `allocate_ui_with_layout` does not keep the size it is given, so every column
+  collapsed to its own text.
+
+- **The Credentials page ran off the right-hand edge.** A checkbox wraps its
+  helper text to the width it is given, and in a plain row the first one is
+  given everything — so its hint filled the card and "Share with my other
+  machines" began past the edge.
+
+- **Timestamps are ISO ordered and always carry their year.** `12 Mar` against
+  a snapshot from 2024 read as this year's. Where a timestamp stands alone it
+  now names its zone.
+
+- Browsing a snapshot from a job's page reads it, rather than showing "Reading
+  directory…" for ever while reading nothing.
+
+- The About page's logo and version are left-aligned with the cards below them.
+
+
 ## [0.6.0] - 2026-09-07
 
 ### Superbackup backs itself up
