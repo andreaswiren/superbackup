@@ -135,23 +135,19 @@ pub async fn status() -> AgentStatus {
     command.stderr(std::process::Stdio::piped());
     crate::kopia::harden_child(&mut command);
 
-    let output = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        command.output(),
-    )
-    .await
-    {
-        Ok(Ok(output)) => output,
-        _ => {
-            return AgentStatus {
-                kind: AgentKind::None,
-                running: false,
-                loaded: Vec::new(),
-                persists_across_reboot: false,
-                note: "The agent did not answer.".into(),
+    let output =
+        match tokio::time::timeout(std::time::Duration::from_secs(10), command.output()).await {
+            Ok(Ok(output)) => output,
+            _ => {
+                return AgentStatus {
+                    kind: AgentKind::None,
+                    running: false,
+                    loaded: Vec::new(),
+                    persists_across_reboot: false,
+                    note: "The agent did not answer.".into(),
+                }
             }
-        }
-    };
+        };
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -332,7 +328,8 @@ mod tests {
     /// start an agent they already have.
     #[test]
     fn fingerprints_are_read_in_the_form_the_credentials_page_shows() {
-        let output = "256 SHA256:XziF6PsU6xsajzIBXuqdfI8pTgJgbBCl7oY/3dDiXwY andreas@AWPC34 (ED25519)\n\
+        let output =
+            "256 SHA256:XziF6PsU6xsajzIBXuqdfI8pTgJgbBCl7oY/3dDiXwY andreas@AWPC34 (ED25519)\n\
                       4096 SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG work@laptop (RSA)\n";
         let loaded = parse_loaded(output);
         assert_eq!(loaded.len(), 2);

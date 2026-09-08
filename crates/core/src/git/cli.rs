@@ -136,9 +136,8 @@ impl Git {
         }
         crate::kopia::harden_child(&mut cmd);
 
-        let child = cmd
-            .spawn()
-            .map_err(|e| Error::io(format!("running git in {}", dir.display()), e))?;
+        let child =
+            cmd.spawn().map_err(|e| Error::io(format!("running git in {}", dir.display()), e))?;
 
         let finished = tokio::time::timeout(timeout, child.wait_with_output()).await;
         let output = match finished {

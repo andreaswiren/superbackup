@@ -1254,11 +1254,7 @@ impl Handler for MockHandler {
         })
     }
 
-    async fn credential_agent_add(
-        &self,
-        _ctx: &RequestContext,
-        _path: String,
-    ) -> Result<AckReply> {
+    async fn credential_agent_add(&self, _ctx: &RequestContext, _path: String) -> Result<AckReply> {
         let _guard = self.enter("cred.agent_add").await?;
         Ok(AckReply {})
     }

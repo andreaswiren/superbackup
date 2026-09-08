@@ -54,16 +54,16 @@ pub mod wake;
 #[cfg(windows)]
 mod win32;
 
+pub use disk::{DiskLevel, DiskReport, DiskSpaceSettings};
 pub use gdrive::{DriveMode, GoogleDriveAccount};
 pub use identity::{list_machines, list_machines_for, write_manifest, MachineRecord};
 pub use notify::{Notification, NotificationKind, Notifier, NotifyOutcome};
 pub use onedrive::{OneDriveAccount, OneDriveKind, SyncState, Validation, ValidationIssue};
-pub use disk::{DiskLevel, DiskReport, DiskSpaceSettings};
 pub use power::{Metered, PowerSource, PowerStatus, WakeDetector};
-pub use wake::{StayAwake, WakeSupport, WakeTimer};
 pub use service::{ServiceOptions, ServiceScope, ServiceState, ServiceStatus};
 pub use shortcut::ShortcutState;
 pub use single_instance::{InstanceGuard, LockOutcome};
+pub use wake::{StayAwake, WakeSupport, WakeTimer};
 
 // ---------------------------------------------------------------------------
 // Shared helpers

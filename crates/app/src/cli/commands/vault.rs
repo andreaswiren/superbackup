@@ -271,7 +271,11 @@ fn backups(ctx: &mut Ctx) -> CliResult<Outcome> {
     if found.is_empty() {
         ctx.ui.line("No copies yet. One is written before every change to the vault.");
     } else {
-        ctx.ui.line(format!("{} in {}:", format::plural(found.len(), "copy", "copies"), file.backup_dir().display()));
+        ctx.ui.line(format!(
+            "{} in {}:",
+            format::plural(found.len(), "copy", "copies"),
+            file.backup_dir().display()
+        ));
         for path in &found {
             ctx.ui.line(format!(
                 "  {}",

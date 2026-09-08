@@ -5,7 +5,14 @@ members = ["crates/core", "crates/app"]
 [workspace.package]
 version = "0.7.0"
 edition = "2021"
-rust-version = "1.82"
+# What the dependency tree actually needs, not an aspiration.
+#
+# This said 1.82 while `notify-rust` required 1.89 and `globset` and the `icu`
+# crates required 1.88 - so `cargo check` on the minimum toolchain failed to
+# even resolve, and the CI job that exists to catch exactly that had been red
+# for its whole recorded history. A version nobody can build with is worse
+# than no claim at all.
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/andreaswiren/superbackup"
 authors = ["Andreas Wiren"]

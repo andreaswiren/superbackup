@@ -382,10 +382,8 @@ impl Runner {
         let _staged = match self.stage_content(&mut request, &run).await {
             Ok(staged) => staged,
             Err(error) => {
-                early_failure = Some((
-                    format!("{} could not be prepared", run.job_name),
-                    error.to_string(),
-                ));
+                early_failure =
+                    Some((format!("{} could not be prepared", run.job_name), error.to_string()));
                 None
             }
         };

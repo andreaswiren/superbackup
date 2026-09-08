@@ -22,9 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use superbackup_core::engine::clock::BoxFuture;
-use superbackup_core::engine::protected::{
-    self, ContentProvider, StagedContent, Staging,
-};
+use superbackup_core::engine::protected::{self, ContentProvider, StagedContent, Staging};
 use superbackup_core::error::{Error, Result};
 use superbackup_core::model::{JobContent, Source};
 use uuid::Uuid;
@@ -70,9 +68,7 @@ impl ContentProvider for DaemonContent {
         Box::pin(async move {
             // `master()` returns `Locked` rather than `None`, so a locked
             // daemon cannot fall through into building an empty bundle.
-            let passphrase = self.runtime.master().map_err(|_| {
-                Error::Locked
-            })?;
+            let passphrase = self.runtime.master().map_err(|_| Error::Locked)?;
             let config = { self.runtime.store.lock().await.config().clone() };
             let machine = config.machine.label.clone();
             let vault_file = self.runtime.paths.vault_file();

@@ -54,7 +54,10 @@ pub enum ConfirmAction {
     /// Erase the repository at a destination so it can become a copy. The
     /// name is carried because the daemon requires it typed back, and the
     /// dialog has already made the user type it.
-    ClearRepository { id: Uuid, name: String },
+    ClearRepository {
+        id: Uuid,
+        name: String,
+    },
     Nothing,
 }
 
@@ -1779,11 +1782,7 @@ fn show_cron_help(ctx: &egui::Context) -> Option<Modal> {
 /// with no message is a commit nobody can identify later, and this is exactly
 /// the situation — a folder somebody had not looked at in weeks — where that
 /// matters most.
-fn show_git_commit(
-    app: &mut App,
-    ctx: &egui::Context,
-    mut state: GitCommitState,
-) -> Option<Modal> {
+fn show_git_commit(app: &mut App, ctx: &egui::Context, mut state: GitCommitState) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut commit = false;
     let (close, _) = widgets::modal(
@@ -1940,12 +1939,7 @@ fn show_git_repo(
         |m| {
             m.body(|ui| {
                 widgets::scroll_area(ui, "sb-git-repo-body", |ui| {
-                    action = super::screens::git::git_details(
-                        ui,
-                        &state.repo,
-                        &mut state.tab,
-                        now,
-                    );
+                    action = super::screens::git::git_details(ui, &state.repo, &mut state.tab, now);
                 });
             });
             m.footer(|ui| {
@@ -2092,7 +2086,11 @@ fn show_key_bundle(app: &mut App, ctx: &egui::Context, mut state: KeyBundleState
 /// third. What lands on the host is an empty repository the local one points
 /// at; the first push is the user's, made when they have looked at what is
 /// about to leave the machine.
-fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState>) -> Option<Modal> {
+fn show_git_init(
+    app: &mut App,
+    ctx: &egui::Context,
+    mut state: Box<GitInitState>,
+) -> Option<Modal> {
     let t = theme::tokens(ctx);
     let mut go = false;
     let mut dismissed = false;
@@ -2191,7 +2189,12 @@ fn show_git_init(app: &mut App, ctx: &egui::Context, mut state: Box<GitInitState
                             }
                         });
                         ui.add_space(space::XS);
-                        widgets::paragraph(ui, copy::git::GH_INSTALL_BODY, Type::Small, t.text_muted);
+                        widgets::paragraph(
+                            ui,
+                            copy::git::GH_INSTALL_BODY,
+                            Type::Small,
+                            t.text_muted,
+                        );
                     }
                 }
             });

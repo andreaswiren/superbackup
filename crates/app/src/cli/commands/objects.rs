@@ -12,10 +12,11 @@ use superbackup_core::model::{
 };
 
 use crate::cli::args::{
-    DestinationAddArgs, DestinationCommand, DestinationEditArgs, DestinationMaintainArgs,
-    DestinationClearArgs, DestinationRemoveArgs, GitCommand, GitListArgs, JobAddArgs, JobCommand, JobEditArgs,
-    JobListArgs, JobPreviewArgs, JobRemoveArgs, JobTemplate, PassphraseMode, ProjectCommand,
-    ProviderAddArgs, ProviderCommand, ProviderEditArgs, ProviderFlavour, ProviderRemoveArgs,
+    DestinationAddArgs, DestinationClearArgs, DestinationCommand, DestinationEditArgs,
+    DestinationMaintainArgs, DestinationRemoveArgs, GitCommand, GitListArgs, JobAddArgs,
+    JobCommand, JobEditArgs, JobListArgs, JobPreviewArgs, JobRemoveArgs, JobTemplate,
+    PassphraseMode, ProjectCommand, ProviderAddArgs, ProviderCommand, ProviderEditArgs,
+    ProviderFlavour, ProviderRemoveArgs,
 };
 use crate::cli::client::{reply, Daemon, Start};
 use crate::cli::context::Ctx;
@@ -1352,11 +1353,8 @@ fn git_list(ctx: &mut Ctx, daemon: &Daemon, args: GitListArgs) -> CliResult<Outc
     )?
     .inventory;
 
-    let shown: Vec<&superbackup_core::git::GitRepo> = if args.at_risk {
-        inventory.at_risk()
-    } else {
-        inventory.repos.iter().collect()
-    };
+    let shown: Vec<&superbackup_core::git::GitRepo> =
+        if args.at_risk { inventory.at_risk() } else { inventory.repos.iter().collect() };
 
     let mut table = Table::new(vec![
         Column::new("repository").flex(),
@@ -1438,7 +1436,11 @@ fn git_list(ctx: &mut Ctx, daemon: &Daemon, args: GitListArgs) -> CliResult<Outc
 /// The suggestion is offered for editing rather than used silently. A tool
 /// that writes its own text into someone's history without showing it first is
 /// one they stop trusting the day they read it back.
-fn git_commit(ctx: &mut Ctx, daemon: &Daemon, args: crate::cli::args::GitCommitArgs) -> CliResult<Outcome> {
+fn git_commit(
+    ctx: &mut Ctx,
+    daemon: &Daemon,
+    args: crate::cli::args::GitCommitArgs,
+) -> CliResult<Outcome> {
     let message = match args.message {
         Some(message) => message,
         None => {
@@ -1455,8 +1457,10 @@ fn git_commit(ctx: &mut Ctx, daemon: &Daemon, args: crate::cli::args::GitCommitA
             // looks exactly like a hang. Refuse with the suggestion in the
             // hint, so the next invocation can paste it.
             if ctx.global.no_input {
-                return Err(CliError::usage("a commit needs a message")
-                    .with_hint(format!("Try: --message \"{}\"", suggested.lines().next().unwrap_or(""))));
+                return Err(CliError::usage("a commit needs a message").with_hint(format!(
+                    "Try: --message \"{}\"",
+                    suggested.lines().next().unwrap_or("")
+                )));
             }
             prompt::ask_with_default(ctx, "Commit message", &suggested)?
         }
@@ -1464,11 +1468,7 @@ fn git_commit(ctx: &mut Ctx, daemon: &Daemon, args: crate::cli::args::GitCommitA
     git_action(
         ctx,
         daemon,
-        Request::GitCommit {
-            path: args.path,
-            message,
-            include_untracked: !args.tracked_only,
-        },
+        Request::GitCommit { path: args.path, message, include_untracked: !args.tracked_only },
     )
 }
 

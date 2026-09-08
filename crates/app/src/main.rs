@@ -105,8 +105,7 @@ fn main() -> ExitCode {
             } else {
                 #[cfg(windows)]
                 detach_console();
-                let code =
-                    gui::open_or_focus(paths.clone(), &global, &Default::default());
+                let code = gui::open_or_focus(paths.clone(), &global, &Default::default());
                 // Setup may have been abandoned; only go on if it finished.
                 if code == ExitCode::SUCCESS && superbackup_core::config::is_initialised(&paths) {
                     daemon::run_foreground(paths, &global, daemon::Surface::Tray)

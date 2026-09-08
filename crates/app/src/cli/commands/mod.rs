@@ -65,12 +65,10 @@ pub fn dispatch(ctx: &mut Ctx, command: Command) -> CliResult<Outcome> {
         | Command::Daemon(_)
         | Command::Schema
         | Command::Version
-        | Command::Askpass => {
-            Err(super::output::CliError::new(
-                superbackup_core::error::ErrorCode::Internal,
-                "this command is handled before the thin client and should not have reached it",
-            ))
-        }
+        | Command::Askpass => Err(super::output::CliError::new(
+            superbackup_core::error::ErrorCode::Internal,
+            "this command is handled before the thin client and should not have reached it",
+        )),
     }
 }
 

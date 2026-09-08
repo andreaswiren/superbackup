@@ -390,9 +390,8 @@ fn step_template(ui: &mut Ui, state: &mut WizardState, data: &Data) {
                                                 t.accent,
                                             );
                                         } else {
-                                            let height = ui.fonts(|f| {
-                                                f.row_height(&Type::SmallStrong.font())
-                                            });
+                                            let height = ui
+                                                .fonts(|f| f.row_height(&Type::SmallStrong.font()));
                                             ui.add_space(height);
                                         }
                                         widgets::text(

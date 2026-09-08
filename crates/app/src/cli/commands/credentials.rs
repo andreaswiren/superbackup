@@ -15,9 +15,9 @@ use superbackup_core::ipc::protocol::{Request, SecretString};
 use crate::cli::args::{CredCommand, CredFolderArgs, CredRoleArgs, CredUnsealArgs};
 use crate::cli::client::{reply, Daemon, Start};
 use crate::cli::context::Ctx;
+use crate::cli::format::{Cell, Column, Table};
 use crate::cli::output::{CliResult, Outcome};
 use crate::cli::prompt;
-use crate::cli::format::{Cell, Column, Table};
 
 pub fn cred(ctx: &mut Ctx, command: CredCommand) -> CliResult<Outcome> {
     let daemon = Daemon::connect(ctx, Start::Never)?;
@@ -113,8 +113,7 @@ fn role(ctx: &mut Ctx, daemon: &Daemon, args: CredRoleArgs) -> CliResult<Outcome
 }
 
 fn seal(ctx: &mut Ctx, daemon: &Daemon, args: CredFolderArgs) -> CliResult<Outcome> {
-    let secret =
-        prompt::passphrase(ctx, args.passphrase_file.as_deref(), "Master passphrase: ")?;
+    let secret = prompt::passphrase(ctx, args.passphrase_file.as_deref(), "Master passphrase: ")?;
     let sealed = reply!(
         daemon,
         Request::CredentialSealKeys {

@@ -141,7 +141,10 @@ struct PublicKey {
 fn parse_public_key(text: &str) -> PublicKey {
     let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or_default();
     let mut fields = line.split_whitespace();
-    let algorithm = fields.next().map(str::to_string).filter(|a| a.starts_with("ssh-") || a.starts_with("ecdsa-") || a.starts_with("sk-"));
+    let algorithm = fields
+        .next()
+        .map(str::to_string)
+        .filter(|a| a.starts_with("ssh-") || a.starts_with("ecdsa-") || a.starts_with("sk-"));
     let blob = fields.next();
     let comment = {
         let rest: Vec<&str> = fields.collect();
@@ -213,7 +216,8 @@ mod tests {
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sb-ssh-{tag}-{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("sb-ssh-{tag}-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).expect("create");
         dir
     }

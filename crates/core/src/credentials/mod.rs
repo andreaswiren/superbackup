@@ -282,10 +282,7 @@ impl KeyBundle {
         let json = serde_json::to_vec(self)
             .map_err(|e| Error::Internal(format!("the key bundle could not be encoded: {e}")))?;
         let mut vault = crate::crypto::Vault::create(passphrase)?;
-        vault.put(
-            crate::model::SecretRef(BUNDLE_SECRET.to_string()),
-            Secret::new(json),
-        )?;
+        vault.put(crate::model::SecretRef(BUNDLE_SECRET.to_string()), Secret::new(json))?;
         vault.seal()
     }
 
@@ -296,9 +293,8 @@ impl KeyBundle {
     /// unpacked as far as this build understands it.
     pub fn unseal(bytes: &[u8], passphrase: &Secret) -> Result<KeyBundle> {
         let vault = crate::crypto::Vault::unlock(bytes, passphrase)?;
-        let secret = vault
-            .get(&crate::model::SecretRef(BUNDLE_SECRET.to_string()))?
-            .ok_or_else(|| {
+        let secret =
+            vault.get(&crate::model::SecretRef(BUNDLE_SECRET.to_string()))?.ok_or_else(|| {
                 Error::Validation(
                     "this file opened, but it is not a key bundle — it holds no key material"
                         .into(),
@@ -442,11 +438,9 @@ mod tests {
         std::fs::write(dir.join("id_ed25519"), b"private").expect("write");
         std::fs::write(dir.join("id_ed25519.pub"), b"public").expect("write");
 
-        let bundle = KeyBundle::gather(
-            "awpc34",
-            &[dir.join("id_ed25519"), dir.join("id_ed25519.pub")],
-        )
-        .expect("gathered");
+        let bundle =
+            KeyBundle::gather("awpc34", &[dir.join("id_ed25519"), dir.join("id_ed25519.pub")])
+                .expect("gathered");
         assert_eq!(bundle.files.len(), 2);
         assert!(bundle.files[0].private, "the key is private");
         assert!(!bundle.files[1].private, "the .pub is not");

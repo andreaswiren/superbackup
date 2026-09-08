@@ -352,6 +352,11 @@ fn detect_windows_env() -> Vec<OneDriveAccount> {
 }
 
 /// `C:\Users\me\OneDrive - Contoso Ltd` -> `Contoso Ltd`.
+// Used only by the Windows and macOS detectors, and tested on every
+// platform: it is pure string handling, and a test that only runs where
+// the caller does is a test that stops catching things. The `allow` is
+// scoped to the platforms where it is genuinely uncalled, not blanket.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 pub(crate) fn tenant_from_folder_name(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
     let (_, tenant) = name.split_once(" - ")?;
@@ -363,6 +368,11 @@ pub(crate) fn tenant_from_folder_name(path: &Path) -> Option<String> {
     }
 }
 
+// Used only by the Windows and macOS detectors, and tested on every
+// platform: it is pure string handling, and a test that only runs where
+// the caller does is a test that stops catching things. The `allow` is
+// scoped to the platforms where it is genuinely uncalled, not blanket.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 pub(crate) fn compose_display_name(
     kind: &OneDriveKind,
     display: Option<&str>,

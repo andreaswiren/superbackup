@@ -442,8 +442,7 @@ pub fn parse_worktrees(output: &str) -> Vec<Worktree> {
             }
             "branch" => {
                 if let Some(w) = current.as_mut() {
-                    w.branch =
-                        Some(value.trim_start_matches("refs/heads/").to_string());
+                    w.branch = Some(value.trim_start_matches("refs/heads/").to_string());
                 }
             }
             "locked" => {
@@ -547,8 +546,9 @@ impl AuthMethod {
                  this remote fails rather than prompting."
                     .to_string()
             }
-            Self::Local => "The remote is a folder on this machine, so nothing authenticates."
-                .to_string(),
+            Self::Local => {
+                "The remote is a folder on this machine, so nothing authenticates.".to_string()
+            }
             Self::None => "This repository has no remote.".to_string(),
         }
     }
@@ -598,22 +598,15 @@ pub fn documents(root: &std::path::Path) -> Vec<Document> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        let stem = name
-            .rsplit_once('.')
-            .map(|(stem, _)| stem)
-            .unwrap_or(&name)
-            .to_ascii_uppercase();
+        let stem =
+            name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&name).to_ascii_uppercase();
         let Some(kind) = DOCUMENTS.iter().find(|d| **d == stem) else { continue };
         // A second `README.rst` beside a `README.md` is one document as far as
         // this list is concerned; the first one found wins.
         if found.iter().any(|d| d.kind == *kind) {
             continue;
         }
-        found.push(Document {
-            name,
-            kind: (*kind).to_string(),
-            bytes: metadata.len(),
-        });
+        found.push(Document { name, kind: (*kind).to_string(), bytes: metadata.len() });
     }
 
     // The order in DOCUMENTS, not the order the filesystem happened to return.
@@ -652,9 +645,25 @@ u UU N... 100644 100644 100644 100644 3333 4444 5555 conflict.rs
         let row = |fields: [&str; 7]| fields.join(&sep.to_string());
         let out = [
             row(["*", "main", "origin/main", "", "1788726097", "C:/w/superbackup", "a subject"]),
-            row([" ", "feature/git", "origin/feature/git", "[ahead 3, behind 1]", "1788000000", "", "wip"]),
+            row([
+                " ",
+                "feature/git",
+                "origin/feature/git",
+                "[ahead 3, behind 1]",
+                "1788000000",
+                "",
+                "wip",
+            ]),
             row([" ", "local-only", "", "", "1787000000", "", "not pushed anywhere"]),
-            row([" ", "hotfix", "origin/hotfix", "[gone]", "1786000000", "C:/work/hotfix", "upstream deleted"]),
+            row([
+                " ",
+                "hotfix",
+                "origin/hotfix",
+                "[gone]",
+                "1786000000",
+                "C:/work/hotfix",
+                "upstream deleted",
+            ]),
         ]
         .join("\n");
 
@@ -729,8 +738,7 @@ u UU N... 100644 100644 100644 100644 3333 4444 5555 conflict.rs
     /// only — and nothing else.
     #[test]
     fn only_a_repositorys_own_documents_are_offered() {
-        let dir = std::env::temp_dir()
-            .join(format!("sb-docs-{}", uuid::Uuid::new_v4().simple()));
+        let dir = std::env::temp_dir().join(format!("sb-docs-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).expect("create");
         for name in [
             "readme.md",
@@ -854,9 +862,21 @@ u UU N... 100644 100644 100644 100644 3333 4444 5555 conflict.rs
     #[test]
     fn every_shape_of_remote_url_git_accepts() {
         let cases = [
-            ("https://github.com/andreaswiren/superbackup.git", "github.com", "andreaswiren/superbackup"),
-            ("https://github.com/andreaswiren/superbackup", "github.com", "andreaswiren/superbackup"),
-            ("git@github.com:andreaswiren/superbackup.git", "github.com", "andreaswiren/superbackup"),
+            (
+                "https://github.com/andreaswiren/superbackup.git",
+                "github.com",
+                "andreaswiren/superbackup",
+            ),
+            (
+                "https://github.com/andreaswiren/superbackup",
+                "github.com",
+                "andreaswiren/superbackup",
+            ),
+            (
+                "git@github.com:andreaswiren/superbackup.git",
+                "github.com",
+                "andreaswiren/superbackup",
+            ),
             ("ssh://git@gitea.example.com:2222/team/thing.git", "gitea.example.com", "team/thing"),
             ("http://gitea.example.com:3000/team/thing", "gitea.example.com", "team/thing"),
             ("https://GitLab.com/group/sub/project.git", "gitlab.com", "group/sub/project"),

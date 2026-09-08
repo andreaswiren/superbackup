@@ -168,8 +168,9 @@ pub async fn generate(
     passphrase: Option<&Secret>,
 ) -> Result<GeneratedKey> {
     // Superbackup is its own askpass helper; see the module header.
-    let helper = std::env::current_exe()
-        .map_err(|e| Error::io("finding superbackup's own path, to use as the askpass helper", e))?;
+    let helper = std::env::current_exe().map_err(|e| {
+        Error::io("finding superbackup's own path, to use as the askpass helper", e)
+    })?;
     generate_with_helper(dir, spec, passphrase, &helper).await
 }
 
@@ -195,9 +196,7 @@ pub async fn generate_with_helper(
         // OpenSSH refuses anything shorter, and learning that from its own
         // message would be a confusing way to find out.
         if phrase.chars().count() < 5 {
-            return Err(Error::Validation(
-                "a key passphrase is at least five characters".into(),
-            ));
+            return Err(Error::Validation("a key passphrase is at least five characters".into()));
         }
     }
 
@@ -220,7 +219,8 @@ pub async fn generate_with_helper(
             private.display()
         )));
     }
-    std::fs::create_dir_all(dir).map_err(|e| Error::io(format!("creating {}", dir.display()), e))?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| Error::io(format!("creating {}", dir.display()), e))?;
     crate::paths::harden_dir(dir)?;
 
     let mut command = tokio::process::Command::new(&tool);
@@ -336,8 +336,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let path = dir.join("askpass.sh");
             std::fs::write(&path, format!("#!/bin/sh\necho '{phrase}'\n")).expect("write");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
-                .expect("chmod");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).expect("chmod");
             path
         }
     }
@@ -352,8 +351,8 @@ mod tests {
         if super::super::agent::ssh_keygen().is_none() {
             return;
         }
-        let dir = std::env::temp_dir()
-            .join(format!("sb-keygen-n-{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("sb-keygen-n-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).expect("create");
 
         // A helper that succeeds and prints nothing, which is the shape of the
@@ -369,8 +368,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let path = dir.join("silent.sh");
             std::fs::write(&path, "#!/bin/sh\nexit 0\n").expect("write");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
-                .expect("chmod");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).expect("chmod");
             path
         };
 
@@ -458,8 +456,7 @@ mod tests {
             eprintln!("ssh-keygen is not installed; skipping");
             return;
         }
-        let dir = std::env::temp_dir()
-            .join(format!("sb-keygen-{}", uuid::Uuid::new_v4().simple()));
+        let dir = std::env::temp_dir().join(format!("sb-keygen-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).expect("create");
 
         let spec = NewKey {
@@ -501,8 +498,8 @@ mod tests {
             eprintln!("ssh-keygen is not installed; skipping");
             return;
         }
-        let dir = std::env::temp_dir()
-            .join(format!("sb-keygen-p-{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("sb-keygen-p-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).expect("create");
 
         let spec = NewKey {
@@ -512,9 +509,8 @@ mod tests {
         };
         let passphrase = crate::crypto::generate_passphrase().expect("passphrase");
         let helper = write_askpass(&dir, &passphrase);
-        let made = generate_with_helper(&dir, &spec, Some(&passphrase), &helper)
-            .await
-            .expect("generated");
+        let made =
+            generate_with_helper(&dir, &spec, Some(&passphrase), &helper).await.expect("generated");
         assert!(made.protected, "it was asked for and it was checked");
 
         // Read back from the file, not from what was asked for: a passphrase
@@ -527,10 +523,14 @@ mod tests {
         // A passphrase below OpenSSH's minimum is refused here rather than by
         // ssh-keygen, whose message about it is not obvious.
         let short = NewKey { name: "id_short".into(), ..spec.clone() };
-        let err =
-            generate_with_helper(&dir, &short, Some(&crate::secret::Secret::from_str("abc")), &helper)
-                .await
-                .expect_err("too short");
+        let err = generate_with_helper(
+            &dir,
+            &short,
+            Some(&crate::secret::Secret::from_str("abc")),
+            &helper,
+        )
+        .await
+        .expect_err("too short");
         assert!(err.to_string().contains("five characters"), "{err}");
 
         let _ = std::fs::remove_dir_all(&dir);

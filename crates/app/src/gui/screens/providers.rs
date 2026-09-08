@@ -8,9 +8,8 @@ use uuid::Uuid;
 use superbackup_core::model::{ProviderKind, StorageProvider};
 
 use crate::gui::app::App;
-use crate::gui::daemon::Intent;
-use superbackup_core::ipc::protocol::Request;
 use crate::gui::copy;
+use crate::gui::daemon::Intent;
 use crate::gui::data::Action;
 use crate::gui::format;
 use crate::gui::icons::Icon;
@@ -19,6 +18,7 @@ use crate::gui::nav::Route;
 use crate::gui::theme::{self, size, space, Type};
 use crate::gui::viewmodel::{self, ColumnSpec};
 use crate::gui::widgets::{self, Button};
+use superbackup_core::ipc::protocol::Request;
 
 #[derive(Default)]
 pub struct State {
@@ -130,16 +130,14 @@ impl App {
             // right edge of the window.
             let mut fixed = 36.0 + 190.0 + 110.0 + 104.0;
             let mut columns = 5.0; // the four above, plus the endpoint itself
-            for (key, width) in
-                [("stored", 100.0_f32), ("last_write", 150.0), ("verified", 104.0)]
+            for (key, width) in [("stored", 100.0_f32), ("last_write", 150.0), ("verified", 104.0)]
             {
                 if has(key) {
                     fixed += width;
                     columns += 1.0;
                 }
             }
-            let endpoint_width =
-                (ui.available_width() - fixed - gap * (columns - 1.0)).max(160.0);
+            let endpoint_width = (ui.available_width() - fixed - gap * (columns - 1.0)).max(160.0);
             let mut builder = egui_extras::TableBuilder::new(ui)
                 .id_salt("providers")
                 // Rows are clickable, and a table senses `hover` unless it is
@@ -307,13 +305,8 @@ impl App {
                                         } else {
                                             format::bytes(bytes)
                                         };
-                                        widgets::text(
-                                            ui,
-                                            text,
-                                            Type::MonoSmall,
-                                            t.text_secondary,
-                                        )
-                                        .on_hover_text(copy::prov_stored_hint(usage.pending));
+                                        widgets::text(ui, text, Type::MonoSmall, t.text_secondary)
+                                            .on_hover_text(copy::prov_stored_hint(usage.pending));
                                     }
                                     None => {
                                         widgets::muted_cell(ui, copy::prov::NOT_MEASURED);

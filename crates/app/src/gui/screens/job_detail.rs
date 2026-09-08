@@ -76,10 +76,7 @@ impl State {
         self.error = None;
     }
 
-    pub fn arrived(
-        &mut self,
-        snapshots: Vec<superbackup_core::ipc::protocol::SnapshotInfo>,
-    ) {
+    pub fn arrived(&mut self, snapshots: Vec<superbackup_core::ipc::protocol::SnapshotInfo>) {
         self.snapshots = snapshots;
         self.loading = false;
         self.error = None;
@@ -486,12 +483,7 @@ impl App {
                 // Not a job that is missing its folders: a job that has none
                 // by design. Saying "no folders" here in warning colour would
                 // report a correctly configured job as broken.
-                widgets::paragraph(
-                    ui,
-                    job.content.summary(),
-                    Type::Small,
-                    t.text_secondary,
-                );
+                widgets::paragraph(ui, job.content.summary(), Type::Small, t.text_secondary);
             } else if job.sources.is_empty() {
                 widgets::paragraph(
                     ui,
@@ -526,14 +518,10 @@ impl App {
                         // The full address, endpoint included: `s3://bucket/…`
                         // does not say whose S3 it is, and StorJ, Wasabi and
                         // AWS look identical in that form.
-                        let provider = destination
-                            .kind
-                            .provider_id()
-                            .and_then(|id| self.data.provider(id));
-                        let location = crate::gui::viewmodel::destination_location_full(
-                            destination,
-                            provider,
-                        );
+                        let provider =
+                            destination.kind.provider_id().and_then(|id| self.data.provider(id));
+                        let location =
+                            crate::gui::viewmodel::destination_location_full(destination, provider);
                         widgets::kv(ui, &destination.name, &location, true);
                     }
                     // A dangling id is the state that makes a job fail with
@@ -615,10 +603,9 @@ impl App {
             // to be the same helper on both or they line up with nothing.
             ui.horizontal(|ui| {
                 ui.set_min_height(HEADER_H);
-                for (label, width) in [
-                    (copy::job_detail::COL_WHEN, WHEN_W),
-                    (copy::job_detail::COL_RESULT, STATUS_W),
-                ] {
+                for (label, width) in
+                    [(copy::job_detail::COL_WHEN, WHEN_W), (copy::job_detail::COL_RESULT, STATUS_W)]
+                {
                     widgets::fixed_cell(
                         ui,
                         width,
@@ -629,10 +616,9 @@ impl App {
                 }
                 // Numbers are right-aligned to each other, which is the only
                 // way a column of sizes can be compared at a glance.
-                for (label, width) in [
-                    (copy::job_detail::COL_UPLOADED, UP_W),
-                    (copy::job_detail::COL_TOOK, TOOK_W),
-                ] {
+                for (label, width) in
+                    [(copy::job_detail::COL_UPLOADED, UP_W), (copy::job_detail::COL_TOOK, TOOK_W)]
+                {
                     widgets::fixed_cell(
                         ui,
                         width,
@@ -774,14 +760,8 @@ impl App {
     /// What this job has said for itself, from the activity log.
     fn job_detail_events(&mut self, ui: &mut Ui, id: Uuid, now: DateTime<Utc>) {
         let t = theme::tokens(ui.ctx());
-        let events: Vec<_> = self
-            .data
-            .events
-            .iter()
-            .filter(|e| e.job_id == Some(id))
-            .take(12)
-            .cloned()
-            .collect();
+        let events: Vec<_> =
+            self.data.events.iter().filter(|e| e.job_id == Some(id)).take(12).cloned().collect();
 
         widgets::section_header(ui, copy::job_detail::ACTIVITY, Some(events.len()), |_| {});
         ui.add_space(space::M);

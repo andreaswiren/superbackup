@@ -39,14 +39,27 @@ pub struct Span {
 /// One block of a document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Block {
-    Heading { level: u8, spans: Vec<Span> },
+    Heading {
+        level: u8,
+        spans: Vec<Span>,
+    },
     Paragraph(Vec<Span>),
     /// `indent` is the nesting depth, `marker` the bullet or number shown.
-    ListItem { indent: usize, marker: String, spans: Vec<Span> },
-    Code { language: Option<String>, lines: Vec<String> },
+    ListItem {
+        indent: usize,
+        marker: String,
+        spans: Vec<Span>,
+    },
+    Code {
+        language: Option<String>,
+        lines: Vec<String>,
+    },
     Quote(Vec<Span>),
     Rule,
-    Table { headers: Vec<Vec<Span>>, rows: Vec<Vec<Vec<Span>>> },
+    Table {
+        headers: Vec<Vec<Span>>,
+        rows: Vec<Vec<Vec<Span>>>,
+    },
 }
 
 /// Parse a document into blocks.
@@ -124,7 +137,8 @@ pub fn parse(source: &str) -> Vec<Block> {
         // A `Setext` heading: text with `===` or `---` under it.
         if i + 1 < lines.len() && !trimmed.is_empty() {
             let under = lines[i + 1].trim();
-            if under.len() >= 3 && (under.chars().all(|c| c == '=') || under.chars().all(|c| c == '-'))
+            if under.len() >= 3
+                && (under.chars().all(|c| c == '=') || under.chars().all(|c| c == '-'))
             {
                 flush!();
                 let level = if under.starts_with('=') { 1 } else { 2 };
@@ -283,13 +297,7 @@ pub fn parse_spans(source: &str) -> Vec<Span> {
                 let safe = url.starts_with("http://")
                     || url.starts_with("https://")
                     || url.starts_with("mailto:");
-                spans.push(Span {
-                    text,
-                    bold,
-                    italic,
-                    code: false,
-                    link: safe.then_some(url),
-                });
+                spans.push(Span { text, bold, italic, code: false, link: safe.then_some(url) });
                 i = next;
                 continue;
             }
@@ -493,7 +501,13 @@ pub fn render(ui: &mut Ui, blocks: &[Block], width: f32) -> Option<String> {
                                 egui::Vec2::new(cell, 20.0),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
-                                    inline(ui, header, Type::BodyStrong, t.text_primary, cell - 8.0);
+                                    inline(
+                                        ui,
+                                        header,
+                                        Type::BodyStrong,
+                                        t.text_primary,
+                                        cell - 8.0,
+                                    );
                                 },
                             );
                         }
@@ -578,8 +592,7 @@ fn inline(
                                 // The destination is on hover, so following a
                                 // link out of somebody else's README is a
                                 // decision made with the address in view.
-                                let label =
-                                    egui::Label::new(rich).sense(egui::Sense::click());
+                                let label = egui::Label::new(rich).sense(egui::Sense::click());
                                 if ui.add(label).on_hover_text(url).clicked() {
                                     clicked = Some(url.clone());
                                 }

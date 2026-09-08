@@ -476,8 +476,7 @@ impl App {
             }
             (Intent::ClearPreview(id), Reply::Cleared(cleared)) => {
                 self.screens.destination_editor.clearing = None;
-                let name =
-                    self.data.destination(id).map(|d| d.name.clone()).unwrap_or_default();
+                let name = self.data.destination(id).map(|d| d.name.clone()).unwrap_or_default();
                 if let Some(blocked) = &cleared.blocked {
                     // Object Lock or a retention policy: nobody can delete
                     // these, including us, so the answer is the way round it
@@ -494,8 +493,7 @@ impl App {
                         confirm = confirm.bullet(format!("Bucket: {bucket}"));
                     }
                     if blocked.reupload_required {
-                        confirm = confirm
-                            .danger_bullet(copy::dest::CLEAR_REUPLOAD);
+                        confirm = confirm.danger_bullet(copy::dest::CLEAR_REUPLOAD);
                     }
                     self.modal = Some(Modal::Confirm(confirm.action(ConfirmAction::Nothing)));
                 } else if cleared.removed == 0 {
@@ -632,11 +630,9 @@ impl App {
             (Intent::KeyBundle, Reply::KeyBundle(bundle)) => {
                 self.modal = None;
                 let summary = match &bundle.from_machine {
-                    Some(machine) => copy::cred_unsealed(
-                        bundle.files.len(),
-                        machine,
-                        bundle.skipped.len(),
-                    ),
+                    Some(machine) => {
+                        copy::cred_unsealed(bundle.files.len(), machine, bundle.skipped.len())
+                    }
                     None => copy::cred_sealed(bundle.files.len(), &bundle.path),
                 };
                 self.toasts.success(summary.clone());
@@ -926,9 +922,7 @@ impl App {
             return;
         };
         self.git_act(
-            superbackup_core::ipc::protocol::Request::GitPull {
-                path: path.display().to_string(),
-            },
+            superbackup_core::ipc::protocol::Request::GitPull { path: path.display().to_string() },
             path,
         );
     }

@@ -144,9 +144,7 @@ mod platform_impl {
         command.arg("/c");
         command.raw_arg_line(&line);
         // No CREATE_NO_WINDOW here, for once: a visible window is the point.
-        command
-            .spawn()
-            .map_err(|e| Error::io("opening a terminal window", e))?;
+        command.spawn().map_err(|e| Error::io("opening a terminal window", e))?;
 
         Ok(Launched {
             terminal: "a command window".to_string(),
@@ -215,9 +213,7 @@ mod platform_impl {
 
     fn which(name: &str) -> Option<PathBuf> {
         let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path)
-            .map(|dir| dir.join(name))
-            .find(|candidate| candidate.is_file())
+        std::env::split_paths(&path).map(|dir| dir.join(name)).find(|candidate| candidate.is_file())
     }
 
     pub fn run(program: &Path, args: &[OsString], _title: &str) -> Result<Launched> {
@@ -243,9 +239,7 @@ mod platform_impl {
         for arg in args {
             command.arg(arg);
         }
-        command
-            .spawn()
-            .map_err(|e| Error::io(format!("opening {name}"), e))?;
+        command.spawn().map_err(|e| Error::io(format!("opening {name}"), e))?;
 
         Ok(Launched { terminal: name, command: super::describe(program, args) })
     }
@@ -267,9 +261,7 @@ mod platform_impl {
         // Terminal.app takes a shell line rather than an argv, so each part is
         // single-quoted. Any single quote inside is escaped the shell's own
         // way; a key path can legally contain one.
-        let quote = |value: &OsStr| {
-            format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"))
-        };
+        let quote = |value: &OsStr| format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"));
         let mut line = quote(program.as_os_str());
         for arg in args {
             line.push(' ');
@@ -286,10 +278,7 @@ mod platform_impl {
             .spawn()
             .map_err(|e| Error::io("opening Terminal", e))?;
 
-        Ok(Launched {
-            terminal: "Terminal".to_string(),
-            command: super::describe(program, args),
-        })
+        Ok(Launched { terminal: "Terminal".to_string(), command: super::describe(program, args) })
     }
 }
 
@@ -317,12 +306,8 @@ mod tests {
     /// the module badly enough to be worth stopping.
     #[test]
     fn a_passphrase_argument_is_refused_outright() {
-        let err = run(
-            Path::new("ssh-keygen"),
-            &[OsString::from("--passphrase=hunter2")],
-            "test",
-        )
-        .expect_err("must refuse");
+        let err = run(Path::new("ssh-keygen"), &[OsString::from("--passphrase=hunter2")], "test")
+            .expect_err("must refuse");
         assert!(err.to_string().contains("command line"), "{err}");
     }
 

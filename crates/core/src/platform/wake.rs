@@ -269,8 +269,7 @@ mod platform_impl {
             // stays up, the screen does not come on. A backup that turns on
             // the monitor at 02:00 in a bedroom is a backup that gets turned
             // off.
-            let flags =
-                if on { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS };
+            let flags = if on { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS };
             SetThreadExecutionState(flags).0 != 0
         }
     }

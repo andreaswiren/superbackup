@@ -1849,8 +1849,7 @@ impl App {
                 // user to empty it, and until now superbackup gave them no way
                 // to. Elsewhere it would just be a delete button next to the
                 // backups.
-                let is_replica =
-                    existing.map(|d| d.replicate_from.is_some()).unwrap_or(false);
+                let is_replica = existing.map(|d| d.replicate_from.is_some()).unwrap_or(false);
                 if is_replica
                     && Button::danger_ghost(copy::dest::CLEAR)
                         .show(ui)

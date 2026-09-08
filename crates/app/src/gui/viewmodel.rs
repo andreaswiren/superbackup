@@ -346,8 +346,7 @@ pub fn job_view(data: &Data, job: &Job, now: DateTime<Utc>) -> JobView {
             };
         }
         // Transfer, not scan. See `destination_progress_line`.
-        let rate: f64 =
-            run.destinations.iter().map(|d| d.progress.upload_bytes_per_second).sum();
+        let rate: f64 = run.destinations.iter().map(|d| d.progress.upload_bytes_per_second).sum();
         return JobView {
             state: CardState::Running { fraction: run.overall_fraction(), rate },
             badge: RunStatus::Running.title().to_string(),
@@ -1321,11 +1320,7 @@ mod tests {
             ("0 4 3 * *", "At 04:00, on the 3rd of each month"),
         ];
         for (expression, expected) in cases {
-            assert_eq!(
-                cron_sentence(expression).as_deref(),
-                Some(expected),
-                "{expression}"
-            );
+            assert_eq!(cron_sentence(expression).as_deref(), Some(expected), "{expression}");
         }
     }
 
@@ -1335,12 +1330,12 @@ mod tests {
     #[test]
     fn an_expression_it_cannot_read_is_left_alone() {
         for exotic in [
-            "0 0 1 1 *",       // a month field, which is rare and not guessed
-            "0 0 1 * 1",       // day-of-month and day-of-week together: cron ORs them
-            "0 0 * * MON",     // names rather than numbers
-            "bad",             // not five fields
-            "0 0 0 0 0 0",     // six fields
-            "99 99 * * *",     // out of range
+            "0 0 1 1 *",   // a month field, which is rare and not guessed
+            "0 0 1 * 1",   // day-of-month and day-of-week together: cron ORs them
+            "0 0 * * MON", // names rather than numbers
+            "bad",         // not five fields
+            "0 0 0 0 0 0", // six fields
+            "99 99 * * *", // out of range
             "",
         ] {
             assert_eq!(cron_sentence(exotic), None, "{exotic} must not be paraphrased");

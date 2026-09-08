@@ -1108,7 +1108,9 @@ async fn git_actions_only_reach_folders_a_job_backs_up() {
     // A folder that does not exist at all is refused too, rather than
     // canonicalising to something surprising.
     let err = client
-        .request(Request::GitPush { path: outside.join("no-such-folder-here").display().to_string() })
+        .request(Request::GitPush {
+            path: outside.join("no-such-folder-here").display().to_string(),
+        })
         .await
         .expect_err("missing folder");
     assert!(!err.to_string().is_empty());
@@ -1126,10 +1128,7 @@ async fn git_actions_only_reach_folders_a_job_backs_up() {
         Request::GitSetExternal { path: outside.display().to_string(), external: true },
     ] {
         let err = client.request(request).await.expect_err("refused");
-        assert!(
-            err.to_string().contains("not inside any folder a job backs up"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("not inside any folder a job backs up"), "{err}");
     }
 
     drop(client);
@@ -1190,10 +1189,7 @@ async fn marking_a_repository_external_changes_what_the_next_scan_reports() {
     assert_eq!(before.at_risk().len(), 1);
 
     client
-        .request(Request::GitSetExternal {
-            path: repo_path.display().to_string(),
-            external: true,
-        })
+        .request(Request::GitSetExternal { path: repo_path.display().to_string(), external: true })
         .await
         .expect("marked");
 
@@ -1210,10 +1206,7 @@ async fn marking_a_repository_external_changes_what_the_next_scan_reports() {
     assert_eq!(after.repos.len(), before.repos.len());
 
     client
-        .request(Request::GitSetExternal {
-            path: repo_path.display().to_string(),
-            external: false,
-        })
+        .request(Request::GitSetExternal { path: repo_path.display().to_string(), external: false })
         .await
         .expect("unmarked");
 
@@ -1283,12 +1276,9 @@ async fn a_document_name_cannot_escape_the_repository_root() {
     let client = harness.client().await;
     client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
 
-    for escape in [
-        "../secret.txt",
-        r"..\secret.txt",
-        "../../../../../../Windows/win.ini",
-        "subdir/README.md",
-    ] {
+    for escape in
+        ["../secret.txt", r"..\secret.txt", "../../../../../../Windows/win.ini", "subdir/README.md"]
+    {
         let err = client
             .request(Request::GitReadDocument {
                 path: repo.display().to_string(),

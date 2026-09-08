@@ -401,10 +401,7 @@ mod tests {
     fn a_timestamp_is_iso_ordered_and_always_carries_its_year() {
         let at = "2024-08-15T10:47:00Z".parse::<DateTime<Utc>>().expect("literal");
         let shown = absolute(at);
-        assert!(
-            shown.starts_with("2024-08-15 "),
-            "ISO order, with the year: {shown}"
-        );
+        assert!(shown.starts_with("2024-08-15 "), "ISO order, with the year: {shown}");
         assert!(!shown.contains("Aug"), "no month names to translate: {shown}");
         // Minute resolution, 24-hour.
         assert_eq!(shown.len(), "2024-08-15 12:47".len(), "{shown}");

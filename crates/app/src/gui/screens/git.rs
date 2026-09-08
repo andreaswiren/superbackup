@@ -277,7 +277,12 @@ impl App {
         });
     }
 
-    fn show_git_body(&mut self, ui: &mut Ui, inventory: &Inventory, now: chrono::DateTime<chrono::Utc>) {
+    fn show_git_body(
+        &mut self,
+        ui: &mut Ui,
+        inventory: &Inventory,
+        now: chrono::DateTime<chrono::Utc>,
+    ) {
         let t = theme::tokens(ui.ctx());
         let inventory = inventory.clone();
         self.git_summary(ui, &inventory, now);
@@ -332,7 +337,12 @@ impl App {
 
     /// The line the screen leads with: how many of these hold work that is
     /// only here.
-    fn git_summary(&mut self, ui: &mut Ui, inventory: &Inventory, now: chrono::DateTime<chrono::Utc>) {
+    fn git_summary(
+        &mut self,
+        ui: &mut Ui,
+        inventory: &Inventory,
+        now: chrono::DateTime<chrono::Utc>,
+    ) {
         let t = theme::tokens(ui.ctx());
         let risky = inventory.repos.iter().filter(|r| r.state().only_on_this_disk()).count();
         widgets::card(ui, |ui| {
@@ -514,18 +524,15 @@ impl App {
                         }
                         if has("changes") {
                             row.col(|ui| {
-                                let n = repo.staged + repo.unstaged + repo.untracked
-                                    + repo.conflicted;
+                                let n =
+                                    repo.staged + repo.unstaged + repo.untracked + repo.conflicted;
                                 if n == 0 {
                                     widgets::muted_cell(ui, "—");
                                 } else {
                                     let response = widgets::count_pill(ui, &n.to_string());
                                     response.on_hover_text(format!(
                                         "{} staged, {} unstaged, {} untracked, {} conflicted",
-                                        repo.staged,
-                                        repo.unstaged,
-                                        repo.untracked,
-                                        repo.conflicted
+                                        repo.staged, repo.unstaged, repo.untracked, repo.conflicted
                                     ));
                                 }
                             });
@@ -562,9 +569,8 @@ impl App {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = space::XS;
                                 if state == RepoState::NotTrusted {
-                                    let response = Button::secondary(copy::git::TRUST)
-                                        .enabled(!busy)
-                                        .show(ui);
+                                    let response =
+                                        Button::secondary(copy::git::TRUST).enabled(!busy).show(ui);
                                     if response.on_hover_text(copy::git::TRUST_HINT).clicked() {
                                         trust = Some(repo.path.clone());
                                     }
@@ -611,9 +617,8 @@ impl App {
                                 // reachable only by opening the row's dialog
                                 // and reading the Remotes card, which is a
                                 // long way round for "where does this live?".
-                                if let Some(url) = repo
-                                    .primary_remote()
-                                    .and_then(|remote| remote.web_url.clone())
+                                if let Some(url) =
+                                    repo.primary_remote().and_then(|remote| remote.web_url.clone())
                                 {
                                     if widgets::icon_button_compact(
                                         ui,
@@ -774,11 +779,12 @@ impl App {
         // kind of row.
         widgets::table_frame(ui, |ui| {
             let gap = ui.spacing().item_spacing.x;
-            let name_width =
-                (ui.available_width() - CANDIDATE_MARK_W - CANDIDATE_ITEMS_W
-                    - CANDIDATE_ACTION_W
-                    - gap * 3.0)
-                    .max(200.0);
+            let name_width = (ui.available_width()
+                - CANDIDATE_MARK_W
+                - CANDIDATE_ITEMS_W
+                - CANDIDATE_ACTION_W
+                - gap * 3.0)
+                .max(200.0);
             egui_extras::TableBuilder::new(ui)
                 .id_salt("git-candidates")
                 .sense(egui::Sense::click())
@@ -818,28 +824,24 @@ impl App {
                             // the same reason a plain `vertical` would sit it
                             // against the top edge.
                             let room = (name_width - icon_w - space::M).max(120.0);
-                            widgets::stacked_cell(
-                                ui,
-                                &[Type::BodyStrong, Type::MonoSmall],
-                                |ui| {
-                                    widgets::elided(
-                                        ui,
-                                        &candidate.name,
-                                        Type::BodyStrong,
-                                        t.text_primary,
-                                        room,
-                                        false,
-                                    );
-                                    widgets::elided(
-                                        ui,
-                                        &candidate.path.display().to_string(),
-                                        Type::MonoSmall,
-                                        t.text_muted,
-                                        room,
-                                        false,
-                                    );
-                                },
-                            );
+                            widgets::stacked_cell(ui, &[Type::BodyStrong, Type::MonoSmall], |ui| {
+                                widgets::elided(
+                                    ui,
+                                    &candidate.name,
+                                    Type::BodyStrong,
+                                    t.text_primary,
+                                    room,
+                                    false,
+                                );
+                                widgets::elided(
+                                    ui,
+                                    &candidate.path.display().to_string(),
+                                    Type::MonoSmall,
+                                    t.text_muted,
+                                    room,
+                                    false,
+                                );
+                            });
                         });
                         row.col(|ui| {
                             if candidate.looks_like_a_project {
@@ -920,32 +922,25 @@ impl App {
                 // The dialog opens empty and fills in when the daemon answers,
                 // so the click is acknowledged immediately rather than after a
                 // disk read that might be on a network drive.
-                self.modal = Some(crate::gui::modals::Modal::Document(
-                    crate::gui::modals::DocumentState {
+                self.modal =
+                    Some(crate::gui::modals::Modal::Document(crate::gui::modals::DocumentState {
                         title: format!("{document} — {}", repo.name),
                         path: repo.path.join(&document).display().to_string(),
                         content: String::new(),
                         truncated: false,
                         loading: true,
                         error: None,
-                    },
-                ));
+                    }));
                 self.ask(
                     Intent::GitDocument,
-                    Request::GitReadDocument {
-                        path: repo.path.display().to_string(),
-                        document,
-                    },
+                    Request::GitReadDocument { path: repo.path.display().to_string(), document },
                 );
             }
             GitDetailAction::SetExternal(external) => {
                 self.screens.git.acting = true;
                 self.ask(
                     Intent::GitAction,
-                    Request::GitSetExternal {
-                        path: repo.path.display().to_string(),
-                        external,
-                    },
+                    Request::GitSetExternal { path: repo.path.display().to_string(), external },
                 );
             }
         }
@@ -997,11 +992,8 @@ pub fn git_details(
         widgets::badge(ui, git_status(repo.state(), &t), None, repo.state().label())
             .on_hover_text(repo.state().explanation());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let label = if repo.external {
-                copy::git::UNMARK_EXTERNAL
-            } else {
-                copy::git::MARK_EXTERNAL
-            };
+            let label =
+                if repo.external { copy::git::UNMARK_EXTERNAL } else { copy::git::MARK_EXTERNAL };
             if Button::secondary(label).show(ui).on_hover_text(copy::git::EXTERNAL_HINT).clicked() {
                 action = Some(GitDetailAction::SetExternal(!repo.external));
             }
@@ -1200,15 +1192,8 @@ fn branches(ui: &mut Ui, repo: &GitRepo, now: chrono::DateTime<chrono::Utc>, t: 
                             );
                         }
                         (Some(upstream), 0, 0) => {
-                            widgets::elided(
-                                ui,
-                                upstream,
-                                Type::Small,
-                                t.text_muted,
-                                140.0,
-                                true,
-                            )
-                            .on_hover_text(copy::git::IN_SYNC);
+                            widgets::elided(ui, upstream, Type::Small, t.text_muted, 140.0, true)
+                                .on_hover_text(copy::git::IN_SYNC);
                         }
                         (Some(upstream), ahead, behind) => {
                             let label = match (ahead, behind) {
@@ -1279,8 +1264,13 @@ fn worktrees(ui: &mut Ui, repo: &GitRepo, t: &theme::Tokens) {
                         widgets::text(ui, branch, Type::BodyStrong, t.text_primary);
                     }
                     None => {
-                        widgets::text(ui, copy::git::DETACHED, Type::BodyStrong, t.warning.tint_text)
-                            .on_hover_text(copy::git::DETACHED_HINT);
+                        widgets::text(
+                            ui,
+                            copy::git::DETACHED,
+                            Type::BodyStrong,
+                            t.warning.tint_text,
+                        )
+                        .on_hover_text(copy::git::DETACHED_HINT);
                     }
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1338,7 +1328,6 @@ impl App {
         self.screens.git.acting_on = Some(path);
         self.ask(Intent::GitAction, request);
     }
-
 }
 
 /// Which of the four status colours a state gets.

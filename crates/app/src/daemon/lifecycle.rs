@@ -19,9 +19,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use superbackup_core::secret::Secret;
 use superbackup_core::platform::disk::{DiskLevel, DiskReport};
 use superbackup_core::platform::notify::{Notification, NotificationKind};
+use superbackup_core::secret::Secret;
 use superbackup_core::state::{Event, Severity, Trigger};
 
 use super::runtime::Runtime;
@@ -286,11 +286,9 @@ pub async fn disk_reports(runtime: &Arc<Runtime>) -> Vec<DiskReport> {
     }
     let own = runtime.paths.data_dir.clone();
     if seen.insert(volume_key(&own)) {
-        if let Some(report) = superbackup_core::platform::disk::assess(
-            &own,
-            "Superbackup's own folder",
-            &settings,
-        ) {
+        if let Some(report) =
+            superbackup_core::platform::disk::assess(&own, "Superbackup's own folder", &settings)
+        {
             out.push(report);
         }
     }

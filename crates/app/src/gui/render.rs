@@ -416,9 +416,7 @@ pub fn gallery() -> Vec<Shot> {
             setup: |app| {
                 app.go(Route::Destinations);
                 app.open_modal(super::modals::Modal::WriteDown(super::modals::WriteDownState {
-                    purpose: super::modals::WriteDownPurpose::Repository(
-                        fixtures::DEST_LOCAL,
-                    ),
+                    purpose: super::modals::WriteDownPurpose::Repository(fixtures::DEST_LOCAL),
                     location: "D:\\superbackup\\andreas-pc\\repository".into(),
                     passphrase: "kX7fQ2mNbR4tYw8ZaP1sDv6HgJ3eLc0UqT5xWn9BiM2r".into(),
                     acknowledged: false,

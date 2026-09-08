@@ -228,8 +228,8 @@ async fn handle(runtime: &Arc<Runtime>, event: EngineEvent) {
             // each. Nothing changed on that machine while it was off, and the
             // run is re-queued the moment it unlocks, so the honest record is
             // *one* line saying backups are not running, not one per tick.
-            let first_time = reason != SkipReason::VaultLocked
-                || runtime.note_blocked_by_lock(job_id);
+            let first_time =
+                reason != SkipReason::VaultLocked || runtime.note_blocked_by_lock(job_id);
             if let Some(run_id) = run_id {
                 if let Some(mut run) = runtime.clear_active(&run_id) {
                     // Still recorded, because "it did not run and I do not

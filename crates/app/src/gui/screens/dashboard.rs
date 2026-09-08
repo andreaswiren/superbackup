@@ -167,214 +167,220 @@ impl App {
                 Vec2::new(tile, HEALTH_TILE_H + 32.0),
                 Layout::top_down(Align::Min),
                 |ui| {
-                widgets::card_tinted(
-                    ui,
-                    failed.then_some(t.danger.tint_bg),
-                    failed.then(|| theme::alpha(t.danger.mark, 0.4)),
-                    |ui| {
-                        ui.set_width(ui.available_width());
-                    ui.set_height(HEALTH_TILE_H);
-                        ui.horizontal(|ui| {
-                            let (rect, response) =
-                                ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
-                            let spin = ui.input(|i| i.time as f32);
-                            let status = t.status_for_health(health);
-                            icons::health_mark(
-                                ui.painter(),
-                                rect,
-                                health,
-                                t.neutral.mark,
-                                Some((
-                                    status.mark,
-                                    if t.dark { t.bg_canvas } else { egui::Color32::WHITE },
-                                )),
-                                spin,
-                            );
-                            let reason = self.data.health_reason(now);
-                            response.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Label,
-                                    true,
-                                    copy::a11y_health(health.title(), &reason),
-                                )
-                            });
-                            ui.add_space(space::L);
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = space::XS;
-                                widgets::text(ui, health.title(), Type::H2, t.text_primary);
-                                let width = (ui.available_width() - 90.0).max(80.0);
-                                widgets::elided(
-                                    ui,
-                                    &reason,
-                                    Type::Small,
-                                    t.text_secondary,
-                                    width,
-                                    false,
+                    widgets::card_tinted(
+                        ui,
+                        failed.then_some(t.danger.tint_bg),
+                        failed.then(|| theme::alpha(t.danger.mark, 0.4)),
+                        |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_height(HEALTH_TILE_H);
+                            ui.horizontal(|ui| {
+                                let (rect, response) =
+                                    ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
+                                let spin = ui.input(|i| i.time as f32);
+                                let status = t.status_for_health(health);
+                                icons::health_mark(
+                                    ui.painter(),
+                                    rect,
+                                    health,
+                                    t.neutral.mark,
+                                    Some((
+                                        status.mark,
+                                        if t.dark { t.bg_canvas } else { egui::Color32::WHITE },
+                                    )),
+                                    spin,
                                 );
-                            });
-                            ui.with_layout(
-                                Layout::right_to_left(Align::Center),
-                                |ui| match health {
-                                    superbackup_core::state::Health::Paused => {
-                                        if Button::primary(copy::set::PAUSE_RESUME)
-                                            .compact()
-                                            .show(ui)
-                                            .clicked()
-                                        {
-                                            action = Some("resume");
-                                        }
-                                    }
-                                    superbackup_core::state::Health::Failed => {
-                                        if Button::secondary(copy::dash::VIEW_ERROR)
-                                            .compact()
-                                            .show(ui)
-                                            .clicked()
-                                        {
-                                            action = Some("view-error");
-                                        }
-                                    }
-                                    superbackup_core::state::Health::Attention
-                                        if !self.data.unlocked()
-                                            && Button::primary(copy::action::UNLOCK)
+                                let reason = self.data.health_reason(now);
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::Label,
+                                        true,
+                                        copy::a11y_health(health.title(), &reason),
+                                    )
+                                });
+                                ui.add_space(space::L);
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = space::XS;
+                                    widgets::text(ui, health.title(), Type::H2, t.text_primary);
+                                    let width = (ui.available_width() - 90.0).max(80.0);
+                                    widgets::elided(
+                                        ui,
+                                        &reason,
+                                        Type::Small,
+                                        t.text_secondary,
+                                        width,
+                                        false,
+                                    );
+                                });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    match health {
+                                        superbackup_core::state::Health::Paused => {
+                                            if Button::primary(copy::set::PAUSE_RESUME)
                                                 .compact()
                                                 .show(ui)
-                                                .clicked() =>
-                                    {
-                                        action = Some("unlock");
+                                                .clicked()
+                                            {
+                                                action = Some("resume");
+                                            }
+                                        }
+                                        superbackup_core::state::Health::Failed => {
+                                            if Button::secondary(copy::dash::VIEW_ERROR)
+                                                .compact()
+                                                .show(ui)
+                                                .clicked()
+                                            {
+                                                action = Some("view-error");
+                                            }
+                                        }
+                                        superbackup_core::state::Health::Attention
+                                            if !self.data.unlocked()
+                                                && Button::primary(copy::action::UNLOCK)
+                                                    .compact()
+                                                    .show(ui)
+                                                    .clicked() =>
+                                        {
+                                            action = Some("unlock");
+                                        }
+                                        _ => {}
                                     }
-                                    _ => {}
-                                },
-                            );
-                        });
-                    },
-                );
-            });
+                                });
+                            });
+                        },
+                    );
+                },
+            );
 
             // Tile 2 — next scheduled run.
             ui.allocate_ui_with_layout(
                 Vec2::new(tile, HEALTH_TILE_H + 32.0),
                 Layout::top_down(Align::Min),
                 |ui| {
-                widgets::card(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_height(HEALTH_TILE_H);
-                    ui.spacing_mut().item_spacing.y = space::XS;
-                    widgets::text(ui, copy::dash::NEXT_LABEL, Type::Micro, t.text_muted);
-                    match self.data.next_scheduled() {
-                        Some((job_id, at)) => {
-                            let blocked = if !self.data.unlocked() {
-                                Some(copy::locked::NEXT_RUN)
-                            } else if self.data.paused() {
-                                Some(copy::locked::PAUSED_NEXT_RUN)
-                            } else {
-                                None
-                            };
-                            let value = format::relative_future(at, now);
-                            let colour =
-                                if blocked.is_some() { t.text_muted } else { t.text_primary };
-                            let response = widgets::text(ui, &value, Type::H2, colour);
-                            if blocked.is_some() {
-                                // Struck through, so a blocked schedule is
-                                // not merely a quieter shade of normal.
-                                let r = response.rect;
-                                ui.painter().line_segment(
-                                    [
-                                        egui::Pos2::new(r.left(), r.center().y),
-                                        egui::Pos2::new(r.right(), r.center().y),
-                                    ],
-                                    Stroke::new(1.0_f32, t.text_muted),
+                    widgets::card(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_height(HEALTH_TILE_H);
+                        ui.spacing_mut().item_spacing.y = space::XS;
+                        widgets::text(ui, copy::dash::NEXT_LABEL, Type::Micro, t.text_muted);
+                        match self.data.next_scheduled() {
+                            Some((job_id, at)) => {
+                                let blocked = if !self.data.unlocked() {
+                                    Some(copy::locked::NEXT_RUN)
+                                } else if self.data.paused() {
+                                    Some(copy::locked::PAUSED_NEXT_RUN)
+                                } else {
+                                    None
+                                };
+                                let value = format::relative_future(at, now);
+                                let colour =
+                                    if blocked.is_some() { t.text_muted } else { t.text_primary };
+                                let response = widgets::text(ui, &value, Type::H2, colour);
+                                if blocked.is_some() {
+                                    // Struck through, so a blocked schedule is
+                                    // not merely a quieter shade of normal.
+                                    let r = response.rect;
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::Pos2::new(r.left(), r.center().y),
+                                            egui::Pos2::new(r.right(), r.center().y),
+                                        ],
+                                        Stroke::new(1.0_f32, t.text_muted),
+                                    );
+                                }
+                                let name = self.data.job_name(&job_id);
+                                let sub = match blocked {
+                                    Some(reason) => reason.to_string(),
+                                    None => copy::dash_next_value(&name, &format::absolute(at)),
+                                };
+                                let width = ui.available_width();
+                                widgets::elided(
+                                    ui,
+                                    &sub,
+                                    Type::Small,
+                                    if blocked.is_some() {
+                                        t.warning.tint_text
+                                    } else {
+                                        t.text_muted
+                                    },
+                                    width,
+                                    false,
                                 );
                             }
-                            let name = self.data.job_name(&job_id);
-                            let sub = match blocked {
-                                Some(reason) => reason.to_string(),
-                                None => copy::dash_next_value(&name, &format::absolute(at)),
-                            };
-                            let width = ui.available_width();
-                            widgets::elided(
-                                ui,
-                                &sub,
-                                Type::Small,
-                                if blocked.is_some() { t.warning.tint_text } else { t.text_muted },
-                                width,
-                                false,
-                            );
-                        }
-                        None => {
-                            widgets::text(ui, copy::dash::NEXT_NONE, Type::H2, t.text_primary);
-                            if widgets::link(ui, copy::dash::NEXT_NONE_ACTION).clicked() {
-                                action = Some("schedule");
+                            None => {
+                                widgets::text(ui, copy::dash::NEXT_NONE, Type::H2, t.text_primary);
+                                if widgets::link(ui, copy::dash::NEXT_NONE_ACTION).clicked() {
+                                    action = Some("schedule");
+                                }
                             }
                         }
-                    }
-                });
-            });
+                    });
+                },
+            );
 
             // Tile 3 — the last seven days.
             ui.allocate_ui_with_layout(
                 Vec2::new(tile, HEALTH_TILE_H + 32.0),
                 Layout::top_down(Align::Min),
                 |ui| {
-                widgets::card(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_height(HEALTH_TILE_H);
-                    ui.spacing_mut().item_spacing.y = space::XS;
-                    widgets::text(ui, copy::dash::WEEK_LABEL, Type::Micro, t.text_muted);
-                    let days = self.data.last_seven_days(now);
-                    let uploaded: u64 = days.iter().map(|d| d.uploaded).sum();
-                    let runs: usize = days.iter().map(|d| d.total()).sum();
-                    let failed: usize = days.iter().map(|d| d.failed).sum();
-                    // The tile is the narrowest thing on the dashboard, so
-                    // the strip is sized to what is left rather than to a
-                    // fixed column width that would push the totals out of
-                    // the card. Below 210px the totals drop and the strip
-                    // keeps the tile, exactly as the reflow rules ask.
-                    let inner = ui.available_width();
-                    let totals = if inner >= 210.0 { 92.0 } else { 0.0 };
-                    let strip = (inner - totals - if totals > 0.0 { space::L } else { 0.0 })
-                        .clamp(84.0, 200.0);
-                    ui.horizontal(|ui| {
-                        self.week_strip(ui, &days, strip);
-                        if totals > 0.0 {
-                            ui.add_space(space::L);
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(totals, 44.0),
-                                Layout::top_down(Align::Min),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing.y = space::XXS;
-                                    if runs == 0 {
-                                        widgets::elided(
-                                            ui,
-                                            copy::dash::WEEK_NONE,
-                                            Type::Small,
-                                            t.text_muted,
-                                            totals,
-                                            false,
-                                        );
-                                    } else {
-                                        widgets::elided(
-                                            ui,
-                                            &format::bytes(uploaded),
-                                            Type::H2,
-                                            t.text_primary,
-                                            totals,
-                                            false,
-                                        );
-                                        widgets::elided(
-                                            ui,
-                                            &copy::dash_week_summary(runs, failed),
-                                            Type::Small,
-                                            t.text_muted,
-                                            totals,
-                                            false,
-                                        );
-                                    }
-                                },
-                            );
-                        }
+                    widgets::card(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_height(HEALTH_TILE_H);
+                        ui.spacing_mut().item_spacing.y = space::XS;
+                        widgets::text(ui, copy::dash::WEEK_LABEL, Type::Micro, t.text_muted);
+                        let days = self.data.last_seven_days(now);
+                        let uploaded: u64 = days.iter().map(|d| d.uploaded).sum();
+                        let runs: usize = days.iter().map(|d| d.total()).sum();
+                        let failed: usize = days.iter().map(|d| d.failed).sum();
+                        // The tile is the narrowest thing on the dashboard, so
+                        // the strip is sized to what is left rather than to a
+                        // fixed column width that would push the totals out of
+                        // the card. Below 210px the totals drop and the strip
+                        // keeps the tile, exactly as the reflow rules ask.
+                        let inner = ui.available_width();
+                        let totals = if inner >= 210.0 { 92.0 } else { 0.0 };
+                        let strip = (inner - totals - if totals > 0.0 { space::L } else { 0.0 })
+                            .clamp(84.0, 200.0);
+                        ui.horizontal(|ui| {
+                            self.week_strip(ui, &days, strip);
+                            if totals > 0.0 {
+                                ui.add_space(space::L);
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(totals, 44.0),
+                                    Layout::top_down(Align::Min),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing.y = space::XXS;
+                                        if runs == 0 {
+                                            widgets::elided(
+                                                ui,
+                                                copy::dash::WEEK_NONE,
+                                                Type::Small,
+                                                t.text_muted,
+                                                totals,
+                                                false,
+                                            );
+                                        } else {
+                                            widgets::elided(
+                                                ui,
+                                                &format::bytes(uploaded),
+                                                Type::H2,
+                                                t.text_primary,
+                                                totals,
+                                                false,
+                                            );
+                                            widgets::elided(
+                                                ui,
+                                                &copy::dash_week_summary(runs, failed),
+                                                Type::Small,
+                                                t.text_muted,
+                                                totals,
+                                                false,
+                                            );
+                                        }
+                                    },
+                                );
+                            }
+                        });
                     });
-                });
-            });
+                },
+            );
         });
 
         match action {
@@ -838,176 +844,188 @@ impl App {
         let frame = ui
             .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
                 widgets::card(ui, |ui| {
-            ui.set_height(size::JOB_CARD_H - 32.0);
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = space::S;
+                    ui.set_height(size::JOB_CARD_H - 32.0);
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = space::S;
 
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 190.0).max(80.0);
-                widgets::elided(
-                    ui,
-                    &job.name,
-                    Type::H2,
-                    theme::alpha(t.text_primary, alpha),
-                    width,
-                    false,
-                );
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    widgets::overflow_menu(
-                        ui,
-                        ("job-card", job.id),
-                        "More actions for this job",
-                        |ui| {
-                            if widgets::menu_item(ui, copy::action::RUN_NOW, job.enabled) {
-                                menu_action = Some("run");
-                            }
-                            if widgets::menu_item(ui, copy::preview::ACTION, job.enabled) {
-                                menu_action = Some("preview");
-                            }
-                            if widgets::menu_item(ui, copy::action::EDIT, true) {
-                                menu_action = Some("edit");
-                            }
-                            if widgets::menu_item(ui, "Browse snapshots…", true) {
-                                menu_action = Some("browse");
-                            }
-                            if widgets::menu_item(ui, "View history", true) {
-                                menu_action = Some("history");
-                            }
-                            if widgets::menu_item(
-                                ui,
-                                if job.enabled {
-                                    copy::action::DISABLE
-                                } else {
-                                    copy::action::ENABLE
-                                },
-                                true,
-                            ) {
-                                menu_action = Some("toggle");
-                            }
-                            widgets::divider(ui);
-                            if widgets::menu_item_danger(ui, copy::action::DELETE, true) {
-                                menu_action = Some("delete");
-                            }
-                        },
-                    );
-                    match view.state {
-                        CardState::Disabled { .. } => {
-                            widgets::neutral_badge(ui, copy::badge::DISABLED, Some(Icon::Pause));
-                        }
-                        CardState::NeverRun => {
-                            widgets::neutral_badge(ui, copy::badge::NEVER_RUN, None);
-                        }
-                        _ => {
-                            widgets::status_badge(ui, view.status);
-                        }
-                    }
-                });
-            });
-
-            let meta_colour = match view.state {
-                CardState::Failed { .. } => t.danger.tint_text,
-                CardState::Warnings { .. } | CardState::Stale => t.warning.tint_text,
-                _ => t.text_muted,
-            };
-            let width = ui.available_width();
-            widgets::elided(
-                ui,
-                &view.meta,
-                Type::Small,
-                theme::alpha(meta_colour, alpha),
-                width,
-                false,
-            );
-
-            ui.add_space(space::XXS);
-            match &view.state {
-                CardState::Running { fraction, rate } => {
                     ui.horizontal(|ui| {
-                        let bar_w = (ui.available_width() - 150.0).max(80.0);
-                        widgets::progress_bar(
+                        let width = (ui.available_width() - 190.0).max(80.0);
+                        widgets::elided(
                             ui,
-                            bar_w,
-                            6.0,
-                            *fraction,
-                            t.progress_fill,
-                            &copy::a11y_job_card_running(
-                                &job.name,
-                                fraction.map(|f| (f * 100.0) as i64).unwrap_or(0),
-                            ),
+                            &job.name,
+                            Type::H2,
+                            theme::alpha(t.text_primary, alpha),
+                            width,
+                            false,
                         );
-                        ui.add_space(space::M);
-                        let label = match fraction {
-                            Some(f) => format!("{} · {}", format::percent(*f), format::rate(*rate)),
-                            None => copy::state::ESTIMATING.to_string(),
-                        };
-                        widgets::text(ui, label, Type::MonoSmall, t.text_secondary);
-                    });
-                }
-                _ => {
-                    ui.horizontal(|ui| {
-                        let reserved = 110.0;
-                        let available = (ui.available_width() - reserved).max(60.0);
-                        let mut used = 0.0;
-                        for id in job.destination_ids.iter().take(4) {
-                            let (icon, name) = match self.data.destination(id) {
-                                Some(d) => (Icon::for_destination_kind(&d.kind), d.name.clone()),
-                                None => (Icon::HardDrive, copy::state::UNKNOWN.to_string()),
-                            };
-                            let problem = self
-                                .data
-                                .history
-                                .iter()
-                                .find(|r| r.job_id == job.id)
-                                .and_then(|r| {
-                                    r.destinations.iter().find(|d| &d.destination_id == id)
-                                })
-                                .and_then(|d| match d.status {
-                                    RunStatus::Failed => Some(t.danger),
-                                    RunStatus::SucceededWithWarnings => Some(t.warning),
-                                    _ => None,
-                                });
-                            let chip_max = 150.0_f32.min(available - used);
-                            if chip_max < 60.0 {
-                                widgets::count_pill(
-                                    ui,
-                                    &format!("+{}", job.destination_ids.len() as i64 - used as i64),
-                                );
-                                break;
-                            }
-                            let response =
-                                widgets::destination_chip(ui, icon, &name, problem, chip_max);
-                            used += response.rect.width() + space::M;
-                        }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if disabled {
-                                if Button::secondary(copy::action::ENABLE)
-                                    .compact()
-                                    .show(ui)
-                                    .clicked()
-                                {
-                                    enable = true;
+                            widgets::overflow_menu(
+                                ui,
+                                ("job-card", job.id),
+                                "More actions for this job",
+                                |ui| {
+                                    if widgets::menu_item(ui, copy::action::RUN_NOW, job.enabled) {
+                                        menu_action = Some("run");
+                                    }
+                                    if widgets::menu_item(ui, copy::preview::ACTION, job.enabled) {
+                                        menu_action = Some("preview");
+                                    }
+                                    if widgets::menu_item(ui, copy::action::EDIT, true) {
+                                        menu_action = Some("edit");
+                                    }
+                                    if widgets::menu_item(ui, "Browse snapshots…", true) {
+                                        menu_action = Some("browse");
+                                    }
+                                    if widgets::menu_item(ui, "View history", true) {
+                                        menu_action = Some("history");
+                                    }
+                                    if widgets::menu_item(
+                                        ui,
+                                        if job.enabled {
+                                            copy::action::DISABLE
+                                        } else {
+                                            copy::action::ENABLE
+                                        },
+                                        true,
+                                    ) {
+                                        menu_action = Some("toggle");
+                                    }
+                                    widgets::divider(ui);
+                                    if widgets::menu_item_danger(ui, copy::action::DELETE, true) {
+                                        menu_action = Some("delete");
+                                    }
+                                },
+                            );
+                            match view.state {
+                                CardState::Disabled { .. } => {
+                                    widgets::neutral_badge(
+                                        ui,
+                                        copy::badge::DISABLED,
+                                        Some(Icon::Pause),
+                                    );
                                 }
-                            } else {
-                                let gate = self.data.gate(Action::RunJob);
-                                let mut button = Button::ghost(copy::action::RUN_NOW)
-                                    .compact()
-                                    .a11y(format!("Run job \"{}\" now", job.name));
-                                if let Some(reason) = gate.reason() {
-                                    button = button.disabled_because(reason);
+                                CardState::NeverRun => {
+                                    widgets::neutral_badge(ui, copy::badge::NEVER_RUN, None);
                                 }
-                                if button.show(ui).clicked() {
-                                    run = true;
-                                }
-                                if matches!(view.state, CardState::Failed { .. })
-                                    && widgets::link(ui, copy::dash::VIEW_ERROR).clicked()
-                                {
-                                    view_error = true;
+                                _ => {
+                                    widgets::status_badge(ui, view.status);
                                 }
                             }
                         });
                     });
-                }
-            }
+
+                    let meta_colour = match view.state {
+                        CardState::Failed { .. } => t.danger.tint_text,
+                        CardState::Warnings { .. } | CardState::Stale => t.warning.tint_text,
+                        _ => t.text_muted,
+                    };
+                    let width = ui.available_width();
+                    widgets::elided(
+                        ui,
+                        &view.meta,
+                        Type::Small,
+                        theme::alpha(meta_colour, alpha),
+                        width,
+                        false,
+                    );
+
+                    ui.add_space(space::XXS);
+                    match &view.state {
+                        CardState::Running { fraction, rate } => {
+                            ui.horizontal(|ui| {
+                                let bar_w = (ui.available_width() - 150.0).max(80.0);
+                                widgets::progress_bar(
+                                    ui,
+                                    bar_w,
+                                    6.0,
+                                    *fraction,
+                                    t.progress_fill,
+                                    &copy::a11y_job_card_running(
+                                        &job.name,
+                                        fraction.map(|f| (f * 100.0) as i64).unwrap_or(0),
+                                    ),
+                                );
+                                ui.add_space(space::M);
+                                let label = match fraction {
+                                    Some(f) => {
+                                        format!("{} · {}", format::percent(*f), format::rate(*rate))
+                                    }
+                                    None => copy::state::ESTIMATING.to_string(),
+                                };
+                                widgets::text(ui, label, Type::MonoSmall, t.text_secondary);
+                            });
+                        }
+                        _ => {
+                            ui.horizontal(|ui| {
+                                let reserved = 110.0;
+                                let available = (ui.available_width() - reserved).max(60.0);
+                                let mut used = 0.0;
+                                for id in job.destination_ids.iter().take(4) {
+                                    let (icon, name) = match self.data.destination(id) {
+                                        Some(d) => {
+                                            (Icon::for_destination_kind(&d.kind), d.name.clone())
+                                        }
+                                        None => (Icon::HardDrive, copy::state::UNKNOWN.to_string()),
+                                    };
+                                    let problem = self
+                                        .data
+                                        .history
+                                        .iter()
+                                        .find(|r| r.job_id == job.id)
+                                        .and_then(|r| {
+                                            r.destinations.iter().find(|d| &d.destination_id == id)
+                                        })
+                                        .and_then(|d| match d.status {
+                                            RunStatus::Failed => Some(t.danger),
+                                            RunStatus::SucceededWithWarnings => Some(t.warning),
+                                            _ => None,
+                                        });
+                                    let chip_max = 150.0_f32.min(available - used);
+                                    if chip_max < 60.0 {
+                                        widgets::count_pill(
+                                            ui,
+                                            &format!(
+                                                "+{}",
+                                                job.destination_ids.len() as i64 - used as i64
+                                            ),
+                                        );
+                                        break;
+                                    }
+                                    let response = widgets::destination_chip(
+                                        ui, icon, &name, problem, chip_max,
+                                    );
+                                    used += response.rect.width() + space::M;
+                                }
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if disabled {
+                                        if Button::secondary(copy::action::ENABLE)
+                                            .compact()
+                                            .show(ui)
+                                            .clicked()
+                                        {
+                                            enable = true;
+                                        }
+                                    } else {
+                                        let gate = self.data.gate(Action::RunJob);
+                                        let mut button = Button::ghost(copy::action::RUN_NOW)
+                                            .compact()
+                                            .a11y(format!("Run job \"{}\" now", job.name));
+                                        if let Some(reason) = gate.reason() {
+                                            button = button.disabled_because(reason);
+                                        }
+                                        if button.show(ui).clicked() {
+                                            run = true;
+                                        }
+                                        if matches!(view.state, CardState::Failed { .. })
+                                            && widgets::link(ui, copy::dash::VIEW_ERROR).clicked()
+                                        {
+                                            view_error = true;
+                                        }
+                                    }
+                                });
+                            });
+                        }
+                    }
                 })
             })
             .response;

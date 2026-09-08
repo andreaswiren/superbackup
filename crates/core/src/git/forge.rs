@@ -149,23 +149,16 @@ impl NewRepo {
             return Err(Error::Validation("a repository needs a name".into()));
         }
         if name.len() > 100 {
-            return Err(Error::Validation(
-                "a repository name is at most 100 characters".into(),
-            ));
+            return Err(Error::Validation("a repository name is at most 100 characters".into()));
         }
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        {
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
             return Err(Error::Validation(
                 "a repository name can hold letters, digits, dashes, underscores and dots only"
                     .into(),
             ));
         }
         if name.starts_with('.') || name == "." || name == ".." {
-            return Err(Error::Validation(
-                "a repository name cannot start with a dot".into(),
-            ));
+            return Err(Error::Validation("a repository name cannot start with a dot".into()));
         }
         if let Some(owner) = &self.owner {
             if owner.trim().is_empty() {
@@ -324,7 +317,7 @@ pub fn create_request(forge: Forge, access: &ApiAccess, repo: &NewRepo) -> Resul
                 "an Azure DevOps repository is created inside a project, so it needs the \
                  organisation and the project rather than an owner. See `create_with_token`."
                     .into(),
-            ))
+            ));
         }
         Forge::Bitbucket | Forge::Unknown | Forge::None => {
             return Err(Error::Validation(format!(
@@ -430,13 +423,10 @@ pub async fn create_with_gh(repo: &NewRepo) -> crate::error::Result<CreatedRepo>
     command.env("GH_NO_UPDATE_NOTIFIER", "1");
     crate::kopia::harden_child(&mut command);
 
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        command.output(),
-    )
-    .await
-    .map_err(|_| Error::Config("the GitHub CLI did not answer within a minute".into()))?
-    .map_err(|e| Error::io("running the GitHub CLI", e))?;
+    let output = tokio::time::timeout(std::time::Duration::from_secs(60), command.output())
+        .await
+        .map_err(|_| Error::Config("the GitHub CLI did not answer within a minute".into()))?
+        .map_err(|e| Error::io("running the GitHub CLI", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -628,12 +618,7 @@ fn explain_failure(forge: Forge, status: u16, body: &str) -> String {
 }
 
 /// Read the clone address out of whatever shape the host answered with.
-fn read_created(
-    forge: Forge,
-    repo: &NewRepo,
-    json: &serde_json::Value,
-    base: &str,
-) -> CreatedRepo {
+fn read_created(forge: Forge, repo: &NewRepo, json: &serde_json::Value, base: &str) -> CreatedRepo {
     let string = |key: &str| json.get(key).and_then(|v| v.as_str()).map(str::to_string);
 
     // Every one of these calls the same two things something different.
@@ -729,7 +714,8 @@ mod tests {
 
         // A host that answers with nothing useful still yields a web address
         // rather than an empty string the interface would show as a blank.
-        let empty = read_created(Forge::Gitea, &repo, &serde_json::Value::Null, "https://x.example");
+        let empty =
+            read_created(Forge::Gitea, &repo, &serde_json::Value::Null, "https://x.example");
         assert_eq!(empty.web_url, "https://x.example/thing");
         assert!(empty.clone_url.is_empty(), "and the clone address is honestly absent");
     }
@@ -809,15 +795,9 @@ mod tests {
 
     #[test]
     fn a_repository_name_that_could_be_a_command_is_refused() {
-        for bad in [
-            "thing && rm -rf /",
-            "../escape",
-            "with space",
-            "with/slash",
-            ".hidden",
-            "",
-            "   ",
-        ] {
+        for bad in
+            ["thing && rm -rf /", "../escape", "with space", "with/slash", ".hidden", "", "   "]
+        {
             let repo = NewRepo::private(bad);
             assert!(repo.validate().is_err(), "{bad:?} must be refused");
             assert!(gh_create_args(&repo).is_err(), "{bad:?} must not reach argv");
@@ -828,7 +808,8 @@ mod tests {
     #[test]
     fn a_token_is_never_sent_over_plain_http_to_a_real_host() {
         let token = Secret::from_str("t0ken");
-        let remote = ApiAccess { base_url: "http://gitea.example.com".into(), token: token.clone() };
+        let remote =
+            ApiAccess { base_url: "http://gitea.example.com".into(), token: token.clone() };
         let err = remote.validate().expect_err("http is refused");
         assert!(err.to_string().contains("https"), "{err}");
 
@@ -840,8 +821,10 @@ mod tests {
         assert!(secure.validate().is_ok());
         assert_eq!(secure.base(), "https://gitea.example.com", "the trailing slash is dropped");
 
-        let empty =
-            ApiAccess { base_url: "https://gitea.example.com".into(), token: Secret::from_str("  ") };
+        let empty = ApiAccess {
+            base_url: "https://gitea.example.com".into(),
+            token: Secret::from_str("  "),
+        };
         assert!(empty.validate().is_err(), "an empty token is not authentication");
     }
 
@@ -858,7 +841,8 @@ mod tests {
         assert_eq!(gitea.body["auto_init"], serde_json::json!(false));
         assert_eq!(gitea.auth, AuthStyle::Token);
 
-        let gitlab = create_request(Forge::GitLab, &access, &NewRepo::private("thing")).expect("ok");
+        let gitlab =
+            create_request(Forge::GitLab, &access, &NewRepo::private("thing")).expect("ok");
         assert_eq!(gitlab.url, "https://host.example/api/v4/projects");
         // GitLab has no `private` field; visibility is a string, and getting
         // this wrong makes the project public.
@@ -869,7 +853,8 @@ mod tests {
         let gitlab_public = create_request(Forge::GitLab, &access, &public).expect("ok");
         assert_eq!(gitlab_public.body["visibility"], serde_json::json!("public"));
 
-        let github = create_request(Forge::GitHub, &access, &NewRepo::private("thing")).expect("ok");
+        let github =
+            create_request(Forge::GitHub, &access, &NewRepo::private("thing")).expect("ok");
         assert_eq!(github.auth, AuthStyle::Bearer);
         assert_eq!(github.body["private"], serde_json::json!(true));
 
@@ -887,8 +872,8 @@ mod tests {
         let access =
             ApiAccess { base_url: "https://host.example".into(), token: Secret::from_str("t") };
         for forge in [Forge::Bitbucket, Forge::Unknown] {
-            let err = create_request(forge, &access, &NewRepo::private("thing"))
-                .expect_err("refused");
+            let err =
+                create_request(forge, &access, &NewRepo::private("thing")).expect_err("refused");
             let text = err.to_string();
             assert!(text.contains(forge.label()), "{text}");
             assert!(!forge.can_create());
@@ -910,8 +895,10 @@ mod tests {
             assert!(!name.is_empty());
             assert!(value.contains("s3cret"), "the header carries the token");
         }
-        let access =
-            ApiAccess { base_url: "https://host.example".into(), token: Secret::from_str("s3cret") };
+        let access = ApiAccess {
+            base_url: "https://host.example".into(),
+            token: Secret::from_str("s3cret"),
+        };
         for forge in [Forge::GitHub, Forge::Gitea, Forge::GitLab] {
             let request = create_request(forge, &access, &NewRepo::private("thing")).expect("ok");
             assert!(!request.url.contains("s3cret"), "{forge:?} put the token in the URL");

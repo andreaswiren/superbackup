@@ -558,8 +558,7 @@ mod tests {
     #[test]
     fn a_destination_with_no_key_is_listed_rather_than_dropped() {
         // A repository whose secret was never stored, plus a folder mirror.
-        let store =
-            store_with(vec![repository("Broken", &abs("/b")), mirror("Copy", &abs("/c"))]);
+        let store = store_with(vec![repository("Broken", &abs("/b")), mirror("Copy", &abs("/c"))]);
         let export = build(&store, Utc::now());
         assert_eq!(export.exported, 0);
         assert_eq!(export.omitted.len(), 2);

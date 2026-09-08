@@ -89,10 +89,8 @@ fn a_bundle_round_trips_through_a_shared_folder() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(target.join("id_ed25519"))
-            .expect("metadata")
-            .permissions()
-            .mode();
+        let mode =
+            std::fs::metadata(target.join("id_ed25519")).expect("metadata").permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "ssh refuses a key anyone else can read");
     }
 

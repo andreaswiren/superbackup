@@ -240,6 +240,11 @@ fn dirs_home() -> Option<PathBuf> {
         .filter(|p| p.is_dir())
 }
 
+// Used only by the Windows and macOS detectors, and tested on every
+// platform: it is pure string handling, and a test that only runs where
+// the caller does is a test that stops catching things. The `allow` is
+// scoped to the platforms where it is genuinely uncalled, not blanket.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 fn new_account(path: PathBuf, email: Option<String>) -> GoogleDriveAccount {
     let display_name = match &email {
         Some(e) => format!("Google Drive ({e})"),

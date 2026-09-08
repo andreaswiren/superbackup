@@ -326,10 +326,7 @@ impl GitRepo {
     /// The remote a person means when they say "the remote": `origin` if there
     /// is one, otherwise whichever is configured.
     pub fn primary_remote(&self) -> Option<&RepoRemote> {
-        self.remotes
-            .iter()
-            .find(|r| r.name == "origin")
-            .or_else(|| self.remotes.first())
+        self.remotes.iter().find(|r| r.name == "origin").or_else(|| self.remotes.first())
     }
 
     /// Boil everything down to the one word the list shows.
@@ -372,9 +369,7 @@ impl GitRepo {
         }
         match live {
             Some(Relation::LocalAhead) => RepoState::Unpushed,
-            Some(Relation::LocalBehind) | Some(Relation::NeedsFetch) => {
-                RepoState::PullRecommended
-            }
+            Some(Relation::LocalBehind) | Some(Relation::NeedsFetch) => RepoState::PullRecommended,
             Some(Relation::Same) => RepoState::Clean,
             Some(Relation::Diverged) => RepoState::Diverged,
             // No live check: fall back to what the last fetch recorded.
@@ -694,9 +689,8 @@ async fn examine(git: &Git, path: &Path, root: &Path, check_remotes: bool) -> Gi
         // which the `None`s already say.
     }
 
-    if let Ok(out) = git
-        .run(path, &["config", "--get-regexp", r"^remote\..*\.url"], LOCAL_TIMEOUT)
-        .await
+    if let Ok(out) =
+        git.run(path, &["config", "--get-regexp", r"^remote\..*\.url"], LOCAL_TIMEOUT).await
     {
         if out.ok() {
             repo.remotes = parse::parse_remotes(&out.stdout)
@@ -723,11 +717,7 @@ async fn examine(git: &Git, path: &Path, root: &Path, check_remotes: bool) -> Gi
     // branch nobody has looked at in months, which is precisely the thing a
     // list of "the current branch is fine" would never show.
     if let Ok(out) = git
-        .run(
-            path,
-            &["branch", "--list", "--no-color", parse::BRANCH_FORMAT],
-            LOCAL_TIMEOUT,
-        )
+        .run(path, &["branch", "--list", "--no-color", parse::BRANCH_FORMAT], LOCAL_TIMEOUT)
         .await
     {
         if out.ok() {
@@ -768,9 +758,7 @@ async fn check_remote(git: &Git, repo: &GitRepo) -> Option<RemoteCheck> {
     let reference = format!("refs/heads/{branch}");
     let checked_at = Utc::now();
 
-    let listed = git
-        .run(&repo.path, &["ls-remote", &remote, &reference], REMOTE_TIMEOUT)
-        .await;
+    let listed = git.run(&repo.path, &["ls-remote", &remote, &reference], REMOTE_TIMEOUT).await;
     let out = match listed {
         Ok(out) if out.ok() => out,
         Ok(out) => {
@@ -840,12 +828,10 @@ async fn relation_to(
         return Relation::NeedsFetch;
     }
 
-    let remote_is_ancestor = git
-        .run(path, &["merge-base", "--is-ancestor", remote_head, local], LOCAL_TIMEOUT)
-        .await;
-    let local_is_ancestor = git
-        .run(path, &["merge-base", "--is-ancestor", local, remote_head], LOCAL_TIMEOUT)
-        .await;
+    let remote_is_ancestor =
+        git.run(path, &["merge-base", "--is-ancestor", remote_head, local], LOCAL_TIMEOUT).await;
+    let local_is_ancestor =
+        git.run(path, &["merge-base", "--is-ancestor", local, remote_head], LOCAL_TIMEOUT).await;
     let remote_behind = matches!(remote_is_ancestor, Ok(ref o) if o.ok());
     let local_behind = matches!(local_is_ancestor, Ok(ref o) if o.ok());
     match (remote_behind, local_behind) {
@@ -916,11 +902,7 @@ pub async fn trust(path: &Path) -> Result<ActionOutcome> {
         path: path.to_path_buf(),
         action: "trust".into(),
         ok: out.ok(),
-        detail: if out.ok() {
-            format!("git will now read {text}.")
-        } else {
-            out.failure()
-        },
+        detail: if out.ok() { format!("git will now read {text}.") } else { out.failure() },
     })
 }
 
@@ -961,13 +943,11 @@ async fn auth_method(git: &Git, path: &Path, url: &str) -> parse::AuthMethod {
         // `core.sshCommand` is where a per-repository key is usually pinned.
         // Anything more than that lives in ~/.ssh/config, which only ssh
         // itself resolves — and saying so is better than guessing.
-        let key_path = match git
-            .run(path, &["config", "--get", "core.sshCommand"], LOCAL_TIMEOUT)
-            .await
-        {
-            Ok(out) if out.ok() => extract_identity_file(out.stdout.trim()),
-            _ => None,
-        };
+        let key_path =
+            match git.run(path, &["config", "--get", "core.sshCommand"], LOCAL_TIMEOUT).await {
+                Ok(out) if out.ok() => extract_identity_file(out.stdout.trim()),
+                _ => None,
+            };
         let key_path = match key_path {
             Some(key) => Some(key),
             None => default_ssh_key(),
@@ -1007,9 +987,8 @@ fn extract_identity_file(command: &str) -> Option<String> {
 /// `~/.ssh/config` and the agent, and neither is read here. With several keys
 /// present there is no single answer, so none is given.
 fn default_ssh_key() -> Option<String> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)?;
+    let home =
+        std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)?;
     let ssh = home.join(".ssh");
     let candidates: Vec<PathBuf> = ["id_ed25519", "id_ecdsa", "id_rsa"]
         .iter()
@@ -1080,10 +1059,7 @@ pub async fn init_repository(
         return Err(Error::Validation(format!("{} is not a folder", path.display())));
     }
     if path.join(".git").exists() {
-        return Err(Error::Validation(format!(
-            "{} is already a git repository",
-            path.display()
-        )));
+        return Err(Error::Validation(format!("{} is already a git repository", path.display())));
     }
     let branch = default_branch.trim();
     if branch.is_empty()
@@ -1094,9 +1070,8 @@ pub async fn init_repository(
         ));
     }
 
-    let out = git
-        .run(path, &["init", &format!("--initial-branch={branch}")], LOCAL_TIMEOUT)
-        .await?;
+    let out =
+        git.run(path, &["init", &format!("--initial-branch={branch}")], LOCAL_TIMEOUT).await?;
     if !out.ok() {
         return Ok(ActionOutcome {
             path: path.to_path_buf(),
@@ -1186,11 +1161,7 @@ pub async fn add_remote(path: &Path, name: &str, url: &str) -> Result<ActionOutc
         path: path.to_path_buf(),
         action: "remote".into(),
         ok: out.ok(),
-        detail: if out.ok() {
-            format!("{name} now points at {url}.")
-        } else {
-            out.failure()
-        },
+        detail: if out.ok() { format!("{name} now points at {url}.") } else { out.failure() },
     })
 }
 
@@ -1240,10 +1211,7 @@ pub async fn pull(path: &Path) -> Result<ActionOutcome> {
         detail: if out.ok() {
             first_line(&out.stdout, "Already up to date.")
         } else {
-            format!(
-                "{} Superbackup only fast-forwards, so nothing was changed.",
-                out.failure()
-            )
+            format!("{} Superbackup only fast-forwards, so nothing was changed.", out.failure())
         },
     })
 }
@@ -1309,9 +1277,7 @@ pub async fn push(path: &Path) -> Result<ActionOutcome> {
     let git = Git::locate()?;
     ensure_repository(&git, path).await?;
 
-    let status = git
-        .run(path, &["status", "--porcelain=v2", "--branch"], LOCAL_TIMEOUT)
-        .await?;
+    let status = git.run(path, &["status", "--porcelain=v2", "--branch"], LOCAL_TIMEOUT).await?;
     let parsed = parse::parse_status(&status.stdout);
     let Some(branch) = parsed.branch else {
         return Err(Error::Validation(
@@ -1324,18 +1290,13 @@ pub async fn push(path: &Path) -> Result<ActionOutcome> {
     } else {
         // A branch that has never been pushed needs to be told where to go,
         // and `--set-upstream` means the next push does not.
-        git.run(path, &["push", "--set-upstream", "origin", &branch], REMOTE_TIMEOUT * 4)
-            .await?
+        git.run(path, &["push", "--set-upstream", "origin", &branch], REMOTE_TIMEOUT * 4).await?
     };
     Ok(ActionOutcome {
         path: path.to_path_buf(),
         action: "push".into(),
         ok: out.ok(),
-        detail: if out.ok() {
-            first_line(&out.stderr, "Pushed.")
-        } else {
-            out.failure()
-        },
+        detail: if out.ok() { first_line(&out.stderr, "Pushed.") } else { out.failure() },
     })
 }
 
@@ -1349,14 +1310,9 @@ async fn ensure_repository(git: &Git, path: &Path) -> Result<()> {
     if !path.is_dir() {
         return Err(Error::Validation(format!("{} is not a folder", path.display())));
     }
-    let out = git
-        .run(path, &["rev-parse", "--show-toplevel"], LOCAL_TIMEOUT)
-        .await?;
+    let out = git.run(path, &["rev-parse", "--show-toplevel"], LOCAL_TIMEOUT).await?;
     if !out.ok() {
-        return Err(Error::Validation(format!(
-            "{} is not a git repository",
-            path.display()
-        )));
+        return Err(Error::Validation(format!("{} is not a git repository", path.display())));
     }
     let top = PathBuf::from(out.stdout.trim());
     let same = std::fs::canonicalize(&top)
@@ -1391,11 +1347,7 @@ fn identity_hint(failure: &str) -> String {
 }
 
 fn first_line(text: &str, fallback: &str) -> String {
-    text.lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or(fallback)
-        .to_string()
+    text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(fallback).to_string()
 }
 
 #[cfg(test)]
@@ -1589,8 +1541,8 @@ mod tests {
     /// as their clone path — which is every forge this recognises.
     #[test]
     fn a_remote_becomes_a_link_a_person_can_open() {
-        let ssh = parse::parse_remote_url("git@github.com:andreaswiren/superbackup.git")
-            .expect("parsed");
+        let ssh =
+            parse::parse_remote_url("git@github.com:andreaswiren/superbackup.git").expect("parsed");
         assert_eq!(
             parse::web_url(&ssh).as_deref(),
             Some("https://github.com/andreaswiren/superbackup"),

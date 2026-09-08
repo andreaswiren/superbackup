@@ -612,8 +612,7 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                     {
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
                             app.data.settings.kopia_path = Some(path.clone());
-                            app.screens.settings.kopia_path =
-                                path.to_string_lossy().into_owned();
+                            app.screens.settings.kopia_path = path.to_string_lossy().into_owned();
                             // Saved now rather than at the end of onboarding:
                             // the probe above re-reads on the next frame, and
                             // the user needs to see it turn green here.

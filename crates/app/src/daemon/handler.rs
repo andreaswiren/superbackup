@@ -778,10 +778,7 @@ fn key_passphrase_ref(private_key: &std::path::Path) -> superbackup_core::model:
 /// roots come from the stored configuration and never from the request, which
 /// is what keeps a scan — which spawns processes — from being pointed at an
 /// arbitrary part of the disk by a client.
-fn git_roots(
-    config: &superbackup_core::model::Config,
-    job: Option<&str>,
-) -> Result<Vec<PathBuf>> {
+fn git_roots(config: &superbackup_core::model::Config, job: Option<&str>) -> Result<Vec<PathBuf>> {
     let jobs: Vec<&superbackup_core::model::Job> = match job {
         Some(needle) => vec![resolve_job(config, needle)?],
         None => config.jobs.iter().collect(),
@@ -819,9 +816,9 @@ fn preview_text(path: &std::path::Path, size: u64) -> (Option<String>, bool) {
     const MAX_BYTES: usize = 512 * 1024;
 
     const TEXT: &[&str] = &[
-        "md", "markdown", "txt", "rst", "adoc", "log", "json", "toml", "yaml", "yml", "ini",
-        "cfg", "conf", "csv", "xml", "sql", "sh", "ps1", "bat", "rs", "go", "py", "js", "ts",
-        "tsx", "jsx", "c", "h", "cpp", "hpp", "java", "rb", "php", "css", "html", "lock",
+        "md", "markdown", "txt", "rst", "adoc", "log", "json", "toml", "yaml", "yml", "ini", "cfg",
+        "conf", "csv", "xml", "sql", "sh", "ps1", "bat", "rs", "go", "py", "js", "ts", "tsx",
+        "jsx", "c", "h", "cpp", "hpp", "java", "rb", "php", "css", "html", "lock",
     ];
     let named = path
         .extension()
@@ -849,10 +846,9 @@ fn preview_text(path: &std::path::Path, size: u64) -> (Option<String>, bool) {
         Ok(text) => (Some(text.to_string()), truncated),
         // A truncated read can split a multi-byte character; that is not a
         // reason to refuse the whole file.
-        Err(error) if truncated && error.valid_up_to() > 0 => (
-            Some(String::from_utf8_lossy(&slice[..error.valid_up_to()]).into_owned()),
-            true,
-        ),
+        Err(error) if truncated && error.valid_up_to() > 0 => {
+            (Some(String::from_utf8_lossy(&slice[..error.valid_up_to()]).into_owned()), true)
+        }
         Err(_) => {
             let _ = size;
             (None, false)
@@ -1691,8 +1687,7 @@ impl Handler for DaemonHandler {
         include_untracked: bool,
     ) -> Result<GitActionReply> {
         let path = self.git_target(&path).await?;
-        let outcome =
-            superbackup_core::git::commit(&path, &message, include_untracked).await?;
+        let outcome = superbackup_core::git::commit(&path, &message, include_untracked).await?;
         self.record_git(&outcome);
         Ok(GitActionReply { outcome })
     }
@@ -1785,12 +1780,7 @@ impl Handler for DaemonHandler {
         // still worth reading, and this is not parsing, it is displaying.
         let content = String::from_utf8_lossy(slice).into_owned();
 
-        Ok(DocumentReply {
-            name: document,
-            path: file.display().to_string(),
-            content,
-            truncated,
-        })
+        Ok(DocumentReply { name: document, path: file.display().to_string(), content, truncated })
     }
 
     async fn credential_list(&self, _ctx: &RequestContext) -> Result<CredentialsReply> {
@@ -1939,9 +1929,9 @@ impl Handler for DaemonHandler {
         let passphrase = self.verified_master(passphrase).await?;
         let folder = std::path::PathBuf::from(folder.trim());
         let source = folder.join(superbackup_core::credentials::BUNDLE_FILE);
-        let sealed = tokio::fs::read(&source).await.map_err(|e| {
-            Error::io(format!("reading {}", source.display()), e)
-        })?;
+        let sealed = tokio::fs::read(&source)
+            .await
+            .map_err(|e| Error::io(format!("reading {}", source.display()), e))?;
 
         let bundle = superbackup_core::credentials::KeyBundle::unseal(&sealed, &passphrase)?;
         let from_machine = bundle.machine.clone();
@@ -1954,8 +1944,7 @@ impl Handler for DaemonHandler {
             .await
             .map_err(|e| Error::Internal(format!("writing the keys did not finish: {e}")))??;
 
-        let skipped: Vec<String> =
-            all.into_iter().filter(|name| !written.contains(name)).collect();
+        let skipped: Vec<String> = all.into_iter().filter(|name| !written.contains(name)).collect();
         self.runtime.record_event(Event::info(
             "cred.unsealed",
             format!(
@@ -2016,12 +2005,7 @@ impl Handler for DaemonHandler {
     ) -> Result<GitCreatedReply> {
         self.require_unlocked().await?;
         let target = self.git_target(&path).await?;
-        let repo = superbackup_core::git::forge::NewRepo {
-            name,
-            owner,
-            description,
-            private,
-        };
+        let repo = superbackup_core::git::forge::NewRepo { name, owner, description, private };
         repo.validate()?;
 
         let created = match credential {
@@ -2041,7 +2025,8 @@ impl Handler for DaemonHandler {
         // Point the local repository at it, but push nothing: creating an empty
         // repository is reversible in one click and pushing a tree that turned
         // out to hold a .env is not.
-        let remote = superbackup_core::git::add_remote(&target, "origin", &created.clone_url).await?;
+        let remote =
+            superbackup_core::git::add_remote(&target, "origin", &created.clone_url).await?;
         self.runtime.record_event(Event::info(
             "git.created",
             format!(
@@ -2089,9 +2074,7 @@ impl Handler for DaemonHandler {
 
         // Generated here rather than typed: a passphrase a person invents for
         // a key they will never type it into is a passphrase they will reuse.
-        let passphrase = protect
-            .then(superbackup_core::crypto::generate_passphrase)
-            .transpose()?;
+        let passphrase = protect.then(superbackup_core::crypto::generate_passphrase).transpose()?;
         let made = keygen::generate(&dir, &spec, passphrase.as_ref()).await?;
 
         // Into the vault, keyed by the path so `cred.list` can say which keys
@@ -2122,9 +2105,7 @@ impl Handler for DaemonHandler {
             // Returned once. It is in the vault as well, but a passphrase kept
             // only inside the thing it protects is a passphrase nobody can
             // reach on the day that thing is what has been lost.
-            passphrase: passphrase
-                .as_ref()
-                .and_then(|p| p.expose_str().map(str::to_string)),
+            passphrase: passphrase.as_ref().and_then(|p| p.expose_str().map(str::to_string)),
             public_key: made.public_key,
         })
     }
@@ -2133,11 +2114,7 @@ impl Handler for DaemonHandler {
         Ok(AgentStatusReply { status: superbackup_core::credentials::agent::status().await })
     }
 
-    async fn credential_agent_add(
-        &self,
-        _ctx: &RequestContext,
-        path: String,
-    ) -> Result<AckReply> {
+    async fn credential_agent_add(&self, _ctx: &RequestContext, path: String) -> Result<AckReply> {
         // Must be one of this machine's own keys. The path comes from a
         // client, and `ssh-add` on an arbitrary path would read a file of the
         // caller's choosing with the daemon's privilege.
@@ -2206,7 +2183,6 @@ impl Handler for DaemonHandler {
         Ok(AckReply {})
     }
 
-
     async fn git_trust(&self, _ctx: &RequestContext, path: String) -> Result<GitActionReply> {
         let path = self.git_target(&path).await?;
         let outcome = superbackup_core::git::trust(&path).await?;
@@ -2235,7 +2211,9 @@ impl Handler for DaemonHandler {
 
         let location = gui_location(&target);
         let outcome = match &target.kind {
-            superbackup_core::model::DestinationKind::S3 { bucket, prefix, provider_id, .. } => {
+            superbackup_core::model::DestinationKind::S3 {
+                bucket, prefix, provider_id, ..
+            } => {
                 let provider = config.provider(provider_id).cloned().ok_or_else(|| {
                     Error::Validation(format!(
                         "\"{}\" names a storage provider that no longer exists",
@@ -4063,9 +4041,8 @@ impl DaemonHandler {
         if requested.as_os_str().is_empty() {
             return Err(Error::Validation("no folder was named".into()));
         }
-        let resolved = std::fs::canonicalize(&requested).map_err(|e| {
-            Error::io(format!("{} cannot be opened", requested.display()), e)
-        })?;
+        let resolved = std::fs::canonicalize(&requested)
+            .map_err(|e| Error::io(format!("{} cannot be opened", requested.display()), e))?;
 
         let mut sources = Vec::new();
         for job in &config.jobs {
@@ -4514,8 +4491,7 @@ mod tests {
     }
 
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("sb-{tag}-{}", uuid::Uuid::new_v4().simple()));
+        let dir = std::env::temp_dir().join(format!("sb-{tag}-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).expect("create scratch");
         dir
     }

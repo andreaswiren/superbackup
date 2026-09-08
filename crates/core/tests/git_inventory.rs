@@ -186,13 +186,15 @@ async fn committing_from_superbackup_produces_a_real_commit() {
     std::fs::write(repo.join("new.txt"), b"work in progress\n").expect("write");
     std::fs::write(repo.join("README.md"), b"edited\n").expect("write");
 
-    let before = git::inventory(std::slice::from_ref(&root), &ScanOptions::default()).await.expect("scan");
+    let before =
+        git::inventory(std::slice::from_ref(&root), &ScanOptions::default()).await.expect("scan");
     assert_eq!(before.repos[0].state(), RepoState::Uncommitted);
 
     let outcome = git::commit(&repo, "save the work", true).await.expect("commit ran");
     assert!(outcome.ok, "{}", outcome.detail);
 
-    let after = git::inventory(std::slice::from_ref(&root), &ScanOptions::default()).await.expect("scan");
+    let after =
+        git::inventory(std::slice::from_ref(&root), &ScanOptions::default()).await.expect("scan");
     let repo_after = &after.repos[0];
     assert_eq!(repo_after.untracked, 0, "the new file was included");
     assert_eq!(repo_after.unstaged, 0, "and the edit");
@@ -250,7 +252,9 @@ async fn the_remote_check_notices_commits_that_no_fetch_has_seen() {
     git_do(&other, &["push"]);
 
     // `.git` in the original clone still believes it is level.
-    let stale = git::inventory(std::slice::from_ref(&work), &ScanOptions::default()).await.expect("scanned");
+    let stale = git::inventory(std::slice::from_ref(&work), &ScanOptions::default())
+        .await
+        .expect("scanned");
     assert_eq!(stale.repos[0].behind, 0, "the cached view has not noticed");
     assert_eq!(stale.repos[0].state(), RepoState::Clean, "and would say everything is fine");
 

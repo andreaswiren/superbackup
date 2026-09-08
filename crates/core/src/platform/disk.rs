@@ -116,10 +116,9 @@ impl DiskReport {
     pub fn message(&self) -> String {
         let free = bytesize::ByteSize(self.free_bytes);
         match self.free_percent() {
-            Some(percent) => format!(
-                "{} has {free} free ({percent:.0}% of the volume).",
-                self.label
-            ),
+            Some(percent) => {
+                format!("{} has {free} free ({percent:.0}% of the volume).", self.label)
+            }
             None => format!("{} has {free} free.", self.label),
         }
     }
@@ -137,7 +136,13 @@ pub fn assess(
 ) -> Option<DiskReport> {
     let (free_bytes, total_bytes) = super::disk_space(path)?;
     let level = level_for(free_bytes, total_bytes, settings);
-    Some(DiskReport { path: path.to_path_buf(), label: label.into(), free_bytes, total_bytes, level })
+    Some(DiskReport {
+        path: path.to_path_buf(),
+        label: label.into(),
+        free_bytes,
+        total_bytes,
+        level,
+    })
 }
 
 /// The rule, kept apart from the platform call so it can be tested exactly.
@@ -155,7 +160,8 @@ pub fn level_for(free: u64, total: u64, settings: &DiskSpaceSettings) -> DiskLev
     let absolute = |g: u32| -> Option<u64> { (g > 0).then(|| g as u64 * gib) };
 
     let breaches = |p: u8, g: u32| {
-        percent(p).is_some_and(|limit| free < limit) || absolute(g).is_some_and(|limit| free < limit)
+        percent(p).is_some_and(|limit| free < limit)
+            || absolute(g).is_some_and(|limit| free < limit)
     };
 
     if breaches(settings.critical_percent, settings.critical_gigabytes) {

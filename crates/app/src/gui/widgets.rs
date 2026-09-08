@@ -1815,9 +1815,7 @@ pub fn app_logo(ui: &mut Ui, size: f32) -> Response {
     };
 
     match texture {
-        Some(handle) => {
-            ui.add(egui::Image::new(&handle).fit_to_exact_size(Vec2::splat(size)))
-        }
+        Some(handle) => ui.add(egui::Image::new(&handle).fit_to_exact_size(Vec2::splat(size))),
         // A PNG that will not decode is not a reason to leave a hole in the
         // page; the accent mark still reads as "this application".
         None => {
@@ -1947,7 +1945,8 @@ pub fn throughput_graph(
         );
     }
 
-    let raw: Vec<Pos2> = samples.iter().enumerate().map(|(i, v)| Pos2::new(x_at(i), y_at(*v))).collect();
+    let raw: Vec<Pos2> =
+        samples.iter().enumerate().map(|(i, v)| Pos2::new(x_at(i), y_at(*v))).collect();
     let curve = smooth_curve(&raw, 12, top, bottom);
 
     // The fill: a triangle strip from the curve down to the baseline, fading
@@ -1964,10 +1963,7 @@ pub fn throughput_graph(
     }
     painter.add(egui::Shape::mesh(mesh));
 
-    painter.add(egui::Shape::line(
-        curve.clone(),
-        Stroke::new(1.75_f32, t.accent),
-    ));
+    painter.add(egui::Shape::line(curve.clone(), Stroke::new(1.75_f32, t.accent)));
 
     // Where the latest reading is. On a graph whose right edge is "now", the
     // eye needs somewhere to land — and when the rate has just dropped to
@@ -2160,11 +2156,11 @@ pub fn number(
             buffer = (*value).to_string();
         }
 
-        let r = Field::new()
-            .width(width)
-            .enabled(enabled)
-            .announce(label)
-            .show_with_id(ui, id, &mut buffer);
+        let r = Field::new().width(width).enabled(enabled).announce(label).show_with_id(
+            ui,
+            id,
+            &mut buffer,
+        );
 
         if r.changed() {
             // Digits only. Rejecting the character is quieter than accepting
@@ -2181,7 +2177,8 @@ pub fn number(
         if r.lost_focus() {
             // Whatever was left in the box is now settled: an out-of-range or
             // unfinished entry snaps back to the value actually held.
-            let settled = buffer.parse::<u32>().unwrap_or(*value).clamp(*range.start(), *range.end());
+            let settled =
+                buffer.parse::<u32>().unwrap_or(*value).clamp(*range.start(), *range.end());
             *value = settled;
             buffer = settled.to_string();
         }
@@ -3034,7 +3031,6 @@ pub fn menu_item_danger(ui: &mut Ui, label: &str, enabled: bool) -> bool {
 mod tests {
     use super::*;
 
-
     /// A clickable container must not swallow its own buttons' clicks.
     ///
     /// egui breaks a hit-test tie by taking the **last** widget registered —
@@ -3088,40 +3084,23 @@ mod tests {
                 }
                 let _ = ctx.run(input, |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let area = egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(120.0, 120.0),
-                        );
+                        let area =
+                            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(120.0, 120.0));
                         if late_interact {
                             // The broken shape: contents first, container after.
-                            let inner = ui.allocate_new_ui(
-                                egui::UiBuilder::new().max_rect(area),
-                                |ui| {
-                                    ui.allocate_response(
-                                        egui::vec2(100.0, 100.0),
-                                        Sense::click(),
-                                    )
-                                },
-                            );
+                            let inner = ui
+                                .allocate_new_ui(egui::UiBuilder::new().max_rect(area), |ui| {
+                                    ui.allocate_response(egui::vec2(100.0, 100.0), Sense::click())
+                                });
                             button_clicked = inner.inner.clicked();
-                            let card = ui.interact(
-                                area,
-                                egui::Id::new("late-card"),
-                                Sense::click(),
-                            );
+                            let card =
+                                ui.interact(area, egui::Id::new("late-card"), Sense::click());
                             container_clicked = card.clicked();
                         } else {
                             // The fixed shape: the container senses itself.
                             let inner = ui.scope_builder(
-                                egui::UiBuilder::new()
-                                    .max_rect(area)
-                                    .sense(Sense::click()),
-                                |ui| {
-                                    ui.allocate_response(
-                                        egui::vec2(100.0, 100.0),
-                                        Sense::click(),
-                                    )
-                                },
+                                egui::UiBuilder::new().max_rect(area).sense(Sense::click()),
+                                |ui| ui.allocate_response(egui::vec2(100.0, 100.0), Sense::click()),
                             );
                             button_clicked = inner.inner.clicked();
                             container_clicked = inner.response.clicked();
@@ -3144,10 +3123,7 @@ mod tests {
 
         // The fix: the button wins.
         let (button, _container) = run(false, click_at);
-        assert!(
-            button,
-            "a container that senses itself must leave its buttons clickable"
-        );
+        assert!(button, "a container that senses itself must leave its buttons clickable");
     }
 
     /// A fixed-width cell must occupy the width it asked for.
@@ -3292,9 +3268,7 @@ mod tests {
         assert!(curve.len() > points.len() * 8, "it is actually subdivided");
 
         for p in &points {
-            let hit = curve
-                .iter()
-                .any(|q| (q.x - p.x).abs() < 0.01 && (q.y - p.y).abs() < 0.01);
+            let hit = curve.iter().any(|q| (q.x - p.x).abs() < 0.01 && (q.y - p.y).abs() < 0.01);
             assert!(hit, "{p:?} is not on the curve");
         }
         // The ends are the real first and last readings, not a drift towards
@@ -3333,7 +3307,6 @@ mod tests {
         let three = vec![Pos2::new(0.0, 1.0), Pos2::new(1.0, 2.0), Pos2::new(2.0, 1.0)];
         assert_eq!(smooth_curve(&three, 1, 0.0, 10.0), three, "no subdivision to do");
     }
-
 
     /// The interface shows megabits and stores kilobytes. Anything typed into
     /// the box has to survive the round trip, or a limit set to 50 reopens as

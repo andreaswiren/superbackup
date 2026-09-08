@@ -1509,8 +1509,10 @@ pub fn run_stopped_toast(job: &str) -> String {
 /// The tooltip on a repository's globe button: the address itself, so
 /// hovering answers "where does this live?" without opening anything.
 pub fn git_open_on_web(url: &str) -> String {
-    format!("Open on the web
-{url}")
+    format!(
+        "Open on the web
+{url}"
+    )
 }
 
 /// The end of a "refresh them all" run that went cleanly.
@@ -1526,20 +1528,23 @@ pub fn git_pulled_all(total: usize) -> String {
 /// cannot search for.
 pub fn git_pull_all_failed(total: usize, failed: &[String]) -> String {
     let ok = total.saturating_sub(failed.len());
-    let mut out = format!(
-        "{ok} of {total} brought up to date. {} could not be pulled:",
-        failed.len()
-    );
+    let mut out =
+        format!("{ok} of {total} brought up to date. {} could not be pulled:", failed.len());
     // Capped: a laptop closed for a fortnight can produce a great many, and a
     // toast tall enough to cover the window is one nobody reads.
     for detail in failed.iter().take(5) {
-        out.push_str("
-");
+        out.push_str(
+            "
+",
+        );
         out.push_str(detail);
     }
     if failed.len() > 5 {
-        out.push_str(&format!("
-…and {} more.", failed.len() - 5));
+        out.push_str(&format!(
+            "
+…and {} more.",
+            failed.len() - 5
+        ));
     }
     out
 }
@@ -1621,7 +1626,8 @@ pub mod git {
     pub const LOOKS_LIKE_A_PROJECT: &str = "Looks like a project";
     pub const LOOKS_LIKE_A_PROJECT_HINT: &str = "There is a manifest, a source folder or a README in here, so this is probably work rather than a folder somebody made and forgot.";
     pub const START_TRACKING: &str = "Start tracking";
-    pub const START_TRACKING_HINT: &str = "Turn this folder into a git repository. Nothing is pushed anywhere.";
+    pub const START_TRACKING_HINT: &str =
+        "Turn this folder into a git repository. Nothing is pushed anywhere.";
     pub const INIT_BRANCH: &str = "Initial branch";
     pub const INIT_COMMIT: &str = "Make a first commit";
     pub const INIT_COMMIT_HINT: &str = "Include everything in the folder that .gitignore does not exclude. A repository whose first commit is empty protects nothing.";
@@ -1630,7 +1636,8 @@ pub mod git {
     pub const INIT_CREATE_HINT: &str = "Uses the GitHub CLI, so superbackup never holds a token of yours. Sign in once with `gh auth login`.";
     pub const INIT_REMOTE_NAME: &str = "Repository name on GitHub";
     pub const INIT_PRIVATE: &str = "Private";
-    pub const INIT_PRIVATE_HINT: &str = "On unless you turn it off. This is your own code until you decide otherwise.";
+    pub const INIT_PRIVATE_HINT: &str =
+        "On unless you turn it off. This is your own code until you decide otherwise.";
     pub const INIT_NO_PUSH: &str = "Nothing is pushed. An empty repository is created and this folder is pointed at it; the first push is yours to make once you have looked at what is about to leave the machine.";
     pub const INIT_CONFIRM: &str = "Start tracking";
     pub const TAB_OVERVIEW: &str = "Overview";
@@ -1654,7 +1661,8 @@ pub mod git {
         "git considers this working tree stale: the folder it points at is gone. `git worktree prune` removes the record.";
     pub const WORKTREES_BODY: &str =
         "Each working tree has its own checked-out branch and its own uncommitted changes. Only one of them is the folder shown in the list.";
-    pub const NO_DOCUMENTS: &str = "No README, CHANGELOG, LICENSE or CONTRIBUTING in this repository's root folder.";
+    pub const NO_DOCUMENTS: &str =
+        "No README, CHANGELOG, LICENSE or CONTRIBUTING in this repository's root folder.";
     pub const DOCUMENTS_NOTE: &str =
         "Shown as text. Nothing in a document is fetched, and a link opens only when you click it.";
 
@@ -1756,7 +1764,8 @@ pub mod cred {
     pub const RESCAN: &str = "Look again";
     pub const FAILED: &str = "The keys could not be listed";
     pub const EMPTY: &str = "No SSH keys found";
-    pub const EMPTY_BODY: &str = "Nothing was found in this account's key folder. Keys made elsewhere will not appear here.";
+    pub const EMPTY_BODY: &str =
+        "Nothing was found in this account's key folder. Keys made elsewhere will not appear here.";
     pub const SEALED_TITLE: &str = "Keys are never copied in the clear";
     pub const SEALED_BODY: &str = "Sharing a key seals it under your master passphrase first, so what lands in OneDrive or a bucket is useless without that passphrase. Superbackup reads a private key only to seal it; nothing here is ever displayed.";
     pub const ENCRYPTED: &str = "Passphrase";
@@ -1765,7 +1774,8 @@ pub mod cred {
     pub const UNENCRYPTED_HINT: &str = "This key has no passphrase of its own: anyone holding the file can use it. That is why superbackup will not copy it anywhere unsealed.";
     pub const WIDE_OPEN: &str = "Readable by others";
     pub const WIDE_OPEN_HINT: &str = "The file's permissions let other accounts on this machine read it. ssh itself will refuse to use a key like this.";
-    pub const FINGERPRINT_HINT: &str = "The fingerprint a forge shows next to this key in its settings. Click to copy.";
+    pub const FINGERPRINT_HINT: &str =
+        "The fingerprint a forge shows next to this key in its settings. Click to copy.";
     pub const BACK_UP: &str = "Back up";
     pub const BACK_UP_HINT: &str = "Includes this key in the \"Your SSH keys\" job, which seals every ticked key into one file under your master passphrase and backs that up. The key itself is never written to a destination in the clear. Make the job from Jobs → New job if you have not yet.";
     pub const SHARE: &str = "Share with my other machines";
@@ -1828,7 +1838,8 @@ pub mod cred {
     pub const SYNC_FOLDER: &str = "Shared folder";
     pub const SYNC_FOLDER_HINT: &str = "A folder inside OneDrive, or one a destination copies to a bucket. Only the sealed bundle is written here.";
     pub const SEAL: &str = "Seal into the folder";
-    pub const SEAL_HINT: &str = "Write the marked keys into the shared folder, encrypted under your master passphrase.";
+    pub const SEAL_HINT: &str =
+        "Write the marked keys into the shared folder, encrypted under your master passphrase.";
     pub const UNSEAL: &str = "Take keys from the folder";
     pub const UNSEAL_HINT: &str = "Read the bundle in that folder and write its keys into this machine's key folder. Existing keys are left alone unless you say otherwise.";
     pub const BUNDLE_TITLE_SEAL: &str = "Seal your keys into the shared folder";
@@ -1861,8 +1872,7 @@ pub mod restore {
     pub const BROWSE_SHOW_SELECTION: &str = "Show selection";
     pub const BROWSE_CLEAR: &str = "Clear";
     pub const BROWSE_READING: &str = "Reading directory…";
-    pub const BROWSE_PICK: &str =
-        "Choose a snapshot to look inside it.";
+    pub const BROWSE_PICK: &str = "Choose a snapshot to look inside it.";
     pub const BROWSE_SNAPSHOT: &str = "Snapshot";
     pub const BROWSE_RESTORE_ONE: &str = "Restore 1 item";
     pub const BROWSE_RESTORE_THIS: &str = "Restore this…";

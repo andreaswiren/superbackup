@@ -81,9 +81,7 @@ impl State {
         match self.probes.get(&id) {
             Some(ProbeState::Failed(message)) => Some((widgets::BannerKind::Danger, message)),
             Some(ProbeState::OkNoRepository(message)) => Some((widgets::BannerKind::Info, message)),
-            Some(ProbeState::Ok) => {
-                Some((widgets::BannerKind::Success, copy::dest::VERIFY_OK))
-            }
+            Some(ProbeState::Ok) => Some((widgets::BannerKind::Success, copy::dest::VERIFY_OK)),
             _ => None,
         }
     }

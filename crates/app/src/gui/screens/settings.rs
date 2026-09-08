@@ -369,14 +369,8 @@ impl App {
         let wake_support = superbackup_core::platform::wake::support();
         let mut wake = self.data.settings.wake_for_backups;
         if wake_support.available {
-            if widgets::toggle(
-                ui,
-                &mut wake,
-                copy::set::WAKE,
-                Some(copy::set::WAKE_BODY),
-                true,
-            )
-            .clicked()
+            if widgets::toggle(ui, &mut wake, copy::set::WAKE, Some(copy::set::WAKE_BODY), true)
+                .clicked()
             {
                 self.data.settings.wake_for_backups = wake;
                 changed = true;
@@ -387,13 +381,7 @@ impl App {
                 // the alarm, and nothing else would tell the user why their
                 // machine never woke up.
                 ui.add_space(space::S);
-                widgets::paragraph_at(
-                    ui,
-                    &wake_support.note,
-                    Type::Small,
-                    t.text_muted,
-                    560.0,
-                );
+                widgets::paragraph_at(ui, &wake_support.note, Type::Small, t.text_muted, 560.0);
             }
         } else {
             ui.add_enabled_ui(false, |ui| {
@@ -601,7 +589,11 @@ impl App {
         rows.into_iter()
             .map(|(at, name, blocked)| {
                 (
-                    format!("{} · {}", format::absolute_zoned(at), format::relative_future(at, now)),
+                    format!(
+                        "{} · {}",
+                        format::absolute_zoned(at),
+                        format::relative_future(at, now)
+                    ),
                     name,
                     blocked,
                 )

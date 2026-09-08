@@ -66,16 +66,14 @@ impl App {
     pub(crate) fn credentials_actions(&mut self, ui: &mut Ui) {
         if Button::primary(copy::cred::NEW_KEY).icon(Icon::Plus).show(ui).clicked() {
             let machine = self.data.machine_label();
-            self.modal = Some(crate::gui::modals::Modal::NewKey(
-                crate::gui::modals::NewKeyState {
-                    name: "id_ed25519".to_string(),
-                    comment: format!("{}@{machine}", account_name()),
-                    // Opening it is the point of making it here rather than in
-                    // a terminal, so it is on by default.
-                    load_into_agent: true,
-                    ..Default::default()
-                },
-            ));
+            self.modal = Some(crate::gui::modals::Modal::NewKey(crate::gui::modals::NewKeyState {
+                name: "id_ed25519".to_string(),
+                comment: format!("{}@{machine}", account_name()),
+                // Opening it is the point of making it here rather than in
+                // a terminal, so it is on by default.
+                load_into_agent: true,
+                ..Default::default()
+            }));
         }
         if Button::secondary(copy::cred::RESCAN)
             .icon(Icon::RefreshCw)
@@ -100,7 +98,13 @@ impl App {
             self.scan_credentials();
         }
         if let Some(error) = self.screens.credentials.error.clone() {
-            widgets::banner(ui, widgets::BannerKind::Danger, copy::cred::FAILED, Some(&error), |_| {});
+            widgets::banner(
+                ui,
+                widgets::BannerKind::Danger,
+                copy::cred::FAILED,
+                Some(&error),
+                |_| {},
+            );
             ui.add_space(space::L);
         }
 
@@ -241,8 +245,7 @@ impl App {
                     ui.add_space(space::XS);
                     // The form every forge shows, so a key here can be matched
                     // against a key in GitHub's settings by eye.
-                    let response =
-                        widgets::text(ui, fingerprint, Type::MonoSmall, t.text_muted);
+                    let response = widgets::text(ui, fingerprint, Type::MonoSmall, t.text_muted);
                     if response.on_hover_text(copy::cred::FINGERPRINT_HINT).clicked() {
                         ui.ctx().copy_text(fingerprint.clone());
                     }
@@ -495,11 +498,7 @@ impl App {
             .destinations
             .iter()
             .filter(|d| d.shared)
-            .filter_map(|d| {
-                d.kind
-                    .local_path()
-                    .map(|p| (d.name.clone(), p.display().to_string()))
-            })
+            .filter_map(|d| d.kind.local_path().map(|p| (d.name.clone(), p.display().to_string())))
             .collect();
         if !candidates.is_empty() {
             ui.add_space(space::S);
@@ -508,11 +507,7 @@ impl App {
             let mut pick: Option<String> = None;
             ui.horizontal_wrapped(|ui| {
                 for (name, path) in &candidates {
-                    if Button::ghost(name)
-                        .compact()
-                        .show(ui)
-                        .on_hover_text(path.clone())
-                        .clicked()
+                    if Button::ghost(name).compact().show(ui).on_hover_text(path.clone()).clicked()
                     {
                         pick = Some(path.clone());
                     }

@@ -1601,10 +1601,7 @@ mod tests {
             argv.extend_from_slice(line);
             let cli = Cli::try_parse_from(&argv)
                 .unwrap_or_else(|e| panic!("the tray sends {line:?}, which must parse: {e}"));
-            assert!(
-                matches!(cli.command, Some(Command::Gui(_))),
-                "{line:?} must open the window"
-            );
+            assert!(matches!(cli.command, Some(Command::Gui(_))), "{line:?} must open the window");
         }
     }
 

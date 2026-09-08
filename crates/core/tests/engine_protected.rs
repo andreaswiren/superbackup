@@ -96,8 +96,9 @@ fn harness() -> Harness {
         last: std::sync::Mutex::new(None),
     });
     let executor = Arc::new(MockExecutor::new());
-    let (events, _) =
-        tokio::sync::broadcast::channel::<EngineEvent>(superbackup_core::engine::EVENT_CHANNEL_CAPACITY);
+    let (events, _) = tokio::sync::broadcast::channel::<EngineEvent>(
+        superbackup_core::engine::EVENT_CHANNEL_CAPACITY,
+    );
     let runner = Runner::new(
         executor.clone(),
         Arc::new(TestClock::at("2025-01-08T12:00:00Z")),
@@ -138,7 +139,10 @@ fn request(job: Job, destinations: Vec<Destination>) -> RunRequest {
 async fn a_keys_job_snapshots_the_staged_bundle_and_not_the_key_folder() {
     let h = harness();
     let destinations = vec![test_repository("offsite", "/repos/offsite")];
-    let run = h.runner.execute(request(prepared_job(JobContent::Keys, &destinations), destinations)).await;
+    let run = h
+        .runner
+        .execute(request(prepared_job(JobContent::Keys, &destinations), destinations))
+        .await;
     assert_eq!(run.status, RunStatus::Succeeded, "{run:?}");
 
     let calls = h.executor.calls();
@@ -163,7 +167,10 @@ async fn what_is_backed_up_is_ciphertext_and_it_does_not_outlive_the_run() {
     let h = harness();
     let destinations = vec![test_repository("offsite", "/repos/offsite")];
 
-    let run = h.runner.execute(request(prepared_job(JobContent::Keys, &destinations), destinations)).await;
+    let run = h
+        .runner
+        .execute(request(prepared_job(JobContent::Keys, &destinations), destinations))
+        .await;
     assert_eq!(run.status, RunStatus::Succeeded);
 
     let staged = h.content.last.lock().expect("lock").clone().expect("staged");
@@ -194,7 +201,10 @@ async fn what_is_backed_up_is_ciphertext_and_it_does_not_outlive_the_run() {
 async fn a_vault_job_carries_the_sealed_file_and_the_way_back() {
     let h = harness();
     let destinations = vec![test_repository("offsite", "/repos/offsite")];
-    let run = h.runner.execute(request(prepared_job(JobContent::Vault, &destinations), destinations)).await;
+    let run = h
+        .runner
+        .execute(request(prepared_job(JobContent::Vault, &destinations), destinations))
+        .await;
     assert_eq!(run.status, RunStatus::Succeeded, "{run:?}");
 
     // Re-stage into a folder the test keeps, to inspect what the run wrote.
@@ -232,8 +242,9 @@ async fn an_ordinary_job_still_backs_up_its_own_folders() {
 async fn a_payload_that_cannot_be_built_fails_the_run_rather_than_emptying_it() {
     let clock = Arc::new(TestClock::at("2025-01-08T12:00:00Z"));
     let executor = Arc::new(MockExecutor::new());
-    let (events, _) =
-        tokio::sync::broadcast::channel::<EngineEvent>(superbackup_core::engine::EVENT_CHANNEL_CAPACITY);
+    let (events, _) = tokio::sync::broadcast::channel::<EngineEvent>(
+        superbackup_core::engine::EVENT_CHANNEL_CAPACITY,
+    );
     let runner = Runner::new(
         executor.clone(),
         clock,
@@ -246,17 +257,13 @@ async fn a_payload_that_cannot_be_built_fails_the_run_rather_than_emptying_it() 
     .with_content_provider(Arc::new(UnavailableContent));
 
     let destinations = vec![test_repository("offsite", "/repos/offsite")];
-    let run = runner
-        .execute(request(prepared_job(JobContent::Vault, &destinations), destinations))
-        .await;
+    let run =
+        runner.execute(request(prepared_job(JobContent::Vault, &destinations), destinations)).await;
 
     assert_eq!(run.status, RunStatus::Failed, "{run:?}");
     assert!(executor.calls().is_empty(), "nothing was snapshotted");
-    let error = run
-        .destinations
-        .first()
-        .and_then(|d| d.error.clone())
-        .expect("the run says why it failed");
+    let error =
+        run.destinations.first().and_then(|d| d.error.clone()).expect("the run says why it failed");
     let text = format!("{} {}", error.message, error.detail.unwrap_or_default());
     assert!(text.contains("unlock") || text.contains("prepared"), "{text}");
 }
