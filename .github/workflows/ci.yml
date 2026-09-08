@@ -71,15 +71,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
-
       # Fails the build on a known vulnerability, an unmaintained crate, a
       # licence outside our allowlist, or a source we do not trust. A backup
       # tool that holds every repository key does not get to be casual about
       # its dependency tree.
+      #
+      # The prebuilt binary rather than `cargo install`, which compiles it from
+      # source for a check that runs in seconds.
       - name: cargo-deny
-        run: cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
 
   msrv:
     name: minimum supported Rust version

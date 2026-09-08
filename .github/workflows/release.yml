@@ -72,10 +72,65 @@ jobs:
           echo "changelog_version=$base" >> "$GITHUB_OUTPUT"
           echo "Releasing $version (changelog section $base)"
 
+      # A prebuilt binary, not `cargo install cargo-deny`, which compiles it
+      # from source. Preflight gates every other job, so those minutes were
+      # serial time on the front of every release for a check that takes
+      # seconds to actually run.
       - name: The dependency policy must pass before anything is published
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  # ---------------------------------------------------------------------------
+  # Test
+  # ---------------------------------------------------------------------------
+  #
+  # Once per operating system, beside the builds rather than in front of them.
+  #
+  # This used to run inside every build job: six full suites, and each build
+  # therefore compiled the whole workspace twice — once in debug for the tests
+  # and again in release for the artefact. The jobs run in parallel, so the
+  # wall clock was one machine doing both halves back to back, and a release
+  # took over half an hour.
+  #
+  # The suite is the same code on `x86_64` and `aarch64` of the same platform:
+  # it exercises scheduling, parsing, crypto and IPC, none of which the
+  # architecture changes. What the architecture changes is whether the thing
+  # *builds*, and that is what the build jobs still prove, on all six.
+  #
+  # The guarantee is unchanged — a tag that does not pass does not ship —
+  # because `draft` requires this to succeed before it publishes anything.
+  # Gating the *publish* rather than the *compile* is what lets the two run at
+  # the same time.
+  test:
+    name: test (${{ matrix.os }})
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux GUI and tray dependencies
+        if: runner.os == 'Linux'
         run: |
-          cargo install cargo-deny --locked
-          cargo deny check
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev             libayatana-appindicator3-dev pkg-config
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.os }}
+
+      # No `--target`: on the host triple it only moves the output into a
+      # second directory and defeats the cache the build jobs share.
+      - name: Test
+        run: cargo test --workspace
 
   # ---------------------------------------------------------------------------
   # Build
@@ -139,10 +194,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # The tests gate the release. A tag that does not pass does not ship.
-      - name: Test
-        run: cargo test --workspace --target ${{ matrix.target }}
-
+      # No test step: the `test` job runs the suite once per platform, in
+      # parallel with this. See the note above it.
       - name: Build
         run: cargo build --release --workspace --target ${{ matrix.target }}
 
@@ -208,7 +261,7 @@ jobs:
   # ---------------------------------------------------------------------------
   draft:
     name: draft the release
-    needs: [preflight, build]
+    needs: [preflight, build, test]
     # Publish what built, rather than nothing.
     #
     # `needs` alone means one platform's failure cancels the release for all
@@ -221,7 +274,11 @@ jobs:
     # changelog, and a release that disagrees with its own version number is
     # worse than no release. The collect step refuses to publish without a
     # Windows artefact, so this cannot quietly ship an empty one.
-    if: always() && needs.preflight.result == 'success'
+    # `always()` so a platform that failed to build does not cancel the
+    # release for the ones that succeeded — but preflight and the tests are
+    # absolute. A release whose version disagrees with its own manifest, or
+    # one built from code that fails its suite, is worse than no release.
+    if: always() && needs.preflight.result == 'success' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
