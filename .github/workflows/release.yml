@@ -14,6 +14,12 @@ on:
       tag:
         description: "Tag to build (must already exist)"
         required: true
+      platforms:
+        description: "Which platforms to build"
+        required: false
+        default: windows
+        type: choice
+        options: [windows, all]
 
 permissions:
   contents: write
@@ -39,6 +45,9 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       changelog_version: ${{ steps.check.outputs.changelog_version }}
+      targets: ${{ steps.platforms.outputs.targets }}
+      test_os: ${{ steps.platforms.outputs.test_os }}
+      platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,6 +80,43 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "changelog_version=$base" >> "$GITHUB_OUTPUT"
           echo "Releasing $version (changelog section $base)"
+
+      # Which platforms this release builds.
+      #
+      # Windows only by default, including for a tag push. Windows is the
+      # stated priority platform and the one this is used on daily; building
+      # the other five costs the wall clock of the slowest of them for
+      # artefacts nobody is waiting on. Run the workflow by hand with
+      # `platforms: all` to produce a full set.
+      #
+      # The other targets are *not* deleted, because "for now" is what this
+      # is: they stay in the table below and come back with one input.
+      # Which platforms this release builds.
+      #
+      # Windows only by default, including for a tag push. Windows is the
+      # stated priority platform and the one this is used on daily; building
+      # the other five costs the wall clock of the slowest of them for
+      # artefacts nobody is waiting on. Run the workflow by hand with
+      # `platforms: all` for a full set.
+      #
+      # The other targets are not deleted, because "for now" is what this
+      # is: they are one input away.
+      - name: Choose the platforms
+        id: platforms
+        run: |
+          set -euo pipefail
+          want="${{ github.event.inputs.platforms || 'windows' }}"
+          if [ "$want" = "all" ]; then
+            targets='[{"os":"windows-latest","target":"x86_64-pc-windows-msvc","binary":"superbackup.exe","archive":"zip"},{"os":"windows-11-arm","target":"aarch64-pc-windows-msvc","binary":"superbackup.exe","archive":"zip"},{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","binary":"superbackup","archive":"tar.gz"},{"os":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","binary":"superbackup","archive":"tar.gz"},{"os":"macos-latest","target":"aarch64-apple-darwin","binary":"superbackup","archive":"tar.gz"},{"os":"macos-latest","target":"x86_64-apple-darwin","binary":"superbackup","archive":"tar.gz"}]'
+            test_os='["windows-latest","ubuntu-latest","macos-latest"]'
+          else
+            targets='[{"os":"windows-latest","target":"x86_64-pc-windows-msvc","binary":"superbackup.exe","archive":"zip"}]'
+            test_os='["windows-latest"]'
+          fi
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "test_os=$test_os" >> "$GITHUB_OUTPUT"
+          echo "platforms=$want" >> "$GITHUB_OUTPUT"
+          echo "Building: $want"
 
       # A prebuilt binary, not `cargo install cargo-deny`, which compiles it
       # from source. Preflight gates every other job, so those minutes were
@@ -109,7 +155,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(needs.preflight.outputs.test_os) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -142,37 +188,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            binary: superbackup.exe
-            archive: zip
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            binary: superbackup
-            archive: tar.gz
-          # ARM Linux on a native ARM runner rather than a cross-compile.
-          # The binary links GTK, libxdo and appindicator for the tray, and
-          # cross-compiling those means ARM versions of every -dev package on
-          # an x86 host; building where it runs is the shorter road and the
-          # one that actually tests the result.
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            binary: superbackup
-            archive: tar.gz
-          # Windows on ARM, for Snapdragon laptops. Same reasoning.
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            binary: superbackup.exe
-            archive: zip
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            binary: superbackup
-            archive: tar.gz
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            binary: superbackup
-            archive: tar.gz
+        # Built by `preflight`, so the set of platforms is one decision in one
+        # place rather than a table here and a condition somewhere else.
+        include: ${{ fromJSON(needs.preflight.outputs.targets) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -306,7 +324,15 @@ jobs:
           # log rather than only by counting files on the release page.
           echo "Publishing these artefacts:"
           ls -1 dist
-          for target in windows linux darwin; do
+          # Only the platforms this run was asked for. A Windows-only release
+          # warning that Linux and macOS are absent is noise about a decision
+          # somebody made deliberately.
+          if [ "${{ needs.preflight.outputs.platforms }}" = "all" ]; then
+            expected="windows linux darwin"
+          else
+            expected="windows"
+          fi
+          for target in $expected; do
             if ls dist/*"$target"* >/dev/null 2>&1; then
               echo "  $target: present"
             else
