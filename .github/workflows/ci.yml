@@ -53,8 +53,33 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # Clippy, with its findings turned into annotations.
+      #
+      # The output of a failing step lives in the run's log, and the Actions
+      # log API refuses without admin rights on the repository — so a lint that
+      # fires only on Linux or only on macOS was, from any other machine, a red
+      # tick and the words "exit code 101". Annotations are readable without
+      # that, so the diagnostics go there as well as into the log.
+      #
+      # This matters because it is exactly the class of failure nobody can
+      # reproduce: the development machine here is Windows, and the Linux and
+      # macOS branches are compiled by this workflow and by nothing else.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          if cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 \
+            | tee clippy.log; then
+            exit 0
+          fi
+          echo "--- clippy said: ---"
+          # The diagnostic lines only: one annotation per finding, not per line
+          # of the surrounding source, and capped so a hundred instances of one
+          # lint do not bury the other three.
+          grep -E '^(error|warning)(\[|:)' clippy.log | head -40 | while IFS= read -r line; do
+            echo "::error title=clippy (${{ matrix.os }})::${line}"
+          done
+          exit 1
 
       - name: Test
         run: cargo test --workspace --all-features
