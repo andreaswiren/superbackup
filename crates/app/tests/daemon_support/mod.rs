@@ -72,8 +72,26 @@ impl Harness {
 
         // The vault is created before the daemon starts, because `Store::open`
         // deliberately refuses to create one — a first run needs a human.
-        let mut store = Store::initialise(paths.clone(), &Secret::from_str(PASSPHRASE))
-            .expect("initialise the store");
+        // A vault with deliberately cheap Argon2 parameters.
+        //
+        // The real ones are 64 MiB and three passes, by design, and every test
+        // here derives the key several times: creating the vault, unlocking,
+        // and — where the test rotates the passphrase — verifying the old one
+        // and sealing under the new. `rotating_the_passphrase_invalidates_the_cache`
+        // took thirty-three seconds on a fast machine and tripped libtest's
+        // sixty-second warning on CI, which reads exactly like a hang.
+        //
+        // Nothing here is *about* the key-derivation cost. That the shipped
+        // parameters meet the documented floor is asserted directly, in
+        // `crypto::kdf`, where it belongs and where it costs one derivation
+        // rather than dozens. A rotation keeps whatever parameters the vault
+        // already carries, so the cheap ones hold for the whole test.
+        let cheap = superbackup_core::crypto::Vault::create_unchecked(
+            &Secret::from_str(PASSPHRASE),
+            superbackup_core::crypto::KdfParams::insecure_for_tests().expect("test kdf parameters"),
+        )
+        .expect("build the test vault");
+        let mut store = Store::initialise_with(paths.clone(), cheap).expect("initialise the store");
         let mut config = store.config().clone();
         config.settings.kopia_path = Some(kopia_exe.clone());
         // Nothing in these tests wants a scheduled run firing underneath it.

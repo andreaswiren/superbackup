@@ -672,3 +672,44 @@ fn a_config_that_does_not_validate_can_still_be_opened_for_repair() {
     store.set_config(fixed).expect("save the repair");
     assert!(Store::open(paths).is_ok(), "the repaired config must open strictly");
 }
+
+/// A vault made the ordinary way is expensive to attack.
+///
+/// # Why this is asserted here rather than left to the crypto tests
+///
+/// `KdfParams::recommended()` is checked against the documented floor in
+/// `crypto::kdf`, and `Vault::create` calls it — but nothing checked that
+/// `Store::initialise`, which is the path every real installation takes,
+/// actually reaches either of them. That wiring was covered only by accident,
+/// because the daemon integration harness happened to build its vaults this
+/// way and would have slowed to a crawl if the parameters were ever wrong.
+///
+/// Those tests now build deliberately cheap vaults, so a rotation and an
+/// unlock cost microseconds instead of tripping libtest's sixty-second hang
+/// warning. That is the right trade — none of them are about the derivation
+/// cost — but it removed the accidental guard, so here is a deliberate one.
+/// It costs a single derivation.
+#[test]
+fn a_vault_created_the_ordinary_way_uses_the_recommended_parameters() {
+    let home = Home::new("kdf-floor");
+    let paths = home.paths();
+    let store = Store::initialise(paths.clone(), &Secret::from_str("a-passphrase-for-the-test"))
+        .expect("initialise");
+    drop(store);
+
+    let file = superbackup_core::crypto::file::VaultFile::load(&paths).expect("load the vault");
+    let kdf = &file.vault().header().kdf;
+    let floor = KdfParams::recommended().expect("recommended");
+
+    assert_eq!(kdf.algorithm, floor.algorithm, "Argon2id, not something cheaper");
+    assert!(
+        kdf.memory_kib >= floor.memory_kib,
+        "a real vault must be at least as costly as the recommendation: {} < {}",
+        kdf.memory_kib,
+        floor.memory_kib
+    );
+    assert!(kdf.iterations >= floor.iterations, "{} passes", kdf.iterations);
+    // And the parameters it carries would be accepted for a *new* vault, which
+    // is the check that rejects a header cheap enough to brute-force.
+    kdf.validate_for_new_vault().expect("a freshly created vault must pass its own floor");
+}
