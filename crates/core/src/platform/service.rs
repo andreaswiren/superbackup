@@ -186,6 +186,13 @@ impl ServiceOptions {
         Ok(ServiceOptions::new(exe, paths))
     }
 
+    /// [`ServiceOptions::preferred`] for this executable.
+    pub fn preferred_current(paths: &Paths) -> Result<ServiceOptions> {
+        let exe = std::env::current_exe()
+            .map_err(|e| Error::io("determining this program's own path", e))?;
+        Ok(ServiceOptions::preferred(exe, paths))
+    }
+
     pub fn new(executable: impl Into<PathBuf>, paths: &Paths) -> ServiceOptions {
         // The directories the *service* will write to, which are not the ones
         // it is being described from.
@@ -215,6 +222,44 @@ impl ServiceOptions {
                 service_paths.cache_dir.clone(),
             ],
         }
+    }
+
+    /// The service this platform can actually install unattended.
+    ///
+    /// # Why the scope differs by platform
+    ///
+    /// On Windows a service is the only way to back up a machine nobody has
+    /// signed in to, which is the whole reason to want one — so it is a system
+    /// service, and it asks for administrator rights.
+    ///
+    /// On Linux and macOS the system-scope variant is the one that does not
+    /// work. It needs root, which a person setting up a backup tool does not
+    /// have; it binds a socket under `/run/superbackup`, which cannot be
+    /// created under `ProtectSystem=strict` and does not exist at all on a
+    /// macOS with a read-only system volume; and running as root it cannot see
+    /// the user's OneDrive, their FUSE mounts or their mapped drives —
+    /// [`limitations`](super::limitations) says exactly this and recommends a
+    /// user service instead.
+    ///
+    /// The user-scope variant — a systemd user unit, a LaunchAgent — needs no
+    /// privileges, needs no directory it cannot create, and sees the files it
+    /// is meant to be backing up. So that is what setup installs there.
+    ///
+    /// It also keeps the user's own paths rather than passing `--service`,
+    /// because `--service` selects the machine-wide root (`/var/lib/superbackup`)
+    /// and a user unit cannot write to it.
+    pub fn preferred(executable: impl Into<PathBuf>, paths: &Paths) -> ServiceOptions {
+        let mut options = ServiceOptions::new(executable, paths);
+        if cfg!(windows) {
+            return options;
+        }
+        options.scope = ServiceScope::User;
+        // The person installing it, running as themselves.
+        options.account = ServiceAccount::LocalSystem;
+        options.args = vec!["daemon".to_string(), "--no-tray".to_string()];
+        options.state_dirs =
+            vec![paths.data_dir.clone(), paths.log_dir.clone(), paths.cache_dir.clone()];
+        options
     }
 
     /// True when installing this configuration requires elevation.

@@ -307,3 +307,78 @@ fn a_failed_install_leaves_nothing_behind() {
     let status = service::status(&opts.name, opts.scope).expect("status");
     assert!(!status.installed, "a failed install must not leave a service behind: {status:?}");
 }
+
+/// Setup installs the service each platform can actually run.
+///
+/// # Why this is asserted rather than left to the reader
+///
+/// The development machine here is Windows, where a system service is the
+/// right answer and the only one. On Linux and macOS it is the answer that
+/// cannot work: it needs root, which somebody setting up a backup tool does
+/// not have; it binds a socket under `/run/superbackup`, which
+/// `ProtectSystem=strict` forbids creating and which does not exist at all on
+/// a macOS with a read-only system volume; and running as root it cannot see
+/// the OneDrive folder the same wizard just created.
+///
+/// So the choice is made per platform, and this is what stops it drifting back
+/// to whatever the Windows branch happens to want.
+#[test]
+fn setup_installs_the_service_scope_this_platform_can_run() {
+    use superbackup_core::platform::{ServiceOptions, ServiceScope};
+
+    let paths = superbackup_core::paths::Paths::rooted_at(
+        if cfg!(windows) { r"C:\sb" } else { "/tmp/sb" },
+        false,
+    );
+    let options = ServiceOptions::preferred("/opt/superbackup/superbackup", &paths);
+
+    if cfg!(windows) {
+        // The whole reason to want one: backups while nobody is signed in.
+        assert_eq!(options.scope, ServiceScope::System);
+        assert!(options.requires_elevation(), "a Windows service needs administrator rights");
+    } else {
+        assert_eq!(options.scope, ServiceScope::User);
+        assert!(
+            !options.requires_elevation(),
+            "a user unit that asks for root is the thing this exists to avoid"
+        );
+        // And it must not be told to use the machine-wide root, which a user
+        // unit cannot write to.
+        assert!(
+            !options.args.iter().any(|a| a == "--service"),
+            "a user service pointed at /var/lib is a service that cannot write: {:?}",
+            options.args
+        );
+        assert!(
+            options.state_dirs.iter().all(|d| d.starts_with("/tmp/sb")),
+            "a user unit must be given its own directories: {:?}",
+            options.state_dirs
+        );
+    }
+}
+
+/// The system-scope options keep describing the *service's* directories.
+///
+/// `--service` selects the machine-wide root, so the unit has to grant write
+/// access to that and not to the home directory of whoever happened to run the
+/// installer — which is what it did, while also mounting `/home` read-only two
+/// lines above in the same unit.
+#[test]
+fn a_system_service_is_described_by_the_directories_it_will_use() {
+    use superbackup_core::platform::ServiceOptions;
+
+    let caller = superbackup_core::paths::Paths::rooted_at(
+        if cfg!(windows) { r"C:\Users\someone\sb" } else { "/home/someone/sb" },
+        false,
+    );
+    let options = ServiceOptions::new("/opt/superbackup/superbackup", &caller);
+
+    assert!(options.args.iter().any(|a| a == "--service"), "{:?}", options.args);
+    for dir in &options.state_dirs {
+        assert!(
+            !dir.starts_with(&caller.data_dir),
+            "the unit was described with the caller's own directories: {}",
+            dir.display()
+        );
+    }
+}

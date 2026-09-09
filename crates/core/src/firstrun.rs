@@ -299,7 +299,12 @@ fn apply_platform(paths: &crate::paths::Paths, choices: &Choices, applied: &mut 
         // a failure from deep inside the service manager: the tray still runs
         // every backup while they are signed in, which is what the service
         // improves on rather than what it enables.
-        match platform::ServiceOptions::current(paths) {
+        // `preferred`, not `current`: on Linux and macOS the system-scope
+        // service is the one that cannot work — it needs root, binds a socket
+        // in a directory it is not allowed to create, and running as root
+        // cannot see the OneDrive folder this same wizard just set up. See
+        // `ServiceOptions::preferred`.
+        match platform::ServiceOptions::preferred_current(paths) {
             Ok(options) => {
                 if options.requires_elevation() && !platform::service::is_elevated() {
                     // Ask, rather than explain. Telling somebody at the end of
