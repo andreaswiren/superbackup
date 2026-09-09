@@ -59,6 +59,12 @@ pub struct WakeSupport {
 }
 
 impl WakeSupport {
+    /// Waking is possible here, with a caveat worth stating.
+    ///
+    /// Windows and Linux both have a mechanism and both have a condition on
+    /// it. macOS has neither yet, so this is genuinely uncalled there — hence
+    /// the scoped allow rather than a blanket one.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     fn yes(note: &str) -> WakeSupport {
         WakeSupport { available: true, note: note.to_string() }
     }

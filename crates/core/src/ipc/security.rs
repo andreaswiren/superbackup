@@ -331,7 +331,11 @@ pub fn verify_peer(stream: &interprocess::local_socket::tokio::Stream) -> Result
             ))
         })?;
         let pid = creds.pid().and_then(|p| u32::try_from(i64::from(p)).ok());
-        let peer = creds.euid().map(u32::from).ok_or_else(|| {
+        // No `u32::from`: `uid_t` *is* `u32` on both Unix targets this
+        // builds for, so the conversion converted nothing and clippy said so.
+        // The `pid` line above keeps its conversion because `pid_t` is signed
+        // and genuinely needs checking.
+        let peer = creds.euid().ok_or_else(|| {
             Error::Ipc(
                 "refusing a connection: this platform reported no peer uid for a unix socket"
                     .into(),

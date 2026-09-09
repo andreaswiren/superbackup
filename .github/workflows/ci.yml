@@ -66,6 +66,12 @@ jobs:
       # macOS branches are compiled by this workflow and by nothing else.
       - name: Clippy
         shell: bash
+        # Colour off for this step only. The workflow sets `always`, which
+        # wraps every diagnostic in escape codes — so the grep below matched
+        # nothing at all and the step printed its header and no findings, which
+        # is the failure this whole arrangement exists to prevent.
+        env:
+          CARGO_TERM_COLOR: never
         run: |
           set -o pipefail
           if cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 \

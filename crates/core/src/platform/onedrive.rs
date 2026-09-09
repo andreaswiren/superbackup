@@ -352,11 +352,14 @@ fn detect_windows_env() -> Vec<OneDriveAccount> {
 }
 
 /// `C:\Users\me\OneDrive - Contoso Ltd` -> `Contoso Ltd`.
-// Used only by the Windows and macOS detectors, and tested on every
-// platform: it is pure string handling, and a test that only runs where
-// the caller does is a test that stops catching things. The `allow` is
-// scoped to the platforms where it is genuinely uncalled, not blanket.
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+// Used only by the Windows detectors — both call sites are `#[cfg(windows)]` —
+// and tested on every platform: it is pure string handling, and a test that
+// only runs where the caller does is a test that stops catching things.
+//
+// The `allow` was scoped to `not(any(windows, macos))`, which claimed macOS
+// called it. macOS does not, and macOS is where the dead-code error came
+// from. Scoped to what is true now: uncalled everywhere but Windows.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn tenant_from_folder_name(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
     let (_, tenant) = name.split_once(" - ")?;
