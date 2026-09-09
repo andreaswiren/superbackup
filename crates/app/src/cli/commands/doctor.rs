@@ -332,8 +332,13 @@ fn vault_checks(ctx: &mut Ctx, daemon: Option<&Daemon>) -> Vec<DoctorCheck> {
     // This is the arrangement that produced a night of "Missed scheduled run"
     // on a computer that was switched on the whole time: the vault locks
     // itself after the idle timer, and every scheduled run from then until
-    // somebody types the passphrase is skipped. Each setting is reasonable on
-    // its own, which is exactly why the combination needs saying out loud.
+    // somebody types the passphrase is skipped.
+    //
+    // New installations do not land here — `use_os_keychain` is on by default,
+    // and idleness then withdraws the right to *change* things rather than
+    // locking the vault. An installation upgraded from before that change
+    // keeps whatever it had, which is the honest thing to do with a setting
+    // about storing a passphrase, and is exactly who this check is for.
     if let Some(daemon) = daemon {
         if let Ok(reply) = reply!(daemon, Request::SettingsGet {}, Settings) {
             let settings = reply.settings;
@@ -346,11 +351,16 @@ fn vault_checks(ctx: &mut Ctx, daemon: Option<&Daemon>) -> Vec<DoctorCheck> {
                             CheckStatus::Warn,
                         ),
                         format!(
-                            "the vault locks itself after {} minutes and the key is not cached,                              so every scheduled run is skipped until someone unlocks it by hand",
+                            "this machine cannot open its own vault, and locks itself after {} \
+                             minutes, so every scheduled run from then until somebody types the \
+                             passphrase is skipped",
                             settings.auto_lock_minutes
                         ),
                     ),
-                    "Either cache the key (`superbackup config set use_os_keychain true`, which                      lets anything that can read your keychain read your backups) or stop the                      vault locking itself (`superbackup config set auto_lock_minutes 0`).",
+                    "Run `superbackup config set use_os_keychain true`. Backups then run \
+                     unattended; changing a job, a destination or a credential still asks for \
+                     your master passphrase every time. Anything that can run programs as you \
+                     could read what is in a backup, so see THREAT_MODEL section 5.",
                 ));
             } else {
                 out.push(check(
