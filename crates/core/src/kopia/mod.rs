@@ -99,6 +99,7 @@ pub use command::{
 pub use driver::{
     s3_endpoint_host, BlobStats, ConnectionTest, ContentStats, DestinationSecrets, KopiaDriver,
     KopiaResult, RepositoryStatus, SyncOptions, SyncOutcome, SyncTarget, UnsupportedOption,
+    VerifyReport,
 };
 pub use error::{classify, KopiaError, KopiaFailure};
 pub use install::{

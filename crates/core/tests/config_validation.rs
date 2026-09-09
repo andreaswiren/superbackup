@@ -582,3 +582,81 @@ fn a_replica_is_not_warned_about_for_having_no_encryption_settings() {
         report.warnings
     );
 }
+
+// ---------------------------------------------------------------------------
+// Integrity checks
+// ---------------------------------------------------------------------------
+
+/// A destination nobody has ever read back is due immediately.
+///
+/// That first check is the valuable one: it is the only thing that catches a
+/// destination which never worked at all — a bucket with the wrong
+/// permissions, a path that resolves somewhere unexpected — before somebody
+/// needs to restore from it.
+#[test]
+fn a_destination_that_has_never_been_verified_is_due_now() {
+    use superbackup_core::model::IntegritySettings;
+
+    let settings = IntegritySettings::default();
+    let now = chrono::Utc::now();
+    assert!(settings.due(None, now));
+}
+
+/// And then not again until the interval has passed.
+#[test]
+fn a_destination_verified_yesterday_is_not_due_again_today() {
+    use superbackup_core::model::IntegritySettings;
+
+    let settings = IntegritySettings { interval_days: 7, ..IntegritySettings::default() };
+    let now = chrono::Utc::now();
+
+    assert!(!settings.due(Some(now - chrono::Duration::days(1)), now));
+    assert!(!settings.due(Some(now - chrono::Duration::days(6)), now));
+    assert!(settings.due(Some(now - chrono::Duration::days(7)), now));
+    assert!(settings.due(Some(now - chrono::Duration::days(30)), now));
+}
+
+/// Zero means "as often as possible", and as often as possible is once a day.
+///
+/// A check that reads a slice of every repository back cannot run hourly
+/// without becoming the thing it was meant to protect against — so the
+/// interval has a floor rather than a validation error, because somebody
+/// typing 0 has expressed a preference, not made a mistake.
+#[test]
+fn the_interval_has_a_floor_of_one_day() {
+    use superbackup_core::model::IntegritySettings;
+
+    let settings = IntegritySettings { interval_days: 0, ..IntegritySettings::default() };
+    let now = chrono::Utc::now();
+
+    assert!(!settings.due(Some(now - chrono::Duration::hours(1)), now));
+    assert!(!settings.due(Some(now - chrono::Duration::hours(23)), now));
+    assert!(settings.due(Some(now - chrono::Duration::days(1)), now));
+}
+
+/// Switched off means switched off, including the never-verified case.
+#[test]
+fn nothing_is_due_when_the_check_is_turned_off() {
+    use superbackup_core::model::IntegritySettings;
+
+    let settings = IntegritySettings { enabled: false, ..IntegritySettings::default() };
+    let now = chrono::Utc::now();
+
+    assert!(!settings.due(None, now));
+    assert!(!settings.due(Some(now - chrono::Duration::days(365)), now));
+}
+
+/// It is on by default, and samples rather than reading everything.
+///
+/// Both halves are the decision: a check that is off by default catches
+/// nothing, and one that downloads whole repositories nightly gets turned off.
+#[test]
+fn the_default_is_on_weekly_and_sampled() {
+    use superbackup_core::model::IntegritySettings;
+
+    let settings = IntegritySettings::default();
+    assert!(settings.enabled);
+    assert_eq!(settings.interval_days, 7);
+    assert!(settings.sample_percent > 0.0, "structure alone never catches wrong data");
+    assert!(settings.sample_percent <= 10.0, "a check this heavy would be turned off");
+}

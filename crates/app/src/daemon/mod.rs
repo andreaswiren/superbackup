@@ -259,7 +259,7 @@ pub async fn run(
     let clock = Arc::new(SystemClock::new());
     let executor = Arc::new(executor::KopiaExecutor::new(Arc::clone(&runtime), clock.clone()));
     let config = { runtime.store.lock().await.config().clone() };
-    let scheduler = EngineBuilder::new(runtime.effective_config(&config), executor)
+    let scheduler = EngineBuilder::new(runtime.effective_config(&config), executor.clone())
         .clock(clock)
         .environment(Arc::clone(&environment) as Arc<dyn superbackup_core::engine::Environment>)
         .state(Arc::clone(&runtime.persisted))
@@ -274,6 +274,10 @@ pub async fn run(
     // overnight is the one failure that arrives without a fault, and the
     // point is to have said so before the run that could not write.
     lifecycle::spawn_disk_watch(Arc::clone(&runtime));
+    // Read the backups back, now and then. Every failure this catches is
+    // silent by nature: the writes keep succeeding and the damage is found by
+    // whoever tries to restore.
+    lifecycle::spawn_integrity_check(Arc::clone(&runtime), executor);
 
     // 8. An unattended machine unlocks itself here, when the user asked for it.
     lifecycle::try_keychain_unlock(&runtime).await;

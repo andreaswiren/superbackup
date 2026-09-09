@@ -1462,3 +1462,66 @@ async fn a_sync_whose_last_progress_frame_was_throttled_still_reports_complete()
     assert_eq!(outcome.bytes_copied, 1_200_000_000);
     assert_eq!(outcome.progress.fraction(), Some(1.0));
 }
+
+// ---------------------------------------------------------------------------
+// Verification
+// ---------------------------------------------------------------------------
+
+/// The parser, against the shapes kopia actually emits.
+///
+/// This matters more than it looks: the whole value of a verification is the
+/// difference between "found nothing wrong" and "found something", and that
+/// difference is decided here.
+#[test]
+fn a_clean_verification_reports_no_problems() {
+    use superbackup_core::kopia::VerifyReport;
+
+    let report =
+        VerifyReport::parse("Processed 1204 objects.\nFinished processing 1204 objects.\n", "");
+    assert!(report.healthy(), "{report:?}");
+    assert_eq!(report.objects_checked, 1204);
+}
+
+/// A repository that has lost data must not report itself healthy.
+#[test]
+fn a_missing_object_is_a_problem_and_not_a_statistic() {
+    use superbackup_core::kopia::VerifyReport;
+
+    let report = VerifyReport::parse(
+        "Processed 900 objects.\n",
+        "error verifying kfe0d1: missing content e3b0c442\n",
+    );
+    assert!(!report.healthy());
+    assert_eq!(report.errors.len(), 1);
+    assert!(report.errors[0].contains("missing content"), "{:?}", report.errors);
+    // The count still comes through: how far it got before it broke is part
+    // of knowing how bad it is.
+    assert_eq!(report.objects_checked, 900);
+}
+
+/// A wholly corrupt repository must produce a report a person can read.
+#[test]
+fn a_flood_of_errors_is_capped_rather_than_endless() {
+    use superbackup_core::kopia::VerifyReport;
+
+    let stderr: String = (0..5_000).map(|i| format!("error: missing content {i:08x}\n")).collect();
+    let report = VerifyReport::parse("", &stderr);
+
+    assert!(!report.healthy());
+    assert!(report.errors.len() <= 20, "kept {} lines", report.errors.len());
+    assert!(!report.errors.is_empty());
+}
+
+/// Warnings and ordinary chatter are not failures. A verification that cried
+/// wolf over every progress line would be turned off within a week.
+#[test]
+fn ordinary_output_is_not_mistaken_for_a_failure() {
+    use superbackup_core::kopia::VerifyReport;
+
+    let report = VerifyReport::parse(
+        "Verifying snapshot 2026-09-09 12:00:00 UTC\nProcessed 42 objects.\n",
+        "warning: repository is due for maintenance\n",
+    );
+    assert!(report.healthy(), "{:?}", report.errors);
+    assert_eq!(report.objects_checked, 42);
+}

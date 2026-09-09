@@ -474,6 +474,58 @@ impl KopiaDriver {
         })
     }
 
+    /// Read the repository back and check that it is still what it says it is.
+    ///
+    /// # What this actually proves
+    ///
+    /// `kopia snapshot verify` walks every snapshot's directory tree and
+    /// confirms that every object it references exists and that the index
+    /// agrees with the blobs. With `--verify-files-percent` above zero it also
+    /// *downloads* that fraction of file contents and checks their hashes,
+    /// which is the only part that can catch a destination that has quietly
+    /// corrupted or dropped data — bit rot on a disk, a bucket that lost an
+    /// object, a sync client that truncated a file.
+    ///
+    /// Structure alone is cheap and catches a great deal. Reading content
+    /// costs bandwidth and time proportional to the percentage, which is why
+    /// the caller chooses it and why the default is a small sample: the
+    /// question "is this repository still readable" is answered well by a few
+    /// percent, and answering it perfectly every night would cost more than
+    /// the backup itself.
+    ///
+    /// # Why the count comes from kopia and not from arithmetic
+    ///
+    /// Because the alternative is a number that is always right and never
+    /// true. This used to be `blob_count * sample_percent` computed by the
+    /// caller, over statistics fetched with `blob stats` — no object was ever
+    /// read, no hash was ever checked, and a repository could be entirely
+    /// unreadable while superbackup reported it verified.
+    pub async fn verify_snapshots(
+        &self,
+        ctx: &RunContext,
+        percent: f32,
+        max_errors: u32,
+    ) -> KopiaResult<VerifyReport> {
+        let mut cmd = self.base();
+        cmd.command("snapshot").command("verify");
+        // Clamped rather than trusted: kopia refuses anything outside 0..=100
+        // with a parse error, and a caller reading a percentage out of a
+        // configuration file is exactly where a 1000 comes from.
+        cmd.flag("verify-files-percent", format!("{:.2}", percent.clamp(0.0, 100.0)));
+        // Keep going past the first bad object. A verification that stops at
+        // one error answers "is anything wrong" and not "how much", and the
+        // second question is the one that decides whether a repository is
+        // worth keeping.
+        cmd.flag("max-errors", max_errors.max(1).to_string());
+        // One file at a time. This runs unattended and in the background, and
+        // the whole point is that it does not compete with the machine's real
+        // work; kopia defaults to eight.
+        cmd.flag("file-parallelism", "1");
+
+        let out = cmd.run(ctx).await?;
+        Ok(VerifyReport::parse(&out.stdout, &out.stderr_tail))
+    }
+
     /// Logical (pre-deduplication) content statistics, from `content stats --raw`.
     ///
     /// Pairs with [`KopiaDriver::blob_stats`]: blobs are what the destination
@@ -1020,6 +1072,81 @@ impl RepositoryStatus {
             raw: v,
         })
     }
+}
+
+/// What a verification found.
+///
+/// `errors` is the part that matters, and an empty one is the whole point of
+/// running this: it means every snapshot's objects were present and the sample
+/// that was read back hashed to what the index said it should.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VerifyReport {
+    /// Objects kopia looked at. Reported by kopia, not calculated here.
+    pub objects_checked: u64,
+    /// What was wrong, one line each, capped so a wholly corrupt repository
+    /// produces a report a person can read rather than a hundred thousand
+    /// identical lines.
+    pub errors: Vec<String>,
+}
+
+impl VerifyReport {
+    /// How many error lines are worth keeping.
+    ///
+    /// A repository that has lost a whole prefix produces one line per object.
+    /// The first twenty say everything the twenty-thousandth would, and the
+    /// count is preserved separately by `truncated`.
+    const MAX_ERRORS_KEPT: usize = 20;
+
+    pub fn healthy(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    /// kopia writes its findings as prose on stderr and a summary on stdout.
+    ///
+    /// Parsed rather than trusted to an exit code, because a run that stops at
+    /// `--max-errors` exits non-zero and one that finds a handful under the
+    /// limit does not — and both mean the same thing to a person deciding
+    /// whether their backups are still restorable.
+    pub fn parse(stdout: &str, stderr: &str) -> VerifyReport {
+        let mut report = VerifyReport::default();
+        for line in stdout.lines().chain(stderr.lines()) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let lower = line.to_ascii_lowercase();
+            if lower.starts_with("error")
+                || lower.contains("missing content")
+                || lower.contains("invalid ")
+            {
+                if report.errors.len() < VerifyReport::MAX_ERRORS_KEPT {
+                    report.errors.push(line.to_string());
+                }
+                continue;
+            }
+            // "Finished processing 1234 objects." and the progress lines that
+            // precede it both carry the count; the last one wins.
+            if let Some(count) = objects_in(&lower) {
+                report.objects_checked = count;
+            }
+        }
+        report
+    }
+}
+
+/// The object count out of a kopia progress or summary line.
+fn objects_in(lower: &str) -> Option<u64> {
+    let at = lower.find(" objects")?;
+    let before = lower[..at].trim_end();
+    let digits: String = before
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    digits.parse().ok()
 }
 
 /// What the destination actually costs at the provider.

@@ -246,6 +246,195 @@ const DISK_TICK: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 /// *changes*, so the activity log gets one line when a disk starts running out
 /// and one when it recovers, rather than forty-eight a day that train the user
 /// to ignore the log.
+/// How often the integrity task wakes to see whether anything is due.
+///
+/// Waking is not checking. The gap between *checks* is
+/// `IntegritySettings::interval_days`, measured per destination; this is only
+/// how promptly a machine that has been asleep for a week notices.
+const INTEGRITY_TICK: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Read the backups back, now and then, and say so if they cannot be read.
+///
+/// # Why this exists
+///
+/// A backup nobody has ever read back is a hope, not a backup. Every failure
+/// this catches — bit rot on a disk, a bucket that has quietly dropped an
+/// object, a sync client that truncated a file, a drive that is on its way
+/// out — is silent by nature: the writes keep succeeding, the runs keep
+/// reporting success, and the damage is discovered by the person trying to
+/// restore, which is the worst possible moment to discover anything.
+///
+/// # Why it is light, and why that is not a compromise
+///
+/// `kopia snapshot verify` does two different things. It walks every
+/// snapshot and confirms every object it references exists and the index
+/// agrees — that is cheap, needs no downloads, and catches a repository that
+/// has lost blobs. And it can download file contents and rehash them, which is
+/// the only way to catch data that is present and *wrong*, and which costs
+/// bandwidth and, on a bucket, money.
+///
+/// So the first is always done in full and the second is sampled. A
+/// destination losing data will show it within a few cycles, and the check
+/// stays cheap enough that nobody turns it off — which is the property that
+/// actually matters, because a thorough check that gets disabled catches
+/// nothing at all.
+///
+/// # Why one destination at a time
+///
+/// A machine with four destinations should not spend an afternoon reading all
+/// four back. The oldest one that is due goes, and the next tick takes the
+/// next: over a week every destination is covered, and no single hour is
+/// noticeably busier than any other.
+pub fn spawn_integrity_check(
+    runtime: Arc<Runtime>,
+    executor: Arc<dyn superbackup_core::engine::BackupExecutor>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut shutdown = runtime.subscribe_shutdown();
+        let mut ticker = tokio::time::interval(INTEGRITY_TICK);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = shutdown.recv() => return,
+                _ = ticker.tick() => {}
+            }
+            verify_one_due(&runtime, executor.as_ref()).await;
+        }
+    })
+}
+
+/// Verify the destination that has gone longest without it, if any is due.
+async fn verify_one_due(
+    runtime: &Arc<Runtime>,
+    executor: &dyn superbackup_core::engine::BackupExecutor,
+) {
+    let (settings, destinations) = {
+        let store = runtime.store.lock().await;
+        let config = store.config();
+        (config.settings.integrity.clone(), config.destinations.clone())
+    };
+    if !settings.enabled {
+        return;
+    }
+    // Never while the vault is shut: reading a repository needs its
+    // passphrase. Not a failure — the machine is simply not in a position to
+    // check right now, and it will be at the next tick.
+    if runtime.store.lock().await.is_locked() {
+        return;
+    }
+    // Nor while a backup is running. The point is to be unnoticeable, and
+    // competing with the thing the user actually asked for is the opposite.
+    if !runtime.active_runs().is_empty() {
+        return;
+    }
+    if settings.only_when_convenient && !convenient(runtime) {
+        return;
+    }
+
+    let now = chrono::Utc::now();
+    let due = destinations
+        .into_iter()
+        .filter(|d| d.enabled && d.kind.is_repository())
+        .filter(|d| settings.due(d.last_verified_at, now))
+        // The one that has waited longest. `None` — never verified — sorts
+        // first, which is right: a destination that has never been read back
+        // is the one most likely to have never worked.
+        .min_by_key(|d| d.last_verified_at);
+    let Some(destination) = due else {
+        return;
+    };
+
+    let name = destination.name.clone();
+    let id = destination.id;
+    // Progress goes nowhere on purpose. This runs unattended and hourly; the
+    // interface learns the outcome from the event and from `last_verified_at`,
+    // and a live byte counter for a check nobody asked to watch would only add
+    // traffic to the status stream.
+    let run_id = uuid::Uuid::new_v4();
+    let (updates, _drain) = tokio::sync::mpsc::unbounded_channel();
+    let progress = superbackup_core::engine::ProgressSink::new(
+        updates,
+        run_id,
+        uuid::Uuid::nil(),
+        id,
+        Arc::new(superbackup_core::engine::clock::SystemClock::new()),
+    );
+    let request = superbackup_core::engine::VerifyRequest {
+        run_id,
+        destination: Arc::new(destination),
+        sample_percent: settings.sample_percent / 100.0,
+        progress,
+        cancel: superbackup_core::engine::cancel::CancelToken::new(),
+    };
+    match executor.verify(request).await {
+        Ok(outcome) if outcome.problems.is_empty() => {
+            runtime.record_event(Event::info(
+                "destination.verified",
+                format!(
+                    "\"{name}\" was read back and is intact ({} objects checked).",
+                    outcome.blobs_checked
+                ),
+            ));
+            mark_verified(runtime, id, now).await;
+        }
+        Ok(outcome) => {
+            // Not marked verified. A destination that failed its check must
+            // stay due, or the next tick would skip it for a week on the
+            // strength of the run that found the damage.
+            let detail = outcome.problems.join("\n");
+            runtime.record_event(Event::new(
+                Severity::Error,
+                "destination.corrupt",
+                format!(
+                    "\"{name}\" did not read back cleanly. Backups written here may not be \
+                     restorable.\n{detail}"
+                ),
+            ));
+            super::events::notify(
+                runtime,
+                Notification::new(
+                    NotificationKind::Failure,
+                    "A backup destination did not verify",
+                    format!(
+                        "\"{name}\" could not be read back cleanly. Open superbackup to see what \
+                         was wrong."
+                    ),
+                ),
+            )
+            .await;
+        }
+        Err(e) => {
+            // Could not check, which is not the same as checked and bad. Said
+            // once, at warning, and the destination stays due.
+            runtime.record_event(Event::new(
+                Severity::Warning,
+                "destination.verify_failed",
+                format!("\"{name}\" could not be checked this time: {e}"),
+            ));
+        }
+    }
+}
+
+/// Is now a reasonable moment to read a few hundred megabytes back?
+///
+/// Battery and metered connections, the two the user is charged for. The
+/// environment already answers both for the scheduler, so this asks the same
+/// question the same way rather than inventing a second opinion.
+fn convenient(runtime: &Arc<Runtime>) -> bool {
+    use superbackup_core::engine::Environment;
+    !runtime.environment.on_metered_connection() && !runtime.environment.on_battery()
+}
+
+/// Record that a destination read back cleanly.
+async fn mark_verified(runtime: &Arc<Runtime>, id: uuid::Uuid, at: chrono::DateTime<chrono::Utc>) {
+    let mut store = runtime.store.lock().await;
+    let mut config = store.config().clone();
+    if let Some(slot) = config.destinations.iter_mut().find(|d| d.id == id) {
+        slot.last_verified_at = Some(at);
+    }
+    let _ = store.set_config(config);
+}
+
 pub fn spawn_disk_watch(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut shutdown = runtime.subscribe_shutdown();

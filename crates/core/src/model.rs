@@ -383,6 +383,9 @@ pub struct Settings {
     /// See [`crate::platform::disk`].
     #[serde(default)]
     pub disk_space: crate::platform::disk::DiskSpaceSettings,
+    /// Read the backups back, now and then, and check they are still readable.
+    #[serde(default)]
+    pub integrity: IntegritySettings,
     /// Run schedules that elapsed while the PC was asleep or powered off.
     pub run_missed_on_start: bool,
     /// Wake this machine from sleep when a scheduled job is due, and hold it
@@ -440,6 +443,82 @@ pub struct Settings {
     pub write_machine_manifest: bool,
 }
 
+/// How often, and how hard, to check that the backups can still be read.
+///
+/// # Why this is not simply "on, nightly, in full"
+///
+/// Because a check that costs as much as the backup is a check people turn
+/// off. Verifying every object of every snapshot means downloading the entire
+/// repository from the destination — for an S3 bucket that is the whole
+/// archive over the network, and a bill, every time.
+///
+/// So the two halves are separated. The structural check is cheap and always
+/// runs: it walks every snapshot and confirms that every object it references
+/// exists and that the index agrees. Reading content back is what costs, and
+/// only a sample of it is read — enough that a destination which has started
+/// losing data says so within a few cycles, long before anybody needs it.
+///
+/// The default cadence is weekly. Bit rot and a bucket quietly dropping
+/// objects are slow failures; the thing that matters is noticing at all, and
+/// noticing on Tuesday rather than Monday costs nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IntegritySettings {
+    /// Check at all. On: a backup nobody has ever read back is a hope rather
+    /// than a backup.
+    pub enabled: bool,
+    /// Days between checks of one destination. Never more than once a day —
+    /// see the type's own documentation for why.
+    pub interval_days: u32,
+    /// Percentage of file contents to download and rehash, 0 to check
+    /// structure only.
+    pub sample_percent: f32,
+    /// Skip while the machine is on battery or a metered connection.
+    ///
+    /// The check is deliberately unnoticeable, and downloading a slice of a
+    /// repository over somebody's phone tether is the opposite of that.
+    pub only_when_convenient: bool,
+}
+
+impl Default for IntegritySettings {
+    fn default() -> IntegritySettings {
+        IntegritySettings {
+            enabled: true,
+            interval_days: 7,
+            // Two per cent of a 50 GB repository is a gigabyte, which is a
+            // real download and a real check; the structural half covers
+            // everything else and costs almost nothing.
+            sample_percent: 2.0,
+            only_when_convenient: true,
+        }
+    }
+}
+
+impl IntegritySettings {
+    /// The shortest gap this will ever run at.
+    ///
+    /// A floor rather than a validation error, because the setting is a
+    /// preference and not a promise: somebody who types 0 means "as often as
+    /// possible", and as often as possible is once a day.
+    pub const MINIMUM_INTERVAL_DAYS: u32 = 1;
+
+    /// Is this destination due?
+    ///
+    /// `last` is when it was last verified. A destination that has never been
+    /// verified is due immediately — that is the first check, and the one most
+    /// likely to find a destination that never worked at all.
+    pub fn due(&self, last: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let Some(last) = last else {
+            return true;
+        };
+        let days = self.interval_days.max(IntegritySettings::MINIMUM_INTERVAL_DAYS) as i64;
+        now >= last + chrono::Duration::days(days)
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -461,6 +540,7 @@ impl Default for Settings {
             run_missed_on_start: true,
             disk_space: Default::default(),
             wake_for_backups: false,
+            integrity: IntegritySettings::default(),
             auto_lock_minutes: 30,
             use_os_keychain: true,
             log_level: LogLevel::Info,

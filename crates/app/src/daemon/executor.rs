@@ -97,8 +97,22 @@ use super::runtime::Runtime;
 /// nothing but forward.
 const PROGRESS_BUFFER: usize = 128;
 
-/// Fraction of blobs `verify` reads back when the caller does not say.
+/// Fraction of file contents `verify` reads back when the caller does not say.
+///
+/// Two per cent. Structure is checked in full either way — every object a
+/// snapshot references must exist — and this is the part that costs bandwidth,
+/// because it downloads and rehashes real data. A few per cent, often, catches
+/// a destination that has started losing data long before anybody needs it;
+/// a hundred per cent, rarely, is the wrong trade for a check that is supposed
+/// to go unnoticed.
 const DEFAULT_VERIFY_SAMPLE: f32 = 0.02;
+
+/// How many problems one verification reports before it gives up.
+///
+/// Not one: a run that stops at the first bad object answers "is anything
+/// wrong" and not "how much", and the second question is what decides whether
+/// a repository is worth keeping.
+const MAX_VERIFY_ERRORS: u32 = 100;
 
 // ---------------------------------------------------------------------------
 // Cancellation bridge
@@ -850,10 +864,24 @@ impl BackupExecutor for KopiaExecutor {
             } else {
                 DEFAULT_VERIFY_SAMPLE
             };
+
+            // Actually read the repository back.
+            //
+            // This used to fetch `blob stats` and report
+            // `blob_count * sample_percent` as the number of blobs checked. No
+            // object was ever read and no hash was ever compared, so a
+            // repository that had lost half its contents to bit rot, a
+            // truncating sync client or a bucket lifecycle rule reported
+            // itself verified — which is worse than not checking at all,
+            // because somebody was relying on the answer.
+            let report = driver
+                .verify_snapshots(&ctx, sample * 100.0, MAX_VERIFY_ERRORS)
+                .await
+                .map_err(map_kopia_error)?;
             let stats = driver.blob_stats(&ctx).await.map_err(map_kopia_error)?;
             let outcome = VerifyOutcome {
-                blobs_checked: ((stats.blob_count as f64) * (sample as f64)).round() as u64,
-                problems: Vec::new(),
+                blobs_checked: report.objects_checked,
+                problems: report.errors.clone(),
             };
             request.progress.finish(Progress {
                 files_processed: outcome.blobs_checked,
