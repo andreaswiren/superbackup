@@ -157,7 +157,7 @@ fn every_health_has_its_own_mark_in_every_variant() {
         for health in states {
             let rgba = tray::icons::rasterise(IconKey::new(health, variant, 0), 32)
                 .unwrap_or_else(|e| panic!("{health:?}/{variant:?} did not render: {e}"));
-            let visible = rgba.chunks_exact(4).filter(|p| p[3] > 32).count();
+            let visible = rgba.as_chunks::<4>().0.iter().filter(|p| p[3] > 32).count();
             assert!(visible > 40, "{health:?}/{variant:?} rendered a blank icon");
             rendered.push((health, rgba));
         }
@@ -187,7 +187,9 @@ const TRAY_SIZES: [u32; 4] = [16, 20, 24, 32];
 /// Rec. 601 luma plus alpha — exactly what a greyscale printout or a
 /// monochrome taskbar would show.
 fn greyscale(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| {
             let y = (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32).round() as u8;
             [y, p[3]]

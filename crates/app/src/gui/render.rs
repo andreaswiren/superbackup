@@ -1032,7 +1032,7 @@ impl Canvas {
     }
 
     fn mesh(&mut self, mesh: &egui::Mesh, clip: Rect, pixels_per_point: f32) {
-        for triangle in mesh.indices.chunks_exact(3) {
+        for triangle in mesh.indices.as_chunks::<3>().0 {
             let vertices: Vec<&egui::epaint::Vertex> =
                 triangle.iter().filter_map(|i| mesh.vertices.get(*i as usize)).collect();
             if vertices.len() != 3 {

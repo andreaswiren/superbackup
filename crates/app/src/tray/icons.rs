@@ -782,7 +782,7 @@ mod tests {
                 let key = IconKey::new(health, variant, 0);
                 let rgba = rasterise(key, RASTER_SIZE).expect("rasterise");
                 assert_eq!(rgba.len(), (RASTER_SIZE * RASTER_SIZE * 4) as usize);
-                let opaque = rgba.chunks_exact(4).filter(|p| p[3] > 32).count();
+                let opaque = rgba.as_chunks::<4>().0.iter().filter(|p| p[3] > 32).count();
                 assert!(
                     opaque > 40,
                     "{health:?}/{variant:?} rendered {opaque} visible pixels, which is blank"
