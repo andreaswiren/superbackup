@@ -8,7 +8,16 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+# Deliberately no `RUSTFLAGS: -D warnings` here.
+#
+# Set at the workflow level it applies to *dependencies* as well as to this
+# workspace, so a warning in any one of six hundred crates — including ones
+# introduced by a new compiler release nobody here chose — turns the whole
+# matrix red for something nobody can fix. That is what had CI failing on all
+# three operating systems while `cargo clippy` was clean locally.
+#
+# The lint gate belongs on the lint step, where `--` applies it to the crates
+# being linted and not to what they depend on.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -45,7 +54,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Test
         run: cargo test --workspace --all-features
