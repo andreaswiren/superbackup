@@ -14,6 +14,58 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.9.0] - 2026-09-09
+
+### Added
+
+- **Your backups no longer wait for you to type anything.** This machine can
+  open its own vault when you log in, so scheduled runs happen whether or not
+  anybody has signed in and unlocked superbackup today. On by default, and
+  switchable off in Settings.
+
+  The reason this is safe enough to default to is that an unlocked vault no
+  longer means what it used to. It used to assert two things at once — the
+  keys are available, and a person is present — and those are different facts
+  on a machine that opens its own vault at 3am. They are now separate:
+
+  | | Without typing anything | After typing your passphrase |
+  |---|---|---|
+  | Backups run | yes | yes |
+  | Run, stop, pause, throttle, disable a job | yes | yes |
+  | Read status, history, the configuration | yes | yes |
+  | Add or change a job, destination or provider | **no** | yes |
+  | Restore, git actions, credentials, settings | **no** | yes |
+  | Change the master passphrase | **no** | yes |
+
+  A confirmation lasts fifteen minutes of inactivity. When it lapses, the
+  backups carry on and the next change asks. What counts as a change is derived
+  from the command table rather than kept as a second list, by exclusion — so a
+  command added without a thought about it requires the passphrase rather than
+  quietly skipping it — and the short list of exceptions is enumerated in a test
+  that fails if it changes.
+
+  `THREAT_MODEL.md` §5 is rewritten around this, including what it does *not*
+  protect: somebody with your logged-in account can still read what is in a
+  backup. What they cannot do is redirect one, add a destination, or read out a
+  saved credential.
+
+  The old default was not free. On the author's own machine it cost 51
+  consecutive scheduled runs, skipped because the vault had auto-locked and
+  nobody had noticed.
+
+### Fixed
+
+- **Auto-lock no longer strands an unattended machine.** With the passphrase
+  saved, the inactivity timer withdraws the confirmation rather than locking
+  the vault: you are asked again before the next change, and the backups behind
+  it never stopped. Without it, it locks as it always did.
+
+- **The setup wizard's "store the vault key" switch did something.** It was
+  nested under "install the background service", so it was invisible to
+  everyone who did not install one — which is most people, since that needs
+  administrator rights — and nothing read it afterwards in any case. It is now
+  its own switch, on by default, and the answer is written down.
+
 ## [0.8.0] - 2026-09-09
 
 A first run did almost nothing it said it would, and this release is mostly

@@ -115,6 +115,7 @@ fn snapshot() -> StatusSnapshot {
         machine_hostname: "test".into(),
         machine_slug: "test".into(),
         unlocked: false,
+        confirmed: false,
         paused: false,
         paused_until: None,
         service_installed: false,
@@ -1028,4 +1029,97 @@ fn a_transported_message_is_not_prefixed_twice() {
     assert_eq!(rebuilt.to_string(), wire, "the prefix was applied a second time");
     assert_eq!(rebuilt.code(), ErrorCode::Config, "the code must still survive");
     assert_eq!(rebuilt.to_string().matches("configuration error").count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// The second tier
+// ---------------------------------------------------------------------------
+
+/// The exception list, written out where a person has to look at it.
+///
+/// `needs_confirmation` is derived from the command table by exclusion, so a
+/// command added without a thought about it lands on the safe side. That is
+/// the right default, and it is exactly why the *unsafe* side needs a test:
+/// marking something `operational` is a decision to let an unattended machine
+/// do it without anybody proving they know the master passphrase, and a
+/// decision like that should not be possible to make by editing one line in a
+/// table of two hundred.
+///
+/// Everything here is something the tray offers a machine nobody is sitting
+/// at. None of it reads a backup, redirects one, or reaches a credential.
+#[test]
+fn only_these_commands_may_be_used_without_a_person_present() {
+    use std::collections::BTreeSet;
+
+    let expected: BTreeSet<&str> = [
+        // Operate the backups.
+        "job.run",
+        "job.stop",
+        "job.stop_all",
+        "job.set_enabled",
+        // Operate the daemon.
+        "control.pause",
+        "control.resume",
+        "control.set_bandwidth",
+        "control.reload_config",
+        "control.shutdown",
+        // Locking needs no proof; unlocking *is* the proof.
+        "vault.lock",
+        "vault.unlock",
+    ]
+    .into_iter()
+    .collect();
+
+    let actual: BTreeSet<String> = superbackup_core::ipc::protocol::commands()
+        .into_iter()
+        .filter(|c| c.flags.iter().any(|f| f == "operational"))
+        .map(|c| c.name)
+        .collect();
+    let actual: BTreeSet<&str> = actual.iter().map(String::as_str).collect();
+
+    assert_eq!(actual, expected, "the set of commands an unattended machine may run has changed");
+}
+
+/// `operational` is an exception to `mutating`, so it is meaningless without
+/// it — and a command carrying only `operational` would be silently exempt
+/// from a gate it was never subject to, which reads as a deliberate hole.
+#[test]
+fn operational_is_only_ever_an_exception_to_mutating() {
+    for command in superbackup_core::ipc::protocol::commands() {
+        if command.flags.iter().any(|f| f == "operational") {
+            assert!(
+                command.flags.iter().any(|f| f == "mutating"),
+                "{} is operational but not mutating, so the flag does nothing",
+                command.name
+            );
+        }
+    }
+}
+
+/// The two tiers, on the commands that show the difference.
+#[test]
+fn changing_things_needs_a_person_and_operating_them_does_not() {
+    use superbackup_core::ipc::protocol::Request;
+    use superbackup_core::ipc::protocol::SecretString;
+
+    // Runs a backup on a machine nobody is at. This is the whole point.
+    assert!(!Request::JobRun { job: "nightly".into(), dry_run: false }.needs_confirmation());
+    assert!(!Request::ControlPause { seconds: None, reason: None }.needs_confirmation());
+    assert!(!Request::JobSetEnabled { job: "nightly".into(), enabled: false }.needs_confirmation());
+
+    // Reading is not changing.
+    assert!(!Request::Status {}.needs_confirmation());
+    assert!(!Request::JobList { include_disabled: true }.needs_confirmation());
+
+    // Unlocking cannot require having already unlocked.
+    assert!(!Request::VaultUnlock { passphrase: SecretString::from_string("x".to_string()) }
+        .needs_confirmation());
+    assert!(!Request::VaultLock {}.needs_confirmation());
+
+    // And the things a person has to be present for. Redirecting a backup and
+    // reading out a credential are the two that matter most.
+    assert!(Request::JobDelete { job: "nightly".into() }.needs_confirmation());
+    assert!(Request::DestinationDelete { destination: "offsite".into(), force: false }
+        .needs_confirmation());
+    assert!(Request::MachineRename { label: "elsewhere".into() }.needs_confirmation());
 }

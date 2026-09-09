@@ -146,10 +146,12 @@ risk
    a real user loses their data.
 3. **Folder mirrors are unencrypted.** Anyone with the folder has the files
    (`THREAT_MODEL.md` §A3, `PRIVACY.md`).
-4. **Enabling `use_os_keychain` is a real trade-off.** It caches the master key
-   in the platform credential store so unattended runs work; anything that can
-   run programs as the user can then ask the credential store for the key
-   (`design/COPY.md`, `onboarding.service.keychain_warn`).
+4. **`use_os_keychain` is on by default, and is a real trade-off.** The
+   machine can open its own vault at login so scheduled backups run
+   unattended, which means anything running as the user can reach the data in
+   a backup. It does *not* let them change anything: redirecting a job, adding
+   a destination or reading out a credential all require the master
+   passphrase, whatever is in the keychain (`THREAT_MODEL.md` §5).
 5. **The `_superbackup/` manifest directory and object timing are readable at
    the destination.** Machine label, hostname, OS version, architecture and
    timestamps, plus how much changes and when (`PRIVACY.md`).
@@ -252,7 +254,7 @@ documentation and specification; surface pending.**
 
 | Change | Effect |
 |---|---|
-| Turning on `use_os_keychain` | The master key becomes reachable by anything running as the user |
+| Leaving `use_os_keychain` on | The master key becomes reachable by anything running as the user, so the *data* in a backup does too. Changing the configuration still needs the passphrase |
 | Adding a folder-mirror destination to a job | That copy is unencrypted |
 | Pointing `kopia.source_repo` at a mirror | Moves the supply-chain trust anchor. `crates/core/src/model.rs` says so, and the interface must |
 | Setting `kopia_path` by hand | You are driving an untested Kopia build |

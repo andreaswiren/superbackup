@@ -1644,6 +1644,7 @@ mod tests {
             machine_hostname: "M".into(),
             machine_slug: "m".into(),
             unlocked: true,
+            confirmed: true,
             paused: false,
             paused_until: None,
             service_installed: true,

@@ -141,6 +141,9 @@ pub struct UnlockState {
     pub revealed: bool,
     pub remember: bool,
     pub blocking: bool,
+    /// The vault is open and this is asking for a person, not a key. Changes
+    /// only what the dialog says: the request it produces is the same.
+    pub confirming: bool,
     pub busy: bool,
     pub attempts: u32,
     pub error: Option<String>,
@@ -152,6 +155,15 @@ impl UnlockState {
     }
     pub fn voluntary() -> UnlockState {
         UnlockState::default()
+    }
+    /// The vault is already open; what is being asked for is a person.
+    ///
+    /// Dismissible, unlike the blocking unlock: nothing is broken while this
+    /// is on screen. The vault is open, the backups are running, and the only
+    /// consequence of walking away is that one change does not happen — which
+    /// is a normal thing to decide, and not a state to trap somebody in.
+    pub fn confirming() -> UnlockState {
+        UnlockState { confirming: true, ..Default::default() }
     }
     /// A wrong passphrase keeps the text so a single typo can be corrected.
     pub fn fail(&mut self) {
@@ -786,17 +798,27 @@ fn show_unlock(app: &mut App, ctx: &egui::Context, mut state: UnlockState) -> Op
     let mut submit = false;
     let mut cancel = false;
     let blocking = state.blocking;
+    // The same field and the same request either way. What differs is what it
+    // is being asked for: a locked vault needs the key, an open one needs the
+    // person. Saying "Unlock superbackup" over a vault that is demonstrably
+    // unlocked — the backups are running — reads as a bug.
+    let confirming = state.confirming;
+    let (title, body) = if confirming {
+        (copy::vault::CONFIRM_TITLE, copy::vault::CONFIRM_BODY)
+    } else {
+        (copy::vault::UNLOCK_TITLE, copy::vault::UNLOCK_BODY)
+    };
 
     let (close, _) = widgets::modal(
         ctx,
         "sb-unlock",
         ModalSize::Small,
-        copy::vault::UNLOCK_TITLE,
+        title,
         Some((Icon::Lock, t.accent)),
         blocking,
         |m| {
             m.body(|ui| {
-                widgets::paragraph(ui, copy::vault::UNLOCK_BODY, Type::Small, t.text_secondary);
+                widgets::paragraph(ui, body, Type::Small, t.text_secondary);
                 ui.add_space(space::XL);
                 let response = widgets::passphrase_field(
                     ui,
@@ -812,8 +834,11 @@ fn show_unlock(app: &mut App, ctx: &egui::Context, mut state: UnlockState) -> Op
                 if state.attempts == 0 {
                     response.request_focus();
                 }
-                // Only where the OS keychain is switched on; absent, not disabled.
-                if app.data.settings.use_os_keychain {
+                // Only where the OS keychain is switched on; absent, not
+                // disabled. Never while confirming: the passphrase is already
+                // saved, which is why this is being asked at all, and offering
+                // to save it again would suggest doing so ends the asking.
+                if app.data.settings.use_os_keychain && !confirming {
                     ui.add_space(space::L);
                     widgets::checkbox(
                         ui,
@@ -841,8 +866,11 @@ fn show_unlock(app: &mut App, ctx: &egui::Context, mut state: UnlockState) -> Op
                 }
             });
             m.footer(|ui| {
-                let label =
-                    if state.busy { copy::vault::UNLOCK_BUSY } else { copy::vault::UNLOCK_BUTTON };
+                let label = match (state.busy, confirming) {
+                    (true, _) => copy::vault::UNLOCK_BUSY,
+                    (false, true) => copy::vault::CONFIRM_BUTTON,
+                    (false, false) => copy::vault::UNLOCK_BUTTON,
+                };
                 if Button::primary(label)
                     .busy(state.busy)
                     .enabled(!state.busy && !state.passphrase.is_empty())
@@ -865,8 +893,12 @@ fn show_unlock(app: &mut App, ctx: &egui::Context, mut state: UnlockState) -> Op
     }
     if cancel || (close && !blocking) {
         // A voluntary unlock that is dismissed also drops the pending intent:
-        // the user changed their mind.
+        // the user changed their mind. The same goes for the change that was
+        // waiting on a confirmation — leaving it armed would fire it the next
+        // time anything else asked for the passphrase, minutes later, which is
+        // the sort of thing that gets a destination deleted by surprise.
         app.pending = None;
+        app.forget_blocked();
         return None;
     }
     Some(Modal::Unlock(state))

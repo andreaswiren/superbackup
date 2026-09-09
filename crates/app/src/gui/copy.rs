@@ -241,9 +241,15 @@ pub mod onboarding {
     pub const MINIMISED_TITLE: &str = "Start minimised to the tray";
     pub const MINIMISED_BODY: &str = "No window on sign-in. The tray icon shows the current state.";
     pub const SERVICE_TITLE: &str = "Install the background service";
-    pub const SERVICE_BODY: &str = "The service runs backups even when nobody is signed in. To do that it needs the master passphrase without a person to type it, which means storing the key in this computer's credential store.";
+    pub const SERVICE_BODY: &str = "The service runs backups even when nobody is signed in.";
     pub const SERVICE_KEYCHAIN_WARN: &str =
-        "Anything that can run programs as you can then ask the credential store for the key.";
+        "Anything that can run programs as you can could then read what is in a backup. It \
+         cannot change anything: adding a destination, redirecting a job or reading out a \
+         saved credential all ask for your master passphrase.";
+    /// The body of the unattended-unlock switch, which is on by default.
+    pub const KEYCHAIN_BODY: &str =
+        "Your scheduled backups run whether or not you have signed in and typed anything. \
+         Turn this off and backups wait for you to unlock superbackup by hand.";
     pub const SERVICE_ELEVATE: &str = "Installing the service asks for administrator permission.";
     pub const SERVICE_DECLINED: &str =
         "The service was not installed. Backups will run while you are signed in.";
@@ -284,7 +290,7 @@ pub fn onboarding_job_estimate(size: u64, files: u64) -> String {
     format!("About {} in {} files after exclusions", format::bytes(size), format::count(files))
 }
 pub fn onboarding_service_keychain(keychain_name: &str) -> String {
-    format!("Store the vault key in {keychain_name}")
+    format!("Let this computer unlock itself for backups (using {keychain_name})")
 }
 pub fn onboarding_done_summary(jobs: &str, destinations: &str, next: &str) -> String {
     format!("{jobs} · {destinations} · Next run {next}")
@@ -390,6 +396,10 @@ pub mod vault {
     pub const BANNER_ACTION: &str = "Unlock";
 
     pub const UNLOCK_TITLE: &str = "Unlock superbackup";
+    /// The vault is already open. Asking for a person, not a key.
+    pub const CONFIRM_TITLE: &str = "Confirm it is you";
+    pub const CONFIRM_BODY: &str = "This machine opened its own vault at login so your backups keep running. Changing anything asks for your master passphrase.";
+    pub const CONFIRM_BUTTON: &str = "Confirm";
     pub const UNLOCK_BODY: &str = "Your master passphrase decrypts the repository encryption keys and storage keys needed to run backups.";
     pub const UNLOCK_FIELD: &str = "Master passphrase";
     pub const UNLOCK_REMEMBER: &str = "Remember until I sign out";

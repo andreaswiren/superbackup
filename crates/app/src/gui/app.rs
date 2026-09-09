@@ -69,6 +69,9 @@ pub struct App {
     pub onboarding: Option<screens::onboarding::Onboarding>,
     /// The action to perform once the vault opens.
     pub pending: Option<Pending>,
+    /// The change that was refused for want of a confirmation, to be re-sent
+    /// once one is given. See [`App::confirm_then`].
+    blocked: Option<Box<Request>>,
     /// Where this instance keeps its configuration, when the window was opened
     /// by the application rather than constructed for a test.
     ///
@@ -137,6 +140,7 @@ impl App {
             modal: None,
             onboarding: None,
             pending: None,
+            blocked: None,
             paths: None,
             tokens,
             style_installed: true,
@@ -298,14 +302,16 @@ impl App {
     /// is a failure, which is the case that historically went unhandled.
     fn deliver(&mut self, message: &Incoming) {
         match message {
-            Incoming::Failed(intent, payload) => self.report(intent.clone(), payload.clone()),
+            Incoming::Failed(intent, payload, sent) => {
+                self.report(intent.clone(), payload.clone(), sent)
+            }
             Incoming::Reply(intent, reply) => self.on_reply(intent.clone(), reply),
             _ => {}
         }
         // Whatever the arms above did or did not do with it, an answer to an
         // unlock ends the attempt. See `settle_unlock`.
         match message {
-            Incoming::Failed(Intent::Unlock, payload) => {
+            Incoming::Failed(Intent::Unlock, payload, _) => {
                 let note = payload.message.clone();
                 self.settle_unlock(&note);
             }
@@ -322,6 +328,7 @@ impl App {
                 // The passphrase must not outlive the unlock that used it.
                 self.screens.locked.clear();
                 self.perform_pending();
+                self.perform_blocked();
                 self.ask(Intent::Status, Request::Status {});
                 // Everything behind the lock screen is stale by however long
                 // the vault was shut.
@@ -784,11 +791,29 @@ impl App {
 
     /// One error, at the place the user can act on it. A failure never becomes
     /// a toast *and* a banner (`UX_SPEC.md` §16.2).
-    fn report(&mut self, intent: Intent, payload: superbackup_core::ipc::protocol::ErrorPayload) {
+    fn report(
+        &mut self,
+        intent: Intent,
+        payload: superbackup_core::ipc::protocol::ErrorPayload,
+        sent: &Request,
+    ) {
         use superbackup_core::error::ErrorCode as E;
         match payload.code {
             // The banner and the disabled controls already say this.
             E::Locked | E::DaemonUnreachable | E::Ipc | E::KopiaMissing => {}
+            // The vault is open — the machine unlocked it at login so backups
+            // run — but nobody has proved they know the passphrase, and this
+            // was a change. Ask, and then carry it out, rather than reporting
+            // a refusal and making the user find the button again.
+            //
+            // While *locked*, the lock screen is already the whole window and
+            // owns the prompt; a second one over the top of it would be two
+            // passphrase fields on screen at once.
+            E::NeedsConfirmation => {
+                if self.data.unlocked() {
+                    self.confirm_then(sent.clone());
+                }
+            }
             E::BadPassphrase => {
                 // The lock screen owns the unlock now, so it owns the refusal.
                 // A toast would scroll away from the field that caused it.
@@ -1235,6 +1260,30 @@ impl App {
             Intent::Settings,
             Request::SettingsUpdate { settings: Box::new(self.data.settings.clone()) },
         );
+    }
+
+    /// Ask for the master passphrase, then do the thing that was refused.
+    ///
+    /// Opening the modal rather than the lock screen is the point: the vault
+    /// is not locked and nothing about the backups is interrupted. What is
+    /// being asked for is a person, not a key.
+    fn confirm_then(&mut self, request: Request) {
+        self.blocked = Some(Box::new(request));
+        if !self.modal_is_unlock() {
+            self.modal = Some(Modal::Unlock(modals::UnlockState::confirming()));
+        }
+    }
+
+    /// Drop the change that was waiting on a confirmation, unperformed.
+    pub(crate) fn forget_blocked(&mut self) {
+        self.blocked = None;
+    }
+
+    /// Re-issue the change that was refused for want of a confirmation.
+    fn perform_blocked(&mut self) {
+        if let Some(request) = self.blocked.take() {
+            self.ask(Intent::Fire, *request);
+        }
     }
 
     /// Perform whatever the user was blocked from doing.
@@ -2203,6 +2252,7 @@ mod tests {
                     hint: None,
                     detail: None,
                 },
+                Box::new(Request::VaultLock {}),
             ));
             assert!(!app.screens.locked.busy, "{code:?} left the button spinning");
             assert!(app.screens.locked.error.is_some(), "{code:?} said nothing at all");
@@ -2241,6 +2291,90 @@ mod tests {
         assert!(!app.screens.locked.busy);
         assert_eq!(app.screens.locked.error, None);
         assert!(app.screens.locked.passphrase.is_empty(), "the passphrase must not linger");
+    }
+
+    /// A refused change asks for the passphrase and then carries on.
+    ///
+    /// The alternative — reporting "you need to confirm" and stopping — makes
+    /// the user find the button again, and on a machine that opens its own
+    /// vault at login that is every single change they ever make.
+    #[test]
+    fn a_change_refused_for_want_of_a_person_is_retried_once_there_is_one() {
+        use superbackup_core::error::ErrorCode;
+        use superbackup_core::ipc::protocol::{ErrorPayload, UnlockedReply};
+
+        let (mut app, _ctx) = app();
+        super::super::fixtures::seed(&mut app.data);
+        // The state that makes this possible: open, and nobody present.
+        if let Some(s) = &mut app.data.snapshot {
+            s.unlocked = true;
+            s.confirmed = false;
+        }
+
+        let change = Request::MachineRename { label: "somewhere else".into() };
+        app.deliver(&Incoming::Failed(
+            Intent::Settings,
+            ErrorPayload {
+                code: ErrorCode::NeedsConfirmation,
+                message: "changing anything needs your master passphrase".to_string(),
+                hint: None,
+                detail: None,
+            },
+            Box::new(change),
+        ));
+
+        assert!(app.modal_is_unlock(), "the user was not asked for anything");
+        assert!(app.blocked.is_some(), "the change was dropped rather than held");
+
+        // And once they answer, it happens.
+        app.deliver(&Incoming::Reply(
+            Intent::Unlock,
+            Box::new(Reply::Unlocked(UnlockedReply { unlocked: true, auto_lock_at: None })),
+        ));
+        assert!(app.blocked.is_none(), "the held change was never re-sent");
+    }
+
+    /// Walking away from the confirmation drops the change rather than
+    /// arming it for whenever the passphrase is next asked for.
+    #[test]
+    fn a_change_nobody_confirms_does_not_happen_later_by_surprise() {
+        let (mut app, _ctx) = app();
+        app.confirm_then(Request::DestinationDelete { destination: "offsite".into(), force: true });
+        assert!(app.blocked.is_some());
+
+        app.forget_blocked();
+        app.modal = None;
+
+        // A later unlock, for something else entirely, must not delete it.
+        app.perform_blocked();
+        assert!(app.blocked.is_none());
+    }
+
+    /// While the vault is *locked*, the lock screen owns the prompt. A modal
+    /// over the top of it would put two passphrase fields on screen at once.
+    #[test]
+    fn a_locked_vault_is_not_asked_twice() {
+        use superbackup_core::error::ErrorCode;
+        use superbackup_core::ipc::protocol::ErrorPayload;
+
+        let (mut app, _ctx) = app();
+        super::super::fixtures::seed(&mut app.data);
+        if let Some(s) = &mut app.data.snapshot {
+            s.unlocked = false;
+            s.confirmed = false;
+        }
+
+        app.deliver(&Incoming::Failed(
+            Intent::Settings,
+            ErrorPayload {
+                code: ErrorCode::NeedsConfirmation,
+                message: "locked".to_string(),
+                hint: None,
+                detail: None,
+            },
+            Box::new(Request::MachineRename { label: "x".into() }),
+        ));
+        assert!(!app.modal_is_unlock(), "a modal appeared over the lock screen");
     }
 
     /// An answer that never comes is also an ending. Pressing Unlock without

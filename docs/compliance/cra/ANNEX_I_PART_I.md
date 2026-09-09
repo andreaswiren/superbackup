@@ -107,8 +107,8 @@ Kopia advisory is a maintainer action, not an automated one. See
 
 | Default | Value | Why it is the secure choice |
 |---|---|---|
-| `use_os_keychain` | `false` | The master key stays in memory only. Caching it in the platform credential store is the convenient option and the weaker one, so it is opt-in, and the interface states the trade-off at the point of choice (`design/COPY.md`, `onboarding.service.keychain_warn`). |
-| `auto_lock_minutes` | `30` | The key is dropped after inactivity. A locked vault blocks scheduled runs and the tray shows `Attention`, so it is never silent (`THREAT_MODEL.md` §5). |
+| `use_os_keychain` | `true` | The machine can open its own vault at login, so scheduled backups run without anybody typing anything — a backup tool that stops backing up whenever nobody has signed in today is absent on the morning it is needed. Doing so grants the keys and *not* the right to change anything: every command that alters a job, destination, credential or setting requires the passphrase regardless of what is in the keychain. See `THREAT_MODEL.md` §5. |
+| `auto_lock_minutes` | `30` | Inactivity withdraws the right to change things, so a machine left alone asks for the passphrase again before the next edit. With `use_os_keychain` off it drops the key outright instead, which blocks scheduled runs and shows `Attention` in the tray, never silently (`THREAT_MODEL.md` §5.4). |
 | `kopia.auto_update` | `UpdatePolicy::Notify` | Updates are surfaced, not applied behind the user's back. See (2)(c). |
 | `kopia.allow_prerelease` | `false` | Release builds only. |
 | `kopia.prefer_system_binary` | `true` | A kopia the user installed deliberately wins over one superbackup fetched. |

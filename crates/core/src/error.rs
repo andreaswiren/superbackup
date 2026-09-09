@@ -20,6 +20,7 @@ pub enum ErrorCode {
     Config,
     Io,
     Locked,
+    NeedsConfirmation,
     BadPassphrase,
     VaultCorrupt,
     VaultVersion,
@@ -58,6 +59,16 @@ pub enum Error {
 
     #[error("the vault is locked; unlock it with your master passphrase first")]
     Locked,
+
+    /// The vault is open, but nobody has proved they know the passphrase.
+    ///
+    /// The state an unattended machine is in: the keys were restored from the
+    /// platform keychain at login so backups run, which is not the same as a
+    /// person being present. Changing the configuration needs the person.
+    #[error(
+        "the vault was opened automatically at login, so changing anything needs your master          passphrase first"
+    )]
+    NeedsConfirmation,
 
     #[error("incorrect master passphrase")]
     BadPassphrase,
@@ -139,6 +150,7 @@ impl Error {
             Error::Io { .. } => ErrorCode::Io,
             Error::Path { .. } => ErrorCode::Io,
             Error::Locked => ErrorCode::Locked,
+            Error::NeedsConfirmation => ErrorCode::NeedsConfirmation,
             Error::BadPassphrase => ErrorCode::BadPassphrase,
             Error::VaultCorrupt(_) => ErrorCode::VaultCorrupt,
             Error::VaultVersion { .. } => ErrorCode::VaultVersion,
@@ -168,6 +180,9 @@ impl Error {
     pub fn hint(&self) -> Option<&'static str> {
         match self {
             Error::Locked => Some("Open superbackup and unlock, or run `superbackup unlock`."),
+            Error::NeedsConfirmation => {
+                Some("Enter your master passphrase to confirm. Backups keep running either way.")
+            }
             Error::BadPassphrase => {
                 Some("Passphrases are case sensitive. There is no recovery if it is lost.")
             }

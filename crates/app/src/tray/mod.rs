@@ -888,6 +888,7 @@ mod tests {
             machine_hostname: "pc".into(),
             machine_slug: "pc".into(),
             unlocked: true,
+            confirmed: true,
             paused: false,
             paused_until: None,
             service_installed: false,

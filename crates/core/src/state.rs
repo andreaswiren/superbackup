@@ -391,6 +391,16 @@ pub struct StatusSnapshot {
     pub machine_slug: String,
     /// `false` when the vault is locked, which blocks every scheduled run.
     pub unlocked: bool,
+    /// `false` when the vault is open but nobody has proved they know the
+    /// master passphrase in this session.
+    ///
+    /// The state a machine that saves its passphrase is in for most of its
+    /// life: the keys are there, backups run, and changing anything asks. An
+    /// older client that does not know about this field reads `true` and
+    /// behaves exactly as it used to — it will simply be told `NeedsConfirmation`
+    /// by the daemon instead of predicting it.
+    #[serde(default = "confirmed_by_default")]
+    pub confirmed: bool,
     pub paused: bool,
     pub paused_until: Option<DateTime<Utc>>,
     pub service_installed: bool,
@@ -403,6 +413,13 @@ pub struct StatusSnapshot {
     pub recent_events: Vec<Event>,
     pub uptime_seconds: u64,
     pub generated_at: DateTime<Utc>,
+}
+
+/// A snapshot from a daemon too old to know about the second tier says
+/// `confirmed`, because that daemon has only one tier and everything it allows
+/// at all it allows unconditionally.
+fn confirmed_by_default() -> bool {
+    true
 }
 
 impl StatusSnapshot {

@@ -47,6 +47,13 @@ pub struct Choices {
     pub create_shortcut: bool,
     pub autostart: bool,
     pub install_service: bool,
+    /// Let this machine open its own vault at login, so scheduled backups run
+    /// without anybody typing anything.
+    ///
+    /// On by default in [`Settings`](crate::model::Settings), so this carries
+    /// the user's answer rather than an opt-in: a wizard that never showed the
+    /// switch leaves it as it was.
+    pub unattended_unlock: bool,
 }
 
 /// What happened, so the interface can say so rather than guess.
@@ -91,6 +98,7 @@ pub fn apply(paths: &crate::paths::Paths, passphrase: &Secret, choices: &Choices
             }
             let mut config = store.config().clone();
             let slug = config.machine.slug.clone();
+            config.settings.use_os_keychain = choices.unattended_unlock;
 
             if let Some(root) = &choices.onedrive {
                 match add_onedrive(&mut store, &mut config, root, &slug) {

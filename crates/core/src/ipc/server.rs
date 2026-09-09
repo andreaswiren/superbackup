@@ -829,6 +829,24 @@ async fn run_request<H: Handler>(
     let command = request.command();
     let is_kdf = kdf.is_some();
 
+    // The second tier, gated here rather than inside each handler method.
+    //
+    // An unlocked vault means the daemon holds the keys, which is what a
+    // backup needs. It does not mean a person is present — with the master
+    // passphrase saved for unattended running, it never does — and rewriting a
+    // job or reading out a credential needs a person. `needs_confirmation` is
+    // derived from the command table by exclusion, so a command added without
+    // a thought about it lands on this side of the line.
+    //
+    // Before the KDF gate below, deliberately: refusing costs nothing, and a
+    // refusal should not queue behind somebody else's Argon2.
+    if request.needs_confirmation() && !handler.confirmed(&ctx).await {
+        return ServerFrame::Error {
+            id,
+            body: ErrorPayload::from_error(&Error::NeedsConfirmation),
+        };
+    }
+
     let _connection_slot;
     let _process_slot;
     if let Some(connection_gate) = kdf {

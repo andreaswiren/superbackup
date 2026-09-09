@@ -97,6 +97,15 @@ impl Harness {
         // Nothing in these tests wants a scheduled run firing underneath it.
         config.settings.run_missed_on_start = false;
         config.settings.max_parallel_jobs = 2;
+        // Off, whatever the shipped default is.
+        //
+        // The setting is on by default for real installations, so that a
+        // machine backs up unattended. In a test it means every harness
+        // start-up reads and writes the *developer's own* credential store,
+        // which is not this suite's to touch — and with several test binaries
+        // running at once they contend on one entry and fail intermittently.
+        // The tests that are about the keychain switch it back on themselves.
+        config.settings.use_os_keychain = false;
         configure(&mut config, &root);
         store.set_config(config).expect("save the fixture configuration");
         drop(store);

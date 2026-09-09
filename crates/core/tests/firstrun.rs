@@ -80,7 +80,15 @@ fn installed(home: &Home) -> Paths {
 
 /// Nothing platform-facing: see the note at the top of the file.
 fn quiet(onedrive: Option<PathBuf>, job: Option<superbackup_core::model::Job>) -> Choices {
-    Choices { onedrive, job, create_shortcut: false, autostart: false, install_service: false }
+    Choices {
+        onedrive,
+        job,
+        create_shortcut: false,
+        autostart: false,
+        install_service: false,
+        // Off, so the tests never write to the machine's credential store.
+        unattended_unlock: false,
+    }
 }
 
 /// The whole of what was missing: a destination and a job that exist
@@ -213,4 +221,30 @@ fn a_job_that_will_not_save_does_not_take_the_destination_with_it() {
     store.unlock(&Secret::from_str(PASSPHRASE)).expect("unlock");
     assert_eq!(store.config().destinations.len(), 1, "the destination is not on disk");
     assert!(store.config().jobs.is_empty());
+}
+
+/// The unattended-unlock answer reaches the configuration.
+///
+/// It was on the wizard's state and read by nothing, like everything else the
+/// last step asked — so a person who turned it off got it left on, and a
+/// person who left it on had no way to tell whether that had meant anything.
+#[test]
+fn the_unattended_unlock_answer_is_written_down() {
+    for wanted in [true, false] {
+        let home = Home::new(if wanted { "unattended-on" } else { "unattended-off" });
+        let paths = installed(&home);
+
+        let mut choices = quiet(None, None);
+        choices.unattended_unlock = wanted;
+        let applied = firstrun::apply(&paths, &Secret::from_str(PASSPHRASE), &choices);
+        assert_eq!(applied.problems, Vec::<String>::new());
+
+        let mut store = Store::open(paths).expect("reopen");
+        store.unlock(&Secret::from_str(PASSPHRASE)).expect("unlock");
+        assert_eq!(
+            store.config().settings.use_os_keychain,
+            wanted,
+            "the answer on the last step was dropped"
+        );
+    }
 }

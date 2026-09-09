@@ -157,8 +157,12 @@ nothing else. Delete the config directory and it is gone.
 
 If you enable the optional OS keychain integration, a derived key is stored in
 Windows Credential Manager, macOS Keychain, or the Linux Secret Service so that
-scheduled backups can run when you are not logged in. This is off by default,
-and the interface explains the trade-off where you turn it on.
+scheduled backups can run when you are not logged in. This is on by default,
+because a backup that only happens on days you signed in is not a backup. What
+it grants is the ability to *run* backups: changing a job, adding a
+destination, or reading out a credential asks for your master passphrase every
+time, however long the machine has been unlocked. You can switch it off in
+Settings, and the interface explains the trade-off in both directions.
 
 ---
 

@@ -1680,6 +1680,31 @@ pub mod flag {
     /// Unlock first with `vault.unlock`.
     pub const needs_unlock: &str = "needs_unlock";
 
+    /// A `mutating` command that is nonetheless available to an unattended
+    /// machine, because it operates the backups rather than changing them.
+    ///
+    /// # The two tiers, and why there are two
+    ///
+    /// An unlocked vault used to mean two different things at once: the daemon
+    /// holds the keys, and a human is present. Saving the master passphrase so
+    /// backups run at 3am makes the first true permanently, and with one tier
+    /// that silently made the second true as well — anyone reaching the
+    /// logged-in account could rewrite every job and destination without
+    /// knowing anything.
+    ///
+    /// So there are two. *Unlocked* means the keys are available and backups
+    /// run. *Confirmed* means somebody typed the passphrase in this session,
+    /// and it is what a `mutating` command requires. Restoring the passphrase
+    /// from the platform keychain unlocks without confirming, deliberately.
+    ///
+    /// This flag is the exception list, and the polarity matters: a new
+    /// command is confirmed unless somebody deliberately marks it otherwise,
+    /// so forgetting to think about it fails closed. What is on the list is
+    /// what the tray offers an unattended machine — run a backup, stop one,
+    /// pause, throttle, turn a job off — none of which lets an attacker read a
+    /// backup, redirect one, or reach a credential.
+    pub const operational: &str = "operational";
+
     /// Causes the daemon to act with whatever privilege it happens to be
     /// running as, which for the service instance is SYSTEM or root.
     ///
@@ -1883,6 +1908,50 @@ macro_rules! protocol {
                 ctx: &RequestContext,
                 topics: &[Topic],
             ) -> Result<::tokio::sync::broadcast::Receiver<StreamItem>>;
+
+            /// Has somebody proved, in this session, that they know the master
+            /// passphrase?
+            ///
+            /// Consulted by the transport before any command that
+            /// [`Request::needs_confirmation`], so the gate is one place
+            /// rather than a line at the top of fifty handler methods — which
+            /// is the arrangement where one method eventually lacks the line.
+            ///
+            /// The default is `true`: a handler with a single tier of
+            /// authority, such as the one the tests use, is unaffected by any
+            /// of this.
+            fn confirmed(
+                &self,
+                ctx: &RequestContext,
+            ) -> impl ::std::future::Future<Output = bool> + Send {
+                let _ = ctx;
+                ::std::future::ready(true)
+            }
+        }
+
+        impl Request {
+            /// Does this command need a human to have proved they know the
+            /// master passphrase in this session?
+            ///
+            /// True for every `mutating` command except those marked
+            /// [`flag::operational`]. Derived from the table rather than kept
+            /// as a second list, so the two cannot disagree, and derived by
+            /// *exclusion*, so a command added without a thought about it
+            /// requires confirmation rather than skipping it.
+            pub fn needs_confirmation(&self) -> bool {
+                match self {
+                    $(
+                        Request::$variant { .. } => {
+                            let flags: &[&str] = &[ $( stringify!($flag) ),* ];
+                            flags.contains(&"mutating") && !flags.contains(&"operational")
+                        }
+                    )*
+                    // The transport answers these itself, and neither changes
+                    // anything: `schema` is generated in-process and
+                    // `subscribe` opens a stream.
+                    $( Request::$mvariant { .. } => false, )*
+                }
+            }
         }
 
         /// Route one request to the handler method the table names for it.
@@ -2012,7 +2081,7 @@ protocol! {
             }
 
         "job.set_enabled" JobSetEnabled => set_job_enabled -> Job(JobReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Enable or disable a job's schedule without deleting it."
             params {
                 job: String = "Job id, or a unique prefix of the job's name.",
@@ -2020,7 +2089,7 @@ protocol! {
             }
 
         "job.run" JobRun => run_job -> Started(StartedReply)
-            flags [mutating, needs_unlock, elevated]
+            flags [mutating, needs_unlock, elevated, operational]
             doc "Start a job now, outside its schedule. Returns as soon as the run is accepted."
             params {
                 job: String = "Job id, or a unique prefix of the job's name.",
@@ -2028,14 +2097,14 @@ protocol! {
             }
 
         "job.stop" JobStop => stop_run -> Stopped(StoppedReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Cancel one in-flight run. Idempotent: stopping a finished run is not an error."
             params {
                 run_id: Uuid = "The run to cancel, from `status` or a progress stream item.",
             }
 
         "job.stop_all" JobStopAll => stop_all_runs -> Stopped(StoppedReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Cancel every in-flight run. Used by shutdown and by the tray's panic button."
             params {}
 
@@ -2408,14 +2477,14 @@ protocol! {
 
         // --------------------------------------------------------------- vault
         "vault.unlock" VaultUnlock => unlock_vault -> Unlocked(UnlockedReply)
-            flags [mutating, kdf]
+            flags [mutating, kdf, operational]
             doc "Unlock the vault with the master passphrase, so scheduled runs and remote destinations can work."
             params {
                 passphrase: SecretString = "The master passphrase. Never logged, never echoed, never returned.",
             }
 
         "vault.lock" VaultLock => lock_vault -> Unlocked(UnlockedReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Forget the derived keys. Scheduled runs that need a secret will be skipped until the next unlock."
             params {}
 
@@ -2490,7 +2559,7 @@ protocol! {
 
         // ------------------------------------------------------------- control
         "control.pause" ControlPause => pause -> Pause(PauseReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Suspend all scheduled runs, optionally for a fixed period."
             params {
                 seconds: Option<u64> = "How long to stay paused; omit to pause until explicitly resumed.",
@@ -2498,7 +2567,7 @@ protocol! {
             }
 
         "control.resume" ControlResume => resume -> Pause(PauseReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Lift a pause and let schedules fire again."
             params {}
 
@@ -2508,19 +2577,19 @@ protocol! {
             params {}
 
         "control.set_bandwidth" ControlSetBandwidth => set_bandwidth -> Bandwidth(BandwidthReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Set the global bandwidth ceiling. Applies to runs started after this call."
             params {
                 bandwidth: BandwidthSettings = "The new ceiling. Null rates mean unlimited.",
             }
 
         "control.reload_config" ControlReloadConfig => reload_config -> Ack(AckReply)
-            flags [mutating]
+            flags [mutating, operational]
             doc "Re-read configuration from disk, for a user who edited it by hand."
             params {}
 
         "control.shutdown" ControlShutdown => shutdown -> Ack(AckReply)
-            flags [mutating, elevated]
+            flags [mutating, elevated, operational]
             doc "Stop the daemon gracefully. In-flight runs are cancelled and recorded as cancelled, not failed."
             params {
                 stop_runs: bool = "Cancel in-flight runs immediately instead of waiting for them to finish.",

@@ -32,8 +32,25 @@ use super::runtime::Runtime;
 /// nothing and keeps the task's wakeups cheap on a laptop.
 const AUTO_LOCK_TICK: Duration = Duration::from_secs(15);
 
+/// How the vault came to be open.
+///
+/// The distinction the two-tier model rests on. Holding the keys and having a
+/// person present are different facts, and on a machine that saves its
+/// passphrase so backups run at 3am the first is true all the time while the
+/// second is almost never true. Conflating them would make the saved
+/// passphrase a way to hand whoever reaches the logged-in account the whole
+/// configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opened {
+    /// Somebody typed the master passphrase. A person is present.
+    ByHand,
+    /// Restored from the platform keychain, without anybody being asked.
+    /// Backups run; changing anything still needs the passphrase.
+    Unattended,
+}
+
 /// Everything that must become true when the vault opens.
-pub async fn on_unlocked(runtime: &Arc<Runtime>, passphrase: Secret) {
+pub async fn on_unlocked(runtime: &Arc<Runtime>, passphrase: Secret, how: Opened) {
     let settings = {
         let store = runtime.store.lock().await;
         store.config().settings.clone()
@@ -58,7 +75,19 @@ pub async fn on_unlocked(runtime: &Arc<Runtime>, passphrase: Secret) {
     }
     runtime.remember_master(passphrase);
 
-    runtime.record_event(Event::info("vault.unlocked", "The vault was unlocked."));
+    // The second tier, and the one line in the daemon that grants it.
+    if how == Opened::ByHand {
+        runtime.confirm();
+    }
+
+    runtime.record_event(match how {
+        Opened::ByHand => Event::info("vault.unlocked", "The vault was unlocked."),
+        Opened::Unattended => Event::info(
+            "vault.unlocked_unattended",
+            "The vault was opened with the saved passphrase, so backups can run. Changing \
+             anything still asks for it.",
+        ),
+    });
 
     // Runs the scheduler dropped while the vault was shut. The scheduler
     // drains its queue rather than holding them (see `Runtime::blocked_by_lock`),
@@ -157,12 +186,39 @@ pub fn spawn_auto_lock(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
                 runtime.arm_auto_lock(minutes);
                 continue;
             }
-            lock(
-                &runtime,
-                "vault.auto_locked",
-                "The vault locked itself after a period of inactivity.",
-            )
-            .await;
+            // Step down a tier, or lock, depending on what the user asked
+            // this machine to be.
+            //
+            // A machine that saves its passphrase was told to back up
+            // unattended, and locking it defeats that: it is how 51
+            // consecutive scheduled runs came to be skipped. What idleness
+            // should cost there is the *confirmation* — come back to the
+            // window and it asks for the passphrase before it will let you
+            // change anything, while the backups behind it never stopped.
+            //
+            // Without a saved passphrase there is no unattended running to
+            // protect, and locking is what the setting has always meant.
+            let saved = {
+                let store = runtime.store.lock().await;
+                store.config().settings.use_os_keychain
+            };
+            if saved {
+                runtime.unconfirm();
+                runtime.disarm_auto_lock();
+                runtime.record_event(Event::info(
+                    "vault.confirmation_expired",
+                    "You have been away a while, so superbackup will ask for your master \
+                     passphrase before the next change. Backups carried on as normal.",
+                ));
+                runtime.publish_status().await;
+            } else {
+                lock(
+                    &runtime,
+                    "vault.auto_locked",
+                    "The vault locked itself after a period of inactivity.",
+                )
+                .await;
+            }
         }
     })
 }
@@ -324,18 +380,15 @@ pub async fn try_keychain_unlock(runtime: &Arc<Runtime>) -> bool {
     if !use_keychain {
         return false;
     }
-    // A footgun worth naming once at start-up rather than leaving to be
-    // discovered: locking clears the cache, so an auto-lock interval means
-    // unattended unlocking survives only until the first timeout.
-    if auto_lock_minutes > 0 {
-        runtime.record_event(Event::new(
-            Severity::Warning,
-            "vault.keychain_auto_lock",
-            format!(
-                "Your passphrase is remembered, but auto-lock is set to {auto_lock_minutes}                  minutes and locking forgets it. Set auto-lock to 0 for unattended backups."
-            ),
-        ));
-    }
+    // This used to warn that auto-lock would discard the saved passphrase and
+    // strand the machine, which it did: 51 consecutive scheduled runs were
+    // skipped on the author's own PC for exactly that reason.
+    //
+    // It no longer does. With the passphrase saved, the auto-lock timer steps
+    // down a tier rather than locking — it withdraws the confirmation, so
+    // changing anything asks again, while the keys stay available and backups
+    // keep running. There is nothing left to warn about.
+    let _ = auto_lock_minutes;
     let passphrase = match super::keychain::load(&runtime.paths).await {
         Ok(Some(passphrase)) => passphrase,
         Ok(None) => return false,
@@ -366,6 +419,6 @@ pub async fn try_keychain_unlock(runtime: &Arc<Runtime>) -> bool {
         ));
         return false;
     }
-    on_unlocked(runtime, passphrase).await;
+    on_unlocked(runtime, passphrase, Opened::Unattended).await;
     true
 }

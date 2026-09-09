@@ -519,6 +519,7 @@ pub fn snapshot() -> StatusSnapshot {
         machine_hostname: "ANDREAS-PC".into(),
         machine_slug: "andreas-pc-a3f9c2d1".into(),
         unlocked: true,
+        confirmed: true,
         paused: false,
         paused_until: None,
         service_installed: true,

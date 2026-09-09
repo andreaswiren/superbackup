@@ -141,6 +141,17 @@ pub struct Runtime {
     active: Mutex<BTreeMap<Uuid, JobRun>>,
     recent: Mutex<VecDeque<Event>>,
     auto_lock_at: Mutex<Option<DateTime<Utc>>>,
+    /// Until when a person is taken to be present.
+    ///
+    /// The second tier. An unlocked vault means the daemon holds the keys —
+    /// which on a machine that saves its passphrase for unattended backups is
+    /// true from the moment the user logs in, and says nothing whatever about
+    /// whether anyone is at the keyboard. This says that: it is set when
+    /// somebody types the passphrase, and by nothing else.
+    ///
+    /// `None` means nobody has, or the window has passed. Backups are
+    /// unaffected either way; what needs it is changing the configuration.
+    confirmed_until: Mutex<Option<DateTime<Utc>>>,
     migration: Mutex<Option<PendingMigration>>,
     /// The last `remote.pull`, waiting for `remote.diff` and `remote.apply`.
     /// `Arc` because [`superbackup_core::remote::PullPlan`] is deliberately
@@ -226,6 +237,7 @@ impl Runtime {
             active: Mutex::new(BTreeMap::new()),
             recent: Mutex::new(VecDeque::new()),
             auto_lock_at: Mutex::new(None),
+            confirmed_until: Mutex::new(None),
             migration: Mutex::new(None),
             pull: Mutex::new(None),
             stats: Mutex::new(BTreeMap::new()),
@@ -461,6 +473,41 @@ impl Runtime {
     }
 
     // ------------------------------------------------------------------
+    // Confirmation: the second tier
+    // ------------------------------------------------------------------
+
+    /// How long a typed passphrase counts for.
+    ///
+    /// Deliberately not `auto_lock_minutes`. That setting answers "how long
+    /// may this machine hold the keys", and the answer for a machine that
+    /// backs up at 3am is "indefinitely"; this answers "how long may one
+    /// proof of presence stand in for the next", where a long answer is only
+    /// convenience. Fifteen minutes covers a session of editing jobs without
+    /// covering the afternoon somebody spends away from their desk.
+    pub const CONFIRMATION_WINDOW_MINUTES: i64 = 15;
+
+    /// Somebody has just proved they know the master passphrase.
+    ///
+    /// Called from exactly one place — a `vault.unlock` that a human answered.
+    /// Restoring the passphrase from the platform keychain must never call
+    /// this: doing so would collapse the two tiers back into one and make the
+    /// keychain a way to hand an attacker the configuration.
+    pub fn confirm(&self) {
+        *recover(&self.confirmed_until) =
+            Some(Utc::now() + ChronoDuration::minutes(Runtime::CONFIRMATION_WINDOW_MINUTES));
+    }
+
+    /// Withdraw it. Locking, auto-locking and changing the passphrase all do.
+    pub fn unconfirm(&self) {
+        *recover(&self.confirmed_until) = None;
+    }
+
+    /// Is a person taken to be present right now?
+    pub fn is_confirmed(&self) -> bool {
+        matches!(*recover(&self.confirmed_until), Some(at) if Utc::now() < at)
+    }
+
+    // ------------------------------------------------------------------
     // The master passphrase, while unlocked
     // ------------------------------------------------------------------
 
@@ -474,6 +521,10 @@ impl Runtime {
     /// the vault, including the auto-lock timer and shutdown.
     pub fn forget_master(&self) {
         *recover(&self.master) = None;
+        // A lock that left the confirmation standing would mean unlocking from
+        // the keychain afterwards silently restored the right to change
+        // things. Both halves go together, always.
+        self.unconfirm();
     }
 
     /// A copy of the retained passphrase, for the two operations that need it.
@@ -686,6 +737,9 @@ impl Runtime {
             version: superbackup_core::VERSION.to_string(),
             machine_label: config.machine.label.clone(),
             machine_hostname: config.machine.hostname.clone(),
+            // Not derived from `unlocked`: the whole point is that they are
+            // different facts on a machine that opens its own vault at login.
+            confirmed: unlocked && self.is_confirmed(),
             machine_slug: config.machine.slug.clone(),
             unlocked,
             paused,

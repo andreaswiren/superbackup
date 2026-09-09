@@ -332,7 +332,7 @@ impl Data {
     pub fn apply(&mut self, message: Incoming) {
         match message {
             Incoming::Link { up, .. } => self.link_up = up,
-            Incoming::Failed(intent, payload) => {
+            Incoming::Failed(intent, payload, _) => {
                 self.loading = false;
                 self.last_error = Some((intent, payload));
             }
@@ -620,6 +620,7 @@ mod tests {
             machine_hostname: "ANDREAS-PC".into(),
             machine_slug: "andreas-pc".into(),
             unlocked,
+            confirmed: unlocked,
             paused,
             paused_until: None,
             service_installed: true,

@@ -354,20 +354,86 @@ Stated so the boundary is honest rather than implied:
 ## 5. Key handling and the unattended problem
 
 There is a genuine tension between *"schedules must run without the user"* and
-*"the key must not sit on disk"*. We resolve it by refusing to hide it:
+*"the key must not sit on disk"*. We resolve it by splitting what an unlocked
+vault used to mean.
 
-- **Default.** The master key exists only in memory, only while unlocked, and
-  is dropped after `auto_lock_minutes` of inactivity. A locked vault blocks
-  scheduled runs, and the tray shows `Attention` so this is never silent.
-- **Opt-in.** `use_os_keychain` caches the key in the platform keychain
-  (DPAPI-backed Credential Manager, Keychain, Secret Service) so the service can
-  run unattended. This trades a real amount of security for the ability to back
-  up a machine nobody is logged into. It is off by default and the UI states the
-  trade-off at the point of choice rather than in a footnote.
-- **Service caveat.** A Windows service running as `LocalSystem` cannot read
-  the user's DPAPI-protected credentials and cannot see the user's OneDrive
-  folder. That is a platform fact, not a bug; the service installer must
-  surface which destination kinds work in which account configuration.
+### 5.1 Two tiers
+
+An unlocked vault used to assert two different things at once: **the daemon
+holds the keys**, and **a person is present**. Those are separate facts, and
+conflating them is what made unattended running unsafe — a machine that
+remembers its passphrase so it can back up at 3am has the first true
+permanently and the second true almost never.
+
+So there are two states:
+
+| State | Means | Grants |
+|---|---|---|
+| **Unlocked** | The daemon holds the keys. | Backups run. Status, history and the configuration can be read. The tray can start, stop, pause and throttle a job. |
+| **Confirmed** | Somebody typed the master passphrase in this session. | Everything else: creating or editing a job, destination, provider or credential; restoring; changing settings; git actions; rotating the passphrase. |
+
+Confirmation lasts fifteen minutes of inactivity and is granted by exactly one
+thing: a `vault.unlock` a human answered. Restoring the passphrase from the
+platform keychain unlocks and does **not** confirm.
+
+The boundary is derived from the IPC command table rather than kept as a second
+list, by *exclusion*: a command that changes persistent state requires
+confirmation unless it is explicitly marked `operational`. A command added
+without a thought about it therefore lands on the safe side. The exception list
+is short, is enumerated in a test that fails if it changes, and contains
+nothing that reads a backup, redirects one, or reaches a credential.
+
+### 5.2 What this changes about the trade
+
+`use_os_keychain` is now **on by default**, which reverses the previous
+position. The reason is 5.1 and not a reassessment of the underlying risk:
+caching still moves part of the boundary from "something the user knows" to
+"something the machine holds", and an attacker with the logged-in account still
+reaches the *data* in a backup by reading the repository.
+
+What they no longer reach is the *configuration*: they cannot point a job at a
+destination of their own, cannot add a destination, cannot read out a stored
+credential, and cannot change the passphrase — none of it, without the
+passphrase, whatever is in the keychain.
+
+Against that, the cost of the old default was not theoretical. A backup tool
+that silently stops backing up whenever nobody has typed a passphrase today is
+a backup tool that is absent on the morning it is needed: on the author's own
+machine, 51 consecutive scheduled runs were skipped for exactly this reason
+before anybody noticed.
+
+Turning it off restores the previous behaviour in full, including the auto-lock
+timer locking the vault rather than merely withdrawing the confirmation.
+
+### 5.3 What is actually stored
+
+Never the passphrase. The platform keychain (DPAPI-backed Credential Manager,
+Keychain, Secret Service) holds a random 256-bit wrap key; the passphrase lives
+beside it in a sealed vault of superbackup's own format, in `data_dir`.
+Recovering it needs both halves, so a credential-enumerating process that reads
+the keychain gets 32 bytes of noise, and a copy of the configuration root — the
+thing people e-mail when asking for help — contains only ciphertext. Both
+halves are destroyed on `vault.lock`, on withdrawal of the setting, on
+passphrase rotation, and whenever the cached passphrase fails to open the
+vault. See `crates/app/src/daemon/keychain.rs`.
+
+### 5.4 Auto-lock
+
+`auto_lock_minutes` now means different things in the two configurations, and
+deliberately so:
+
+- **With the passphrase saved**, idleness withdraws the *confirmation*. The
+  keys stay available, the backups keep running, and coming back to the window
+  means typing the passphrase before anything can be changed.
+- **Without it**, idleness locks the vault, exactly as before. There is no
+  unattended running to protect, so there is nothing to trade against.
+
+### 5.5 Service caveat
+
+A Windows service running as `LocalSystem` cannot read the user's
+DPAPI-protected credentials and cannot see the user's OneDrive folder. That is
+a platform fact, not a bug; the service installer must surface which
+destination kinds work in which account configuration.
 
 ---
 

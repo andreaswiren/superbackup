@@ -3375,7 +3375,10 @@ impl Handler for DaemonHandler {
                 store.unlock(&secret)?;
             }
         }
-        super::lifecycle::on_unlocked(&self.runtime, secret).await;
+        // A passphrase arrived over IPC, which means a person typed it: this
+        // is the one path that grants the second tier.
+        super::lifecycle::on_unlocked(&self.runtime, secret, super::lifecycle::Opened::ByHand)
+            .await;
         Ok(self.unlocked_reply(true))
     }
 
@@ -4011,6 +4014,20 @@ impl Handler for DaemonHandler {
         topics: &[Topic],
     ) -> Result<broadcast::Receiver<StreamItem>> {
         Ok(self.runtime.subscribe_stream(topics))
+    }
+
+    /// The second tier, answered for the transport's gate.
+    ///
+    /// A locked vault is *not* confirmed, and says so through this as well as
+    /// through `require_unlocked`. Which of the two errors the caller sees is
+    /// decided by the gate running first, and `Locked` would be the more
+    /// useful of the two — but a locked vault refuses these commands either
+    /// way, so nothing turns on it.
+    async fn confirmed(&self, _ctx: &RequestContext) -> bool {
+        if self.runtime.store.lock().await.is_locked() {
+            return false;
+        }
+        self.runtime.is_confirmed()
     }
 }
 

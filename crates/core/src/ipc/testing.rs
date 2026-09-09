@@ -244,6 +244,10 @@ impl MockHandler {
             // folder name and is fixed for the life of the install.
             machine_slug: "mock".into(),
             unlocked,
+            // The mock has one tier: an unlocked vault is a present person.
+            // The two-tier behaviour belongs to the real daemon and is tested
+            // against a real one, in `daemon_end_to_end`.
+            confirmed: unlocked,
             paused,
             paused_until: None,
             service_installed: false,

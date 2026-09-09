@@ -80,7 +80,7 @@ impl Default for Onboarding {
             create_onedrive: false,
             onedrive_path: None,
             install_service: false,
-            use_keychain: false,
+            use_keychain: true,
             scan_done: false,
             vault_error: None,
             vault_created: false,
@@ -388,6 +388,7 @@ pub(crate) fn setup_choices(
         create_shortcut: state.create_shortcut,
         autostart: state.autostart,
         install_service: state.install_service,
+        unattended_unlock: state.use_keychain,
     }
 }
 
@@ -1080,7 +1081,6 @@ fn keep_running(ui: &mut Ui, state: &mut Onboarding) {
         .clicked()
         {
             state.install_service = service;
-            state.use_keychain = service;
         }
         // Why a service is worth it, next to the switch rather than buried in
         // documentation: this is the one decision on this screen whose
@@ -1098,36 +1098,44 @@ fn keep_running(ui: &mut Ui, state: &mut Onboarding) {
         if state.install_service {
             ui.add_space(space::L);
             ui.horizontal(|ui| {
-                ui.add_space(28.0);
-                ui.vertical(|ui| {
-                    let mut keychain = state.use_keychain;
-                    if widgets::toggle(
-                        ui,
-                        &mut keychain,
-                        &copy::onboarding_service_keychain(keychain_name()),
-                        None,
-                        true,
-                    )
-                    .clicked()
-                    {
-                        state.use_keychain = keychain;
-                    }
-                    ui.add_space(space::S);
-                    widgets::paragraph_at(
-                        ui,
-                        copy::onboarding::SERVICE_KEYCHAIN_WARN,
-                        Type::Small,
-                        t.warning.tint_text,
-                        460.0,
-                    );
-                });
-            });
-            ui.add_space(space::L);
-            ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
                 Icon::Shield.paint(ui.painter(), rect, t.text_muted);
                 ui.add_space(space::M);
                 widgets::text(ui, copy::onboarding::SERVICE_ELEVATE, Type::Small, t.text_muted);
+            });
+        }
+
+        // Unattended unlocking, on its own rather than nested under the
+        // service.
+        //
+        // It used to be a sub-switch of "install the background service",
+        // which hid it from everybody who did not install one — and installing
+        // one needs administrator rights, so that is most people. They then
+        // had backups that quietly waited for somebody to type a passphrase.
+        ui.add_space(space::XL);
+        let mut keychain = state.use_keychain;
+        if widgets::toggle(
+            ui,
+            &mut keychain,
+            &copy::onboarding_service_keychain(keychain_name()),
+            Some(copy::onboarding::KEYCHAIN_BODY),
+            true,
+        )
+        .clicked()
+        {
+            state.use_keychain = keychain;
+        }
+        if state.use_keychain {
+            ui.add_space(space::S);
+            ui.horizontal(|ui| {
+                ui.add_space(28.0);
+                widgets::paragraph_at(
+                    ui,
+                    copy::onboarding::SERVICE_KEYCHAIN_WARN,
+                    Type::Small,
+                    t.text_muted,
+                    460.0,
+                );
             });
         }
     });

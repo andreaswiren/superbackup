@@ -397,8 +397,28 @@ pub struct Settings {
     /// Keep the vault key in memory for this long after the last GUI action.
     /// 0 = lock immediately when the window closes.
     pub auto_lock_minutes: u32,
-    /// Cache the unlocked master key in the OS keychain so unattended service
-    /// runs work without a prompt. Opt-in, off by default.
+    /// Remember the master passphrase so this machine can open its own vault
+    /// at login and run its backups unattended.
+    ///
+    /// **On by default**, which it was not before, and the reason is the
+    /// second tier rather than a change of mind about the trade. Previously an
+    /// unlocked vault meant "a person is present" as well as "the keys are
+    /// here", so remembering the passphrase handed the whole configuration to
+    /// anyone who reached the logged-in account — and it was rightly off.
+    ///
+    /// Now the two are separate. Opening the vault this way runs backups and
+    /// nothing else: changing a job, a destination, a credential or a setting
+    /// asks for the passphrase, every time, whatever is in the keychain. See
+    /// [`crate::ipc::protocol::flag::operational`] for exactly where the line
+    /// falls, and `docs/compliance/THREAT_MODEL.md` §5 for what it costs.
+    ///
+    /// The alternative default is worse than it sounds. A backup tool that
+    /// silently stops backing up whenever nobody has typed a passphrase today
+    /// is a backup tool that is not there on the morning it is needed: on the
+    /// author's own machine this cost 51 consecutive scheduled runs.
+    ///
+    /// What is stored is never the passphrase itself. See
+    /// `crates/app/src/daemon/keychain.rs`.
     pub use_os_keychain: bool,
     pub log_level: LogLevel,
     pub log_retention_days: u32,
@@ -442,7 +462,7 @@ impl Default for Settings {
             disk_space: Default::default(),
             wake_for_backups: false,
             auto_lock_minutes: 30,
-            use_os_keychain: false,
+            use_os_keychain: true,
             log_level: LogLevel::Info,
             log_retention_days: 30,
             max_parallel_jobs: 1,

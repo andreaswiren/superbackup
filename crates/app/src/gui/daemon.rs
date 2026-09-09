@@ -153,7 +153,15 @@ pub enum Incoming {
     /// channel, and an unboxed variant would make every `Link` and `Failed`
     /// message pay for it.
     Reply(Intent, Box<Reply>),
-    Failed(Intent, ErrorPayload),
+    /// A refusal, and the request that was refused.
+    ///
+    /// The request travels back because one refusal is worth retrying rather
+    /// than reporting: a change made while the vault is open but unconfirmed
+    /// is answered `NeedsConfirmation`, and the honest response to that is to
+    /// ask for the passphrase and then do what the user asked. Without the
+    /// request there is nothing to do afterwards but tell them to try again,
+    /// which is a worse version of the same interaction.
+    Failed(Intent, ErrorPayload, Box<Request>),
     Stream(Box<StreamItem>),
     /// The link came up or went down. Drives the `DaemonUnreachable` banner.
     Link {
@@ -272,7 +280,8 @@ fn worker(
     }
 
     let (reply_tx, mut reply_rx) =
-        tokio::sync::mpsc::unbounded_channel::<(Intent, superbackup_core::Result<Reply>)>();
+        tokio::sync::mpsc::unbounded_channel::<(Intent, superbackup_core::Result<Reply>, Request)>(
+        );
 
     loop {
         // Block briefly on the UI thread's queue so this thread is asleep
@@ -282,8 +291,12 @@ fn worker(
                 let daemon = daemon.clone();
                 let reply_tx = reply_tx.clone();
                 runtime.spawn(async move {
+                    // Kept for the failure path only. A `Request` is small —
+                    // the one large payload it carries is already boxed — and
+                    // this is once per request, not once per frame.
+                    let sent = call.request.clone();
                     let outcome = daemon.call(call.request).await;
-                    let _ = reply_tx.send((call.intent, outcome));
+                    let _ = reply_tx.send((call.intent, outcome, sent));
                 });
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -291,7 +304,7 @@ fn worker(
         }
 
         let mut woke = false;
-        while let Ok((intent, outcome)) = reply_rx.try_recv() {
+        while let Ok((intent, outcome, sent)) = reply_rx.try_recv() {
             woke = true;
             match outcome {
                 Ok(reply) => {
@@ -308,7 +321,7 @@ fn worker(
                             detail: Some(payload.message.clone()),
                         });
                     }
-                    let _ = results.send(Incoming::Failed(intent, payload));
+                    let _ = results.send(Incoming::Failed(intent, payload, Box::new(sent)));
                 }
             }
         }

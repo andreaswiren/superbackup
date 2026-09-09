@@ -149,6 +149,7 @@ fn classify_heuristically(error: &ExecutorError) -> Retryable {
         | ErrorCode::VaultCorrupt
         | ErrorCode::VaultVersion
         | ErrorCode::Locked
+        | ErrorCode::NeedsConfirmation
         | ErrorCode::Crypto
         | ErrorCode::KopiaMissing
         | ErrorCode::RepoExists

@@ -510,6 +510,7 @@ async fn withdrawing_consent_destroys_the_cache() {
 async fn rotating_the_passphrase_invalidates_the_cache() {
     let mut harness = Harness::start("keychain-rotate", |config, _| {
         config.settings.auto_lock_minutes = 0;
+        config.settings.use_os_keychain = true;
     })
     .await;
     let client = harness.client().await;
@@ -522,6 +523,8 @@ async fn rotating_the_passphrase_invalidates_the_cache() {
         &superbackup_core::secret::Secret::from_str(PASSPHRASE),
     )
     .expect("seal the sidecar");
+    let before =
+        std::fs::read(daemon::keychain::sidecar_path(&harness.paths)).expect("read the sidecar");
 
     let replacement = "an-entirely-different-passphrase-77";
     harness
@@ -534,13 +537,22 @@ async fn rotating_the_passphrase_invalidates_the_cache() {
         )
         .await;
 
-    // `use_os_keychain` is off in this fixture, so nothing is re-cached: what
-    // matters is that the *old* one is gone. A stale key that still opens a
+    // The cached passphrase must not have survived the rotation.
+    //
+    // This used to assert the cache was simply *gone*, which held only because
+    // the fixture left `use_os_keychain` off: the rotation had nothing to
+    // re-cache, so the case that matters was never exercised. It is switched
+    // on below, and the guarantee is that the bytes on disk are not the ones
+    // that were there before — a cache that still opens a
     // vault whose passphrase has moved on is the failure this guards.
-    assert!(
-        !daemon::keychain::has_local(&harness.paths),
-        "a rotation must destroy the cached passphrase"
-    );
+    //
+    // Asserted on the sidecar rather than by decrypting it, because reading it
+    // back means reading the machine's real credential store, and the tests in
+    // this file deliberately do not: that is why the round-trip test against
+    // the real keychain carries `#[ignore]`.
+    let after =
+        std::fs::read(daemon::keychain::sidecar_path(&harness.paths)).expect("read the sidecar");
+    assert_ne!(before, after, "the cache from before the rotation is still on disk");
 
     // And the new passphrase is what actually opens the vault now.
     harness.call(&client, Request::VaultLock {}).await;

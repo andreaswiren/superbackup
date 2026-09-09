@@ -481,3 +481,105 @@ async fn restore_is_accepted_and_refuses_a_policy_kopia_cannot_honour() {
     drop(client);
     harness.shutdown().await.expect("clean shutdown");
 }
+
+/// The two tiers, through the real transport.
+///
+/// # What this is defending
+///
+/// A machine that saves its master passphrase so backups run at 3am has an
+/// unlocked vault from the moment its owner logs in. Under one tier that also
+/// meant the configuration was open to anyone who reached the logged-in
+/// account: they could redirect every backup at a destination of their own, or
+/// read out a stored credential, without knowing the passphrase.
+///
+/// So holding the keys and having a person present are separate facts. This
+/// asserts they stay separate through the whole stack — the derivation from
+/// the command table, the transport's gate, and the daemon's answer — rather
+/// than in a unit test of any one of them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unattended_machine_backs_up_but_cannot_be_reconfigured() {
+    let mut harness = Harness::start("tiers", |config, home| {
+        let destination = repository("local disk", home.join("repo"));
+        let backup = job("dev code", seed_tree(home, 1), vec![destination.id]);
+        config.destinations.push(destination);
+        config.jobs.push(backup);
+    })
+    .await;
+
+    let client = harness.client().await;
+    harness
+        .call(
+            &client,
+            Request::VaultUnlock { passphrase: SecretString::from_string(PASSPHRASE.into()) },
+        )
+        .await;
+
+    // Typing the passphrase is what proves a person is present, so changing
+    // things works now.
+    harness.call(&client, Request::JobSetEnabled { job: "dev code".into(), enabled: false }).await;
+    harness.call(&client, Request::MachineRename { label: "confirmed".into() }).await;
+
+    // Now the state an unattended machine is in: the vault is open, because
+    // the saved passphrase opened it at login, and nobody is here.
+    harness.runtime.unconfirm();
+    assert!(
+        !harness.runtime.store.lock().await.is_locked(),
+        "the vault must stay open, or this is testing something else entirely"
+    );
+
+    // Reading still works. Nothing about being alone stops the tray showing
+    // what happened last night.
+    let status = client.status().await.expect("status");
+    assert!(status.unlocked, "the keys are still there");
+    harness.call(&client, Request::JobList { include_disabled: true }).await;
+
+    // Operating the backups still works. This is the entire point of saving
+    // the passphrase, and a gate that broke it would be worse than no gate.
+    harness.call(&client, Request::JobSetEnabled { job: "dev code".into(), enabled: true }).await;
+    harness.call(&client, Request::ControlPause { seconds: Some(60), reason: None }).await;
+    harness.call(&client, Request::ControlResume {}).await;
+
+    // Changing things does not.
+    let refused = client
+        .request(Request::MachineRename { label: "somewhere else".into() })
+        .await
+        .expect_err("renaming the machine must need a person");
+    assert_eq!(
+        refused.code(),
+        superbackup_core::error::ErrorCode::NeedsConfirmation,
+        "refused for the wrong reason: {refused}"
+    );
+
+    // Nor do the two that matter most: redirecting a backup, and reaching a
+    // credential.
+    for request in [
+        Request::DestinationDelete { destination: "local disk".into(), force: true },
+        Request::JobDelete { job: "dev code".into() },
+        Request::SettingsUpdate { settings: Box::default() },
+    ] {
+        let name = request.command();
+        let refused = client.request(request).await.expect_err("{name} must need a person");
+        assert_eq!(
+            refused.code(),
+            superbackup_core::error::ErrorCode::NeedsConfirmation,
+            "`{name}` was refused for the wrong reason: {refused}"
+        );
+    }
+
+    // And the machine is still called what it was called: a refusal that
+    // still performed the change would be the worst of both.
+    let status = client.status().await.expect("status");
+    assert_eq!(status.machine_label, "confirmed", "the refused rename happened anyway");
+
+    // Typing it again restores the tier, without any of this having touched
+    // the keys.
+    harness
+        .call(
+            &client,
+            Request::VaultUnlock { passphrase: SecretString::from_string(PASSPHRASE.into()) },
+        )
+        .await;
+    harness.call(&client, Request::MachineRename { label: "confirmed again".into() }).await;
+
+    harness.shutdown().await.expect("shutdown");
+}

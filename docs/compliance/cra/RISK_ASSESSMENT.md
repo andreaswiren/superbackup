@@ -295,12 +295,13 @@ historically echoed credentials back.
 *Threat model §5 · TA-3*
 
 `use_os_keychain` caches the master key in the platform credential store so a
-service can run when nobody is logged in.
+service can run when nobody is logged in. On by default since 0.8.0; see
+`THREAT_MODEL.md` §5.2 for why the default moved and what it does not grant.
 
 | | |
 |---|---|
 | Inherent | Possible × Severe = **High** |
-| Mitigations | **Off by default.** The interface states the trade-off at the point of choice rather than in a footnote — `design/COPY.md`, `onboarding.service.keychain_warn`: "Anything that can run programs as you can then ask the credential store for the key." The store is the platform's own (DPAPI-backed Credential Manager, Keychain, Secret Service), so the protection is the platform's. |
+| Mitigations | **The keychain never holds the passphrase**: it holds a random 256-bit wrap key, and the passphrase sits beside it in a sealed vault under `data_dir`, so recovering it needs both halves and a copy of the configuration root yields nothing. **Holding the keys does not grant the right to change anything**: every command that alters a job, destination, credential or setting requires the passphrase in the session, so an attacker with the logged-in account reaches the data in a backup but cannot redirect one, add a destination, or read out a credential (`THREAT_MODEL.md` §5.1). The store is the platform's own (DPAPI-backed Credential Manager, Keychain, Secret Service), so that half of the protection is the platform's. Switchable off, which restores the earlier behaviour in full. |
 | Residual | Unlikely × Severe = **High**, but only for users who opt in |
 | Treatment | **Accepted by informed user choice.** `THREAT_MODEL.md` §5 states the tension honestly — schedules must run without the user, and the key must not sit on disk — and resolves it by refusing to hide the trade-off. |
 
