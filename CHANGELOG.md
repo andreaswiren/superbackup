@@ -14,6 +14,73 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.8.0] - 2026-09-09
+
+A first run did almost nothing it said it would, and this release is mostly
+about that.
+
+### Fixed
+
+- **Finishing setup now sets things up.** The wizard asked four things and
+  acted on one of them. The passphrase made a vault, which worked. The
+  OneDrive choice and the job template were stored on a struct and read by
+  nothing at all. The Start-menu entry, "start at login" and "install the
+  service" were sent to the daemon over IPC — during a first run, when the
+  daemon does not exist, because it will not start until a vault exists and
+  the wizard is what creates one. A request nobody is listening for fails
+  quietly, so a user who ticked every box got a vault and nothing else, with
+  no error to say so.
+
+  The answers are now carried out in the process that collected them, and what
+  happened is reported: a destination made, a job made, and a line for anything
+  that did not work. A job that will not validate no longer costs the user
+  their destination as well.
+
+- **"Unlocking…" no longer waits for ever.** Pressing Unlock disabled the
+  button and put "Unlocking…" on it, and exactly one line in the application
+  turned that back off again: the arm for a wrong passphrase. Everything else
+  left it on, including the case that mattered — a daemon that has only just
+  been started and is not listening yet, which is precisely the state of the
+  launch straight after a first run. The only way out was to kill the window.
+
+  An unlock attempt now ends in one place, however it ends, and says why. An
+  answer that never arrives at all ends it too.
+
+- **The OneDrive folder is created, and it is the right one.** Backups go to
+  `OneDrive/Superbackup/<machine>`: grouped, so opening OneDrive shows one
+  folder rather than repository blobs loose among your documents, and per
+  machine, because two PCs writing into one kopia repository directory is not
+  a shared backup, it is a corrupted one. The folder is made during setup
+  rather than left to the first backup at 2am.
+
+- **Kopia is fetched during setup instead of after it.** The setup step that
+  reports whether kopia is present asked the daemon, which does not exist
+  during a first run — so it said "Kopia was not found" on every machine,
+  including the ones that had it, and offered a button that opened a download
+  page in a browser. It now looks for itself, and downloads and installs the
+  newest supported release when there is none, with progress on the step.
+
+### Added
+
+- **Choose which OneDrive.** A machine signed in to more than one now gets
+  asked which should hold the backup, with the free space and the path beside
+  each. A personal and a work OneDrive are different places, with different
+  quotas and different people able to read them, and picking one silently was
+  the wrong answer.
+
+- **The service asks for administrator rights rather than explaining them.**
+  Almost nobody sets up a backup tool as an administrator, so "install the
+  background service" was a tick box that produced a paragraph. It now raises
+  the operating system's own elevation prompt. Superbackup never handles the
+  credentials, and declining leaves a working installation minus the service.
+
+### Note on releases
+
+The `v0.7.0` tag was created one commit before the workflow fixes it was
+supposed to carry. GitHub Actions takes the workflow from the tagged ref, so
+the release run used the previous, broken version of it. This tag is cut at
+the fixed workflow.
+
 ## [0.7.0] - 2026-09-08
 
 ### Added

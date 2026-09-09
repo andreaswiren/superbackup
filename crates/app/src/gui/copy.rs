@@ -124,6 +124,15 @@ pub fn trigger(t: superbackup_core::state::Trigger) -> &'static str {
 // 2. Onboarding
 // ---------------------------------------------------------------------------
 
+/// What setup actually created, named rather than implied.
+pub fn onboarding_destination_made(name: &str) -> String {
+    format!("\"{name}\" is ready to back up to.")
+}
+
+pub fn onboarding_job_made(name: &str) -> String {
+    format!("\"{name}\" was created and will run on its schedule.")
+}
+
 pub mod onboarding {
     pub const SHORTCUT_TITLE: &str = "Add superbackup to my applications menu";
 
@@ -188,10 +197,15 @@ pub mod onboarding {
     pub const SCAN_LEAD: &str = "Looking for the pieces superbackup can use.";
     pub const KOPIA_MISSING: &str = "Kopia was not found";
     pub const KOPIA_MISSING_BODY: &str = "superbackup uses Kopia to write and read backups. You can download a tested build now, or point superbackup at a copy you already have.";
-    pub const KOPIA_DOWNLOAD: &str = "Download Kopia";
+    pub const KOPIA_DOWNLOAD: &str = "Install Kopia";
     pub const KOPIA_DOWNLOAD_HINT: &str =
-        "Opens Kopia's own releases page. Superbackup also fetches a tested build by itself once \
-         it is running, so this is only if you would rather install it yourself.";
+        "Downloads the newest Kopia superbackup supports, checks it against the published \
+         checksum, and installs it for this machine. Nothing else is changed.";
+    /// While the download runs. The phase underneath it comes from the
+    /// installer, so this line says only what is happening overall.
+    pub const KOPIA_INSTALLING: &str = "Installing Kopia";
+    /// The fallback offered only after an install has actually failed.
+    pub const KOPIA_RELEASES: &str = "Open Kopia releases";
     pub const KOPIA_CHOOSE: &str = "Choose a file…";
     pub const KOPIA_CHOOSE_HINT: &str =
         "Point superbackup at a kopia you already have. It will use exactly that one and never \
@@ -202,6 +216,9 @@ pub mod onboarding {
     pub const KOPIA_SKIP_NOTE: &str =
         "You can set this up later. Backups will not run until Kopia is available.";
     pub const ONEDRIVE_CREATE: &str = "Create a OneDrive destination here";
+    /// Shown only when the machine is signed in to more than one.
+    pub const ONEDRIVE_WHICH: &str =
+        "This machine is signed in to more than one OneDrive. Which should hold the backup?";
     pub const ONEDRIVE_EXPLAIN: &str = "A repository is a small number of large files, not the millions of small ones that make OneDrive struggle. superbackup also marks the folder so OneDrive keeps it on this disk instead of turning it into an online-only placeholder.";
     pub const ONEDRIVE_NONE: &str = "No OneDrive folder was found. That is fine — you can back up to a local disk or to object storage instead.";
 
@@ -250,6 +267,9 @@ pub fn onboarding_kopia_found(version: &str) -> String {
 }
 pub fn onboarding_onedrive_found(account: &str) -> String {
     format!("OneDrive — {account}")
+}
+pub fn onboarding_onedrive_room(free: &str, path: &str) -> String {
+    format!("{free} free — {path}")
 }
 pub fn onboarding_disk_ok(free: u64, drive: &str) -> String {
     format!("{} free on {drive}", format::bytes(free))
@@ -377,6 +397,14 @@ pub mod vault {
     pub const UNLOCK_BUSY: &str = "Unlocking…";
     pub const UNLOCK_WRONG: &str =
         "That passphrase did not open the vault. Passphrases are case sensitive.";
+    /// The vault said no without saying the passphrase was wrong — which in
+    /// practice means the background service answered before it was ready.
+    pub const UNLOCK_REFUSED: &str =
+        "The vault did not open. If superbackup has only just started, give it a moment and try again.";
+    /// Nothing came back at all. Named for what the user saw, not for the
+    /// timeout that detected it.
+    pub const UNLOCK_NO_ANSWER: &str =
+        "The background service did not answer. It may still be starting up — try again in a moment.";
     pub const UNLOCK_NO_RECOVERY: &str = "There is no way to recover a lost master passphrase. If you have a recovery sheet, this is the moment for it.";
     pub const UNLOCKED_TOAST: &str = "Vault unlocked";
     pub const LOCKED_TOAST: &str = "Vault locked";

@@ -200,7 +200,7 @@ mod tests {
         // case a percentage-only rule misses entirely.
         assert_eq!(level_for(8 * GIB, 128 * GIB, &s), DiskLevel::Low);
         // 1 GB left is critical by both.
-        assert_eq!(level_for(1 * GIB, 128 * GIB, &s), DiskLevel::Critical);
+        assert_eq!(level_for(GIB, 128 * GIB, &s), DiskLevel::Critical);
         // Half the disk free is fine.
         assert_eq!(level_for(64 * GIB, 128 * GIB, &s), DiskLevel::Fine);
     }

@@ -5,19 +5,19 @@
 //! on O-3, not on O-2, so a user who backs out has not left a half-initialised
 //! vault behind.
 
+use std::path::PathBuf;
+
 use egui::{Align, Layout, Sense, Ui, Vec2};
 
 use crate::gui::app::App;
 use crate::gui::copy;
-use crate::gui::daemon::Intent;
 use crate::gui::icons::{self, Icon};
 use crate::gui::screens::wizard::Template;
 use crate::gui::theme::{self, radius, space, Type};
 use crate::gui::validation::{self, OnboardingStep};
 use crate::gui::widgets::{self, Button};
-use superbackup_core::ipc::protocol::Request;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Onboarding {
     pub step: OnboardingStep,
     pub passphrase: String,
@@ -26,7 +26,25 @@ pub struct Onboarding {
     pub acknowledged: bool,
     pub weak_acknowledged: bool,
     pub template: Option<Template>,
+    /// The kopia install this window started, if it started one.
+    ///
+    /// Lives on the wizard rather than the application because it belongs to
+    /// this one pass through setup: leaving the wizard abandons the handle,
+    /// and the install finishes regardless — a half-extracted kopia is worse
+    /// than a finished one nobody is watching.
+    pub kopia: Option<crate::gui::kopia::Install>,
     pub create_onedrive: bool,
+    /// Which OneDrive to back up to, when the machine is signed in to more
+    /// than one.
+    ///
+    /// Held as a path rather than an index because the detected list is
+    /// rebuilt as the step draws, and a personal and a work OneDrive are very
+    /// different places to put a copy of somebody's development folders — the
+    /// choice must survive a reordering rather than silently follow it.
+    ///
+    /// `None` means "whichever is first", which is the answer on the ordinary
+    /// machine with exactly one.
+    pub onedrive_path: Option<PathBuf>,
     pub autostart: bool,
     /// Add superbackup to the Start menu / applications launcher.
     pub create_shortcut: bool,
@@ -58,7 +76,9 @@ impl Default for Onboarding {
             acknowledged: false,
             weak_acknowledged: false,
             template: None,
+            kopia: None,
             create_onedrive: false,
+            onedrive_path: None,
             install_service: false,
             use_keychain: false,
             scan_done: false,
@@ -295,16 +315,79 @@ fn create_vault(app: &mut App, passphrase: &str) -> Result<(), String> {
 /// Nothing here blocks. The replies arrive as ordinary toasts, and the
 /// interface is usable while they land.
 fn apply_setup_choices(app: &mut App, state: &Onboarding) {
-    if state.create_shortcut {
-        app.ask(Intent::Fire, Request::AppSetShortcut { enabled: true });
+    let Some(paths) = app.paths.clone() else {
+        // No paths means a test window or the screenshot harness, which has no
+        // installation to set up.
+        return;
+    };
+
+    // The job the template describes, built here rather than left as an
+    // `Option<Template>` nothing ever read.
+    let job = state.template.map(|template| {
+        let mut job = super::wizard::blank_job();
+        super::wizard::apply_template(&mut job, template, &app.data);
+        if job.name.trim().is_empty() {
+            job.name = "Backup".to_string();
+        }
+        job
+    });
+
+    // The fallback OneDrive covers the person who ticked the box on the scan
+    // step and never went back to it: it is the same account that step showed
+    // them by default.
+    let fallback = state
+        .create_onedrive
+        .then(|| superbackup_core::platform::onedrive::detect().first().map(|a| a.path.clone()))
+        .flatten();
+    let choices = setup_choices(state, job, fallback);
+
+    let applied = superbackup_core::firstrun::apply(
+        &paths,
+        &superbackup_core::secret::Secret::from_str(&state.passphrase),
+        &choices,
+    );
+
+    // Say what happened. Every one of these used to be silent, which is how a
+    // wizard that did nothing looked exactly like one that worked.
+    if let Some(name) = &applied.destination {
+        app.toasts.success(copy::onboarding_destination_made(name));
     }
-    if state.autostart {
-        app.ask(Intent::Fire, Request::ServiceSetAutostart { enabled: true });
+    if let Some(name) = &applied.job {
+        app.toasts.success(copy::onboarding_job_made(name));
     }
-    if state.install_service {
-        // Elevation is prompted for by the daemon, and refusing it is a
-        // normal outcome rather than an error worth blocking setup over.
-        app.ask(Intent::Fire, Request::ServiceInstall {});
+    for problem in &applied.problems {
+        app.toasts.warning(problem.clone());
+    }
+}
+
+/// The wizard's answers, in the form the thing that carries them out takes.
+///
+/// # Why this is separate, and pure
+///
+/// Because the question "did the tick box reach the installer" is the one
+/// that was being answered wrongly. The test that covered this used to assert
+/// that three IPC requests had been *sent* — and they were, faithfully, into a
+/// daemon that does not exist during a first run, which is why a user who
+/// ticked every box got a vault and nothing else. The assertion passed for the
+/// entire period the feature did nothing.
+///
+/// Answering it honestly means being able to look at the choices without
+/// acting on them, because acting on them installs a service and writes a
+/// Start-menu entry on whatever machine the tests are running on.
+pub(crate) fn setup_choices(
+    state: &Onboarding,
+    job: Option<superbackup_core::model::Job>,
+    fallback_onedrive: Option<PathBuf>,
+) -> superbackup_core::firstrun::Choices {
+    superbackup_core::firstrun::Choices {
+        onedrive: state
+            .create_onedrive
+            .then(|| state.onedrive_path.clone().or(fallback_onedrive))
+            .flatten(),
+        job,
+        create_shortcut: state.create_shortcut,
+        autostart: state.autostart,
+        install_service: state.install_service,
     }
 }
 
@@ -555,20 +638,63 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
     ui.add_space(space::H3);
 
     // Probe 1: kopia.
-    let kopia = app.data.snapshot.as_ref().and_then(|s| s.kopia_version.clone());
+    //
+    // On a first run the daemon's snapshot cannot answer this, because there
+    // is no daemon: it will not start until the vault this wizard creates
+    // exists. The snapshot is therefore empty, and this step used to report
+    // kopia missing on every machine — including the ones that had it — and
+    // then offer a button that opened a download page in a browser.
+    //
+    // So the window looks for itself, and fetches kopia if it is not there.
+    // `ensure_available` does both: it returns an installed kopia without
+    // downloading anything, and installs the newest supported release when
+    // there is none. Settings decide whether that is allowed; a machine with
+    // automatic installation turned off gets told so rather than surprised.
+    if state.kopia.is_none() && app.data.snapshot.is_none() {
+        if let Some(paths) = app.paths.clone() {
+            state.kopia = Some(crate::gui::kopia::Install::start(paths, app.data.settings.clone()));
+        }
+    }
+    let mut installing: Option<(String, Option<f32>)> = None;
+    let mut install_failed: Option<String> = None;
+    if let Some(install) = &mut state.kopia {
+        install.poll();
+        match &install.finished {
+            None => installing = Some((install.line.clone(), install.fraction)),
+            Some(Ok(_)) => {}
+            Some(Err(reason)) => install_failed = Some(reason.clone()),
+        }
+    }
+    let kopia = app.data.snapshot.as_ref().and_then(|s| s.kopia_version.clone()).or_else(|| {
+        state.kopia.as_ref().and_then(|install| match &install.finished {
+            Some(Ok(version)) => Some(version.clone()),
+            _ => None,
+        })
+    });
     widgets::card(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
-            match &kopia {
-                Some(_) => Icon::CheckCircle.paint(ui.painter(), rect, t.success.mark),
-                None => Icon::AlertTriangle.paint(ui.painter(), rect, t.warning.mark),
+            match (&kopia, installing.is_some()) {
+                (Some(_), _) => {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                    Icon::CheckCircle.paint(ui.painter(), rect, t.success.mark);
+                }
+                // A spinner, not a warning: kopia being absent while it is
+                // being fetched is the normal state of this step, and a
+                // warning triangle over it reads as something gone wrong.
+                (None, true) => {
+                    widgets::spinner(ui, 20.0, t.accent);
+                }
+                (None, false) => {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                    Icon::AlertTriangle.paint(ui.painter(), rect, t.warning.mark);
+                }
             }
             ui.add_space(space::L);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = space::XXS;
-                match &kopia {
-                    Some(version) => {
+                match (&kopia, &installing) {
+                    (Some(version), _) => {
                         widgets::text(
                             ui,
                             copy::onboarding_kopia_found(version),
@@ -576,7 +702,27 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                             t.text_primary,
                         );
                     }
-                    None => {
+                    (None, Some((line, fraction))) => {
+                        widgets::text(
+                            ui,
+                            copy::onboarding::KOPIA_INSTALLING,
+                            Type::BodyStrong,
+                            t.text_primary,
+                        );
+                        widgets::text(ui, line.clone(), Type::Small, t.text_secondary);
+                        if let Some(fraction) = fraction {
+                            ui.add_space(space::XS);
+                            widgets::progress_bar(
+                                ui,
+                                320.0,
+                                6.0,
+                                Some(*fraction),
+                                t.accent,
+                                copy::onboarding::KOPIA_INSTALLING,
+                            );
+                        }
+                    }
+                    (None, None) => {
                         widgets::text(
                             ui,
                             copy::onboarding::KOPIA_MISSING,
@@ -585,7 +731,13 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                         );
                         widgets::paragraph_at(
                             ui,
-                            copy::onboarding::KOPIA_MISSING_BODY,
+                            // What went wrong, when something did. The generic
+                            // line does not survive a real failure: "no
+                            // network" and "automatic installation is off"
+                            // need different things done about them.
+                            install_failed.clone().unwrap_or_else(|| {
+                                copy::onboarding::KOPIA_MISSING_BODY.to_string()
+                            }),
                             Type::Small,
                             t.text_secondary,
                             480.0,
@@ -593,7 +745,7 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                     }
                 }
             });
-            if kopia.is_none() {
+            if kopia.is_none() && installing.is_none() {
                 // Both of these were drawn and had their clicks discarded, so
                 // a first run on a machine without kopia offered two buttons
                 // that did nothing at the one moment the user has no other
@@ -625,10 +777,26 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                         .on_hover_text(copy::onboarding::KOPIA_DOWNLOAD_HINT)
                         .clicked()
                     {
-                        // Superbackup fetches a tested build on its own once
-                        // it is running; this is for the person who would
-                        // rather install it themselves, and it goes to
-                        // Kopia's own releases rather than anywhere of ours.
+                        // Fetch it, here, now. This used to open kopia's
+                        // releases page in a browser and leave the user to
+                        // install a second program by hand in the middle of
+                        // setting up the first.
+                        if let Some(paths) = app.paths.clone() {
+                            state.kopia = Some(crate::gui::kopia::Install::start(
+                                paths,
+                                app.data.settings.clone(),
+                            ));
+                        }
+                    }
+                    // The way out when fetching it did not work: kopia's own
+                    // releases, not a mirror of ours.
+                    if install_failed.is_some()
+                        && Button::ghost(copy::onboarding::KOPIA_RELEASES)
+                            .compact()
+                            .show(ui)
+                            .on_hover_text(copy::onboarding::KOPIA_RELEASES_URL)
+                            .clicked()
+                    {
                         let _ = open::that_detached(copy::onboarding::KOPIA_RELEASES_URL);
                     }
                 });
@@ -660,7 +828,19 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                         520.0,
                     );
                 } else {
-                    let account = onedrive[0].display_name.clone();
+                    // The chosen account, or the first when nothing is chosen
+                    // — and the choice is re-checked against what is actually
+                    // there, so a OneDrive that has been signed out of since
+                    // does not leave the step pointing at a folder that has
+                    // gone.
+                    let chosen = state
+                        .onedrive_path
+                        .as_ref()
+                        .and_then(|path| onedrive.iter().position(|a| &a.path == path))
+                        .unwrap_or(0);
+                    state.onedrive_path = Some(onedrive[chosen].path.clone());
+
+                    let account = onedrive[chosen].display_name.clone();
                     widgets::text(
                         ui,
                         copy::onboarding_onedrive_found(&account),
@@ -669,12 +849,46 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                     );
                     widgets::elided(
                         ui,
-                        &onedrive[0].path.to_string_lossy(),
+                        &onedrive[chosen].path.to_string_lossy(),
                         Type::MonoSmall,
                         t.text_muted,
                         460.0,
                         false,
                     );
+
+                    // Signed in to more than one? Then which one is a real
+                    // question, and picking silently is the wrong answer: a
+                    // personal and a work OneDrive are different places, with
+                    // different quotas and different people able to read them.
+                    if onedrive.len() > 1 {
+                        ui.add_space(space::S);
+                        widgets::text(
+                            ui,
+                            copy::onboarding::ONEDRIVE_WHICH,
+                            Type::Small,
+                            t.text_secondary,
+                        );
+                        ui.add_space(space::XS);
+                        for (index, candidate) in onedrive.iter().enumerate() {
+                            let free = crate::gui::format::bytes(candidate.available_bytes);
+                            if widgets::radio(
+                                ui,
+                                index == chosen,
+                                &candidate.display_name,
+                                Some(&copy::onboarding_onedrive_room(
+                                    &free,
+                                    &candidate.path.to_string_lossy(),
+                                )),
+                                true,
+                            )
+                            .clicked()
+                            {
+                                state.onedrive_path = Some(candidate.path.clone());
+                            }
+                        }
+                        ui.add_space(space::S);
+                    }
+
                     let mut create = state.create_onedrive;
                     if widgets::checkbox(
                         ui,
@@ -1056,73 +1270,67 @@ mod tests {
         superbackup_core::paths::Paths::rooted_at(&root, false)
     }
 
-    /// The switches on the last step must actually do something.
+    /// The switches on the last step must actually reach what carries them out.
     ///
-    /// They were rendered, stored on the state, and then dropped on the floor:
-    /// nothing read `autostart` or `install_service`, so a user who asked for
-    /// both got neither — and no error either, because nothing had been tried.
-    /// This asserts the requests are issued, which is the part that was
-    /// missing; whether the daemon can carry them out is its own concern.
-    #[tokio::test]
-    async fn the_setup_choices_reach_the_daemon() {
-        let handler = std::sync::Arc::new(superbackup_core::ipc::testing::MockHandler::new());
-        let ctx = egui::Context::default();
-        let mut app = crate::gui::app::App::new_with_daemon(
-            &ctx,
-            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(handler.clone())),
-        );
-
+    /// They were rendered, stored on the state, and then sent to a daemon that
+    /// does not exist yet — so a user who asked for all three got none of
+    /// them, and no error either, because the requests were dropped rather
+    /// than refused.
+    #[test]
+    fn the_setup_choices_reach_what_carries_them_out() {
         let state = Onboarding {
             create_shortcut: true,
             autostart: true,
             install_service: true,
             ..Onboarding::default()
         };
-        apply_setup_choices(&mut app, &state);
+        let choices = setup_choices(&state, None, None);
 
-        // The bridge is asynchronous, so give the requests a moment to land.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            if handler.calls("app.set_shortcut") > 0
-                && handler.calls("service.set_autostart") > 0
-                && handler.calls("service.install") > 0
-            {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-
-        assert!(
-            handler.calls("app.set_shortcut") > 0,
-            "the applications-menu entry was not asked for"
-        );
-        assert!(handler.calls("service.set_autostart") > 0, "autostart was not asked for");
-        assert!(handler.calls("service.install") > 0, "the service was not asked for");
+        assert!(choices.create_shortcut, "the applications-menu entry was not asked for");
+        assert!(choices.autostart, "autostart was not asked for");
+        assert!(choices.install_service, "the service was not asked for");
     }
 
     /// Nothing chosen means nothing done. A setup that silently installs a
     /// service nobody asked for is worse than one that installs nothing.
-    #[tokio::test]
-    async fn declining_everything_asks_for_nothing() {
-        let handler = std::sync::Arc::new(superbackup_core::ipc::testing::MockHandler::new());
-        let ctx = egui::Context::default();
-        let mut app = crate::gui::app::App::new_with_daemon(
-            &ctx,
-            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(handler.clone())),
-        );
-
+    #[test]
+    fn declining_everything_asks_for_nothing() {
         let state = Onboarding {
             create_shortcut: false,
             autostart: false,
             install_service: false,
             ..Onboarding::default()
         };
-        apply_setup_choices(&mut app, &state);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let choices = setup_choices(&state, None, Some(PathBuf::from("/anywhere")));
 
-        assert_eq!(handler.calls("app.set_shortcut"), 0);
-        assert_eq!(handler.calls("service.set_autostart"), 0);
-        assert_eq!(handler.calls("service.install"), 0);
+        assert!(!choices.create_shortcut);
+        assert!(!choices.autostart);
+        assert!(!choices.install_service);
+        assert_eq!(choices.onedrive, None, "an unticked box must not create a destination");
+        assert!(choices.job.is_none());
+    }
+
+    /// The OneDrive the user picked, not the one that happened to be first.
+    #[test]
+    fn the_chosen_onedrive_beats_the_detected_one() {
+        let chosen = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\a\OneDrive - Work"
+        } else {
+            "/home/a/OneDrive-Work"
+        });
+        let first =
+            PathBuf::from(if cfg!(windows) { r"C:\Users\a\OneDrive" } else { "/home/a/OneDrive" });
+
+        let state = Onboarding {
+            create_onedrive: true,
+            onedrive_path: Some(chosen.clone()),
+            ..Onboarding::default()
+        };
+        assert_eq!(setup_choices(&state, None, Some(first.clone())).onedrive, Some(chosen));
+
+        // And with no choice made, the detected one is what is used.
+        let state = Onboarding { create_onedrive: true, ..Onboarding::default() };
+        assert_eq!(setup_choices(&state, None, Some(first.clone())).onedrive, Some(first));
     }
 
     /// Being findable is defaulted on; running at login and installing a

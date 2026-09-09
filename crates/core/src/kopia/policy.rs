@@ -314,10 +314,10 @@ fn go_duration(d: Duration) -> String {
     if secs == 0 {
         return "0s".to_string();
     }
-    if secs % 3600 == 0 {
+    if secs.is_multiple_of(3600) {
         return format!("{}h", secs / 3600);
     }
-    if secs % 60 == 0 {
+    if secs.is_multiple_of(60) {
         return format!("{}m", secs / 60);
     }
     format!("{secs}s")

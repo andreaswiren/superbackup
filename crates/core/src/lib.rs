@@ -39,6 +39,7 @@ pub mod credentials;
 pub mod crypto;
 pub mod engine;
 pub mod error;
+pub mod firstrun;
 pub mod git;
 pub mod ipc;
 pub mod kopia;

@@ -87,16 +87,6 @@ jobs:
       # stated priority platform and the one this is used on daily; building
       # the other five costs the wall clock of the slowest of them for
       # artefacts nobody is waiting on. Run the workflow by hand with
-      # `platforms: all` to produce a full set.
-      #
-      # The other targets are *not* deleted, because "for now" is what this
-      # is: they stay in the table below and come back with one input.
-      # Which platforms this release builds.
-      #
-      # Windows only by default, including for a tag push. Windows is the
-      # stated priority platform and the one this is used on daily; building
-      # the other five costs the wall clock of the slowest of them for
-      # artefacts nobody is waiting on. Run the workflow by hand with
       # `platforms: all` for a full set.
       #
       # The other targets are not deleted, because "for now" is what this
@@ -167,7 +157,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxdo-dev             libayatana-appindicator3-dev pkg-config
+          sudo apt-get install -y libgtk-3-dev libxdo-dev \n            libayatana-appindicator3-dev pkg-config
 
       - uses: Swatinem/rust-cache@v2
         with:

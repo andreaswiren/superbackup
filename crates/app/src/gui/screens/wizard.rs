@@ -195,7 +195,7 @@ impl WizardState {
     }
 }
 
-fn blank_job() -> Job {
+pub(crate) fn blank_job() -> Job {
     Job {
         content: superbackup_core::model::JobContent::Files,
         id: Uuid::new_v4(),
@@ -217,7 +217,7 @@ fn blank_job() -> Job {
     }
 }
 
-fn apply_template(draft: &mut Job, template: Template, data: &Data) {
+pub(crate) fn apply_template(draft: &mut Job, template: Template, data: &Data) {
     draft.content = template.content();
     draft.sources = template.sources();
     draft.exclusions = template.exclusions();

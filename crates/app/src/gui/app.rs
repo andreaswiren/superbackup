@@ -50,6 +50,14 @@ pub enum Pending {
     Restore,
 }
 
+/// How long "Unlocking…" may stay on screen with nothing coming back.
+///
+/// Longer than the transport's own 30-second timeout on purpose: when the link
+/// is merely slow it is the transport that should give up, because it knows
+/// why and says so. This is for the case where the reply is not slow but lost,
+/// and there is nothing to wait for at all.
+const UNLOCK_DEADLINE: Duration = Duration::from_secs(45);
+
 pub struct App {
     pub data: Data,
     pub nav: Nav,
@@ -74,6 +82,10 @@ pub struct App {
     style_installed: bool,
     system_dark: bool,
     last_theme: Option<(Theme, bool)>,
+    /// When the unlock in flight stops being worth waiting for.
+    ///
+    /// See [`App::settle_unlock`]. `None` means no unlock is outstanding.
+    unlock_deadline: Option<std::time::Instant>,
     /// Set once the first frame has issued the opening requests.
     opened: bool,
     /// Ticks up whenever the status snapshot should be refetched.
@@ -130,6 +142,7 @@ impl App {
             style_installed: true,
             system_dark: ctx.style().visuals.dark_mode,
             last_theme: None,
+            unlock_deadline: None,
             opened: false,
             last_refresh: None,
         }
@@ -246,12 +259,15 @@ impl App {
                     }
                 }
             }
-            match &message {
-                Incoming::Failed(intent, payload) => self.report(intent.clone(), payload.clone()),
-                Incoming::Reply(intent, reply) => self.on_reply(intent.clone(), reply),
-                _ => {}
-            }
+            self.deliver(&message);
             self.data.apply(message);
+        }
+        // And an answer that never arrives ends it too. A request whose reply
+        // is lost — a daemon killed mid-call, a pipe that accepted the write
+        // and then died — produces no message at all, so the loop above cannot
+        // be what notices.
+        if self.unlock_deadline.is_some_and(|at| std::time::Instant::now() >= at) {
+            self.settle_unlock(copy::vault::UNLOCK_NO_ANSWER);
         }
         if let Some(outcome) = restore_ended {
             // Close the dialog and say what happened. Leaving it open over a
@@ -272,6 +288,29 @@ impl App {
         if self.data.lagged {
             self.data.lagged = false;
             self.ask(Intent::Status, Request::Status {});
+        }
+    }
+
+    /// One answer from the daemon, dispatched to whoever asked for it.
+    ///
+    /// Separate from `pump` so that a test can hand the window a single
+    /// message — the only practical way to assert what happens when the answer
+    /// is a failure, which is the case that historically went unhandled.
+    fn deliver(&mut self, message: &Incoming) {
+        match message {
+            Incoming::Failed(intent, payload) => self.report(intent.clone(), payload.clone()),
+            Incoming::Reply(intent, reply) => self.on_reply(intent.clone(), reply),
+            _ => {}
+        }
+        // Whatever the arms above did or did not do with it, an answer to an
+        // unlock ends the attempt. See `settle_unlock`.
+        match message {
+            Incoming::Failed(Intent::Unlock, payload) => {
+                let note = payload.message.clone();
+                self.settle_unlock(&note);
+            }
+            Incoming::Reply(Intent::Unlock, _) => self.settle_unlock(copy::vault::UNLOCK_REFUSED),
+            _ => {}
         }
     }
 
@@ -1139,10 +1178,44 @@ impl App {
     }
 
     pub fn unlock(&mut self, passphrase: String) {
+        self.unlock_deadline = Some(std::time::Instant::now() + UNLOCK_DEADLINE);
         self.ask(
             Intent::Unlock,
             Request::VaultUnlock { passphrase: SecretString::from_string(passphrase) },
         );
+    }
+
+    /// An unlock attempt has ended, however it ended.
+    ///
+    /// # The bug this exists to prevent
+    ///
+    /// Pressing Unlock disables the button and puts "Unlocking…" on it, and
+    /// there was exactly one line in the application that turned that back off
+    /// again: the arm for a wrong passphrase. Everything else left it on.
+    ///
+    /// A vault that would not open therefore looked identical to one that was
+    /// taking a long time, for ever. `report` deliberately says nothing about
+    /// `DaemonUnreachable` — the banner already does — and a daemon that is
+    /// still starting up answers exactly that, which is why this was worst on
+    /// the launch straight after a first run: the tray had just spawned the
+    /// daemon, the first unlock raced it, and the only way out was to kill the
+    /// window and start again.
+    ///
+    /// So the end of an unlock is handled in one place, once, rather than in
+    /// each of the arms that might be the last thing to happen. Anything that
+    /// already ended the attempt properly — a success clears the field, a bad
+    /// passphrase shows its error — leaves nothing busy and this does nothing.
+    fn settle_unlock(&mut self, note: &str) {
+        self.unlock_deadline = None;
+        if self.screens.locked.busy {
+            self.screens.locked.fail(note.to_string());
+        }
+        if let Some(Modal::Unlock(state)) = &mut self.modal {
+            if state.busy {
+                state.busy = false;
+                state.error = Some(note.to_string());
+            }
+        }
     }
 
     pub fn lock(&mut self) {
@@ -2099,5 +2172,89 @@ mod tests {
         app.request_run(&job);
         assert!(!app.modal_is_unlock());
         assert_eq!(app.toasts.len(), 1);
+    }
+
+    /// The hang that made the launch after a first run need a restart.
+    ///
+    /// Every one of these codes used to leave "Unlocking…" on the button with
+    /// the button disabled, for ever, because the arm that handles them says
+    /// nothing — correctly, since the link banner covers it — and nothing else
+    /// was responsible for ending the attempt. `DaemonUnreachable` is the one
+    /// that bit: the tray had just spawned the daemon and the first unlock
+    /// arrived before it was listening.
+    #[test]
+    fn an_unlock_that_fails_stops_saying_it_is_unlocking() {
+        use superbackup_core::error::ErrorCode;
+        use superbackup_core::ipc::protocol::ErrorPayload;
+
+        for code in [
+            ErrorCode::DaemonUnreachable,
+            ErrorCode::Ipc,
+            ErrorCode::Locked,
+            ErrorCode::BadPassphrase,
+            ErrorCode::Internal,
+        ] {
+            let (mut app, _ctx) = app();
+            app.screens.locked.busy = true;
+            app.deliver(&Incoming::Failed(
+                Intent::Unlock,
+                ErrorPayload {
+                    code,
+                    message: "the daemon is not running".to_string(),
+                    hint: None,
+                    detail: None,
+                },
+            ));
+            assert!(!app.screens.locked.busy, "{code:?} left the button spinning");
+            assert!(app.screens.locked.error.is_some(), "{code:?} said nothing at all");
+        }
+    }
+
+    /// The other way it stuck: a refusal that is not an error. `unlocked:
+    /// false` fell through the reply arms untouched.
+    #[test]
+    fn a_refused_unlock_is_an_ending_too() {
+        use superbackup_core::ipc::protocol::UnlockedReply;
+
+        let (mut app, _ctx) = app();
+        app.screens.locked.busy = true;
+        app.deliver(&Incoming::Reply(
+            Intent::Unlock,
+            Box::new(Reply::Unlocked(UnlockedReply { unlocked: false, auto_lock_at: None })),
+        ));
+        assert!(!app.screens.locked.busy);
+        assert!(app.screens.locked.error.is_some());
+    }
+
+    /// And a success is still a success: it clears the field rather than
+    /// leaving an error on a vault that opened.
+    #[test]
+    fn a_successful_unlock_leaves_no_error_behind() {
+        use superbackup_core::ipc::protocol::UnlockedReply;
+
+        let (mut app, _ctx) = app();
+        app.screens.locked.busy = true;
+        app.screens.locked.passphrase = "correct horse battery staple".to_string();
+        app.deliver(&Incoming::Reply(
+            Intent::Unlock,
+            Box::new(Reply::Unlocked(UnlockedReply { unlocked: true, auto_lock_at: None })),
+        ));
+        assert!(!app.screens.locked.busy);
+        assert_eq!(app.screens.locked.error, None);
+        assert!(app.screens.locked.passphrase.is_empty(), "the passphrase must not linger");
+    }
+
+    /// An answer that never comes is also an ending. Pressing Unlock without
+    /// anything to answer it must not leave the window waiting for ever.
+    #[test]
+    fn an_unlock_nobody_answers_gives_up_rather_than_waiting_for_ever() {
+        let (mut app, _ctx) = app();
+        app.screens.locked.busy = true;
+        app.unlock("correct horse battery staple".to_string());
+        // The deadline is 45 seconds away; wind it back rather than wait.
+        app.unlock_deadline = Some(std::time::Instant::now());
+        app.pump();
+        assert!(!app.screens.locked.busy);
+        assert_eq!(app.unlock_deadline, None, "a settled attempt must not fire twice");
     }
 }

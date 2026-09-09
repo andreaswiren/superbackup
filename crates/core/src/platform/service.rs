@@ -362,6 +362,44 @@ pub fn install(options: &ServiceOptions) -> Result<()> {
     platform_impl::install(options)
 }
 
+/// Ask the operating system to install the service with administrator rights.
+///
+/// # Why this exists
+///
+/// The wizard offers "install the background service" as a tick box, and a
+/// person setting up a backup tool is almost never running it as an
+/// administrator. So the tick did nothing, and setup finished with a sentence
+/// explaining that the user should start the whole program again a different
+/// way — which is a reasonable thing to say and a terrible thing to have to do
+/// at the end of a wizard.
+///
+/// This runs the same `superbackup service install` the user would type, under
+/// the platform's own elevation prompt. The prompt is the operating system's,
+/// not ours: superbackup never handles the administrator credentials, and a
+/// user who says no is simply back where they were.
+///
+/// # Why it takes no arguments at all
+///
+/// Because it starts a program as an administrator, and anything that can be
+/// aimed can be aimed somewhere else. The executable is this one, from
+/// `current_exe` rather than from configuration, and the command line is two
+/// fixed words. There is nothing to pass and therefore nothing to redirect.
+///
+/// It needs no `--home` either: a Windows service runs as LocalSystem against
+/// the machine-wide root, which is the same folder whichever account approves
+/// the prompt. That matters, because the account that approves it is often not
+/// the account that asked.
+///
+/// Returns as soon as the prompt has been raised. It does not wait: the user
+/// may take a while to decide, and the caller is a window that has to keep
+/// drawing. Whether the service actually appeared is answered by asking for
+/// its status afterwards, which is the same question the interface asks anyway.
+pub fn request_elevated_install() -> Result<()> {
+    let executable = std::env::current_exe()
+        .map_err(|e| Error::Service(format!("superbackup cannot find its own path: {e}")))?;
+    platform_impl::request_elevated_install(&executable)
+}
+
 /// Remove the service. Stops it first where the platform requires it.
 /// Removing a service that is not installed succeeds.
 pub fn uninstall(name: &str, scope: ServiceScope) -> Result<()> {
@@ -507,6 +545,53 @@ pub fn is_mapped_drive_letter(path: &Path) -> bool {
 mod platform_impl {
     use super::*;
     use std::ffi::OsString;
+
+    /// `ShellExecuteW` with the `runas` verb: the operating system's own
+    /// elevation prompt, raised against this executable.
+    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let verb = crate::platform::win32::wide("runas");
+        let file = crate::platform::win32::wide(executable);
+        let args = crate::platform::win32::wide("service install");
+
+        // SAFETY: three null-terminated wide strings that outlive the call,
+        // and no owner window, which is allowed and means the prompt is not
+        // parented to ours.
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(verb.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                PCWSTR(args.as_ptr()),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+
+        // ShellExecuteW returns a fake HINSTANCE: greater than 32 means it
+        // started. `ERROR_CANCELLED` is specifically the user clicking No,
+        // which is an answer rather than a fault, and is worth saying
+        // differently from a prompt that could not be shown at all.
+        let code = result.0 as usize;
+        if code > 32 {
+            return Ok(());
+        }
+        if code == windows::Win32::Foundation::ERROR_CANCELLED.0 as usize {
+            return Err(Error::Service(
+                "The administrator prompt was declined, so the background service was not \
+                 installed. Superbackup still runs every backup while you are signed in."
+                    .into(),
+            ));
+        }
+        Err(Error::Service(format!(
+            "The administrator prompt could not be shown (code {code}), so the background \
+             service was not installed."
+        )))
+    }
+
     use std::time::Duration;
     use windows_service::service::{
         ServiceAccess, ServiceAction, ServiceActionType, ServiceErrorControl,
@@ -976,6 +1061,20 @@ mod windows_entry {
 mod platform_impl {
     use super::*;
 
+    /// There is no unattended way to do this on a Unix desktop.
+    ///
+    /// `pkexec` would raise a prompt, but only where polkit is configured for
+    /// it, and a backup tool silently invoking a privilege helper is not a
+    /// thing to add on a maybe. The honest answer is the command to run.
+    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+        Err(Error::Service(format!(
+            "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
+             service install\n\nOr install a per-user service, which needs no privileges at \
+             all.",
+            executable.display()
+        )))
+    }
+
     pub fn install(options: &ServiceOptions) -> Result<()> {
         let path = unit_path(&options.name, options.scope)?;
         let body = super::render_systemd_unit(options);
@@ -1111,6 +1210,20 @@ mod platform_impl {
 mod platform_impl {
     use super::*;
 
+    /// There is no unattended way to do this on a Unix desktop.
+    ///
+    /// `pkexec` would raise a prompt, but only where polkit is configured for
+    /// it, and a backup tool silently invoking a privilege helper is not a
+    /// thing to add on a maybe. The honest answer is the command to run.
+    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+        Err(Error::Service(format!(
+            "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
+             service install\n\nOr install a per-user service, which needs no privileges at \
+             all.",
+            executable.display()
+        )))
+    }
+
     pub fn install(options: &ServiceOptions) -> Result<()> {
         let path = plist_path(options.scope)?;
         let body = super::render_launch_daemon(options);
@@ -1232,6 +1345,20 @@ mod platform_impl {
 #[cfg(not(any(windows, unix)))]
 mod platform_impl {
     use super::*;
+
+    /// There is no unattended way to do this on a Unix desktop.
+    ///
+    /// `pkexec` would raise a prompt, but only where polkit is configured for
+    /// it, and a backup tool silently invoking a privilege helper is not a
+    /// thing to add on a maybe. The honest answer is the command to run.
+    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+        Err(Error::Service(format!(
+            "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
+             service install\n\nOr install a per-user service, which needs no privileges at \
+             all.",
+            executable.display()
+        )))
+    }
 
     fn unsupported() -> Error {
         Error::Service(format!(
