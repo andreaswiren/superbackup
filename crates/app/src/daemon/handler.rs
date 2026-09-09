@@ -4396,6 +4396,18 @@ fn copy_buckets_visible(count: usize) -> String {
     }
 }
 
+/// Is this path directly inside this account's SSH key folder?
+///
+/// The boundary for a key that is no longer on disk, where `ssh::discover`
+/// cannot vouch for it. Compares the parent folder only, so nothing carrying a
+/// `..` and nothing outside `~/.ssh` gets through.
+fn in_key_folder(path: &std::path::Path) -> bool {
+    let Some(folder) = superbackup_core::credentials::ssh::ssh_dir() else {
+        return false;
+    };
+    path.parent().map(|p| p == folder).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4554,16 +4566,4 @@ mod tests {
             assert!(summary.contains("mapped"), "{summary}");
         }
     }
-}
-
-/// Is this path directly inside this account's SSH key folder?
-///
-/// The boundary for a key that is no longer on disk, where `ssh::discover`
-/// cannot vouch for it. Compares the parent folder only, so nothing carrying a
-/// `..` and nothing outside `~/.ssh` gets through.
-fn in_key_folder(path: &std::path::Path) -> bool {
-    let Some(folder) = superbackup_core::credentials::ssh::ssh_dir() else {
-        return false;
-    };
-    path.parent().map(|p| p == folder).unwrap_or(false)
 }

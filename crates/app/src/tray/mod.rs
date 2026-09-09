@@ -232,7 +232,7 @@ fn spawn_watcher(runtime: Arc<Runtime>, commands: std::sync::mpsc::Sender<TrayCo
                     // tick: the taskbar theme changes when a human changes it,
                     // not eight times a second. Check about once a second.
                     theme_ticks = theme_ticks.wrapping_add(1);
-                    let now = if theme_ticks % THEME_CHECK_EVERY == 0 {
+                    let now = if theme_ticks.is_multiple_of(THEME_CHECK_EVERY) {
                         icons::system_uses_light_theme()
                     } else {
                         theme

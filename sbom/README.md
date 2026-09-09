@@ -5,8 +5,8 @@ These files are **generated**. Do not edit them by hand — edit
 
 | File | What it is |
 |---|---|
-| `superbackup-0.1.0.cdx.json` | The bill of materials, CycloneDX 1.5, JSON. This is the canonical artefact: it is what CI validates, what is attached to releases, and what a vulnerability scanner should be pointed at. |
-| `superbackup-0.1.0.cdx.xml` | The same document, CycloneDX 1.5, XML. Byte-for-byte equivalent in content; provided because some procurement and asset-management tooling accepts only XML. |
+| `superbackup-<version>.cdx.json` | The bill of materials, CycloneDX 1.5, JSON. This is the canonical artefact: it is what CI validates, what is attached to releases, and what a vulnerability scanner should be pointed at. |
+| `superbackup-<version>.cdx.xml` | The same document, CycloneDX 1.5, XML. Byte-for-byte equivalent in content; provided because some procurement and asset-management tooling accepts only XML. |
 | `generate.py` | The generator. The only supported way to produce the two files above. |
 
 The filename carries the workspace version, so `sbom/` accumulates one pair of
@@ -77,8 +77,8 @@ carries the SHA-256 that `Cargo.lock` records for that package:
 
 ```bash
 python - <<'EOF'
-import json
-bom = json.load(open("sbom/superbackup-0.1.0.cdx.json"))
+import glob, json
+bom = json.load(open(glob.glob("sbom/superbackup-*.cdx.json")[-1]))
 for c in bom["components"]:
     for h in c.get("hashes", []):
         print(h["alg"], h["content"], c["purl"])
@@ -96,7 +96,7 @@ emits a build attestation. See "Verifying provenance" in
 **That the document is well formed.** Any CycloneDX-aware tool will do:
 
 ```bash
-cyclonedx-cli validate --input-file sbom/superbackup-0.1.0.cdx.json
+cyclonedx-cli validate --input-file sbom/superbackup-*.cdx.json
 ```
 
 ## Reproducibility

@@ -338,7 +338,12 @@ jobs:
           python3 -m pip install --quiet --upgrade pip
           cargo install cargo-cyclonedx --locked --version 0.5.9
           python3 sbom/generate.py
-          cp sbom/*.cdx.json sbom/*.cdx.xml dist/
+          # This version's, not every version's. `sbom/` keeps one pair of
+          # files per release on purpose, so a glob here attached a bill of
+          # materials for 0.1.0 to a release of something else entirely —
+          # which is worse than no SBOM, because a scanner believes it.
+          version="${{ needs.preflight.outputs.changelog_version }}"
+          cp "sbom/superbackup-$version.cdx.json" "sbom/superbackup-$version.cdx.xml" dist/
 
       - name: Extract this version's changelog section
         id: notes

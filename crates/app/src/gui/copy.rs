@@ -1561,10 +1561,7 @@ pub fn git_pull_all_failed(total: usize, failed: &[String]) -> String {
     // Capped: a laptop closed for a fortnight can produce a great many, and a
     // toast tall enough to cover the window is one nobody reads.
     for detail in failed.iter().take(5) {
-        out.push_str(
-            "
-",
-        );
+        out.push('\n');
         out.push_str(detail);
     }
     if failed.len() > 5 {

@@ -116,8 +116,8 @@ Stated so the boundary is honest rather than implied.
 ### Point a scanner at it
 
 ```bash
-grype sbom:sbom/superbackup-0.1.0.cdx.json
-trivy sbom sbom/superbackup-0.1.0.cdx.json
+grype sbom:sbom/superbackup-*.cdx.json
+trivy sbom sbom/superbackup-*.cdx.json
 ```
 
 CI does this on every push to `main` and on release, in
@@ -133,7 +133,7 @@ disagree, the SBOM is wrong, and that is exactly the thing worth finding out.
 jq -r '.components[]
        | select(.name == "openssl")
        | "\(.purl)  \(.properties[]|select(.name=="superbackup:targets").value)"' \
-   sbom/superbackup-0.1.0.cdx.json
+   sbom/superbackup-*.cdx.json
 ```
 
 The `superbackup:targets` property is the one most people want: it says whether
@@ -143,7 +143,7 @@ a component is in every build or only the Windows one.
 
 ```bash
 jq -r '.components[] | "\(.licenses[0].expression // "UNKNOWN")\t\(.name)@\(.version)"' \
-   sbom/superbackup-0.1.0.cdx.json | sort | uniq -c | sort -rn
+   sbom/superbackup-*.cdx.json | sort | uniq -c | sort -rn
 ```
 
 This is the same information `cargo deny check licenses` enforces, in a form a
@@ -172,7 +172,7 @@ Every release runs `actions/attest-build-provenance`, which produces a signed
 SLSA provenance statement recorded in a public transparency log:
 
 ```bash
-gh attestation verify superbackup-0.1.0.cdx.json --repo andreaswiren/superbackup
+gh attestation verify superbackup-<version>.cdx.json --repo andreaswiren/superbackup
 ```
 
 This tells you the file was produced by the named workflow at a named commit in

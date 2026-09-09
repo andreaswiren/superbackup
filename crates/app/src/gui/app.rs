@@ -1929,17 +1929,16 @@ impl App {
         let Some(modal) = self.modal.take() else {
             return;
         };
-        match modals::show(self, ctx, modal) {
-            Some(still_open) => self.modal = Some(still_open),
-            // Deliberately *not* `self.modal = None`.
-            //
-            // `self.modal` was already taken above, so it is None here
-            // whatever happens. A modal that closes by opening another one —
-            // the git repository dialog giving way to the document viewer —
-            // sets `self.modal` while it runs, and assigning None here threw
-            // that away: the first dialog closed and the second never
-            // appeared, which reads as a button that does nothing.
-            None => {}
+        // A modal that closed assigns nothing, deliberately.
+        //
+        // `self.modal` was already taken above, so it is None here whatever
+        // happens. A modal that closes by opening another one — the git
+        // repository dialog giving way to the document viewer — sets
+        // `self.modal` while it runs, and writing None back over it threw that
+        // away: the first dialog closed and the second never appeared, which
+        // reads as a button that does nothing.
+        if let Some(still_open) = modals::show(self, ctx, modal) {
+            self.modal = Some(still_open);
         }
     }
 
