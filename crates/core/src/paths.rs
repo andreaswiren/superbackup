@@ -178,7 +178,7 @@ impl Paths {
     /// rather than `DefaultHasher` because the value has to be identical across
     /// processes and across builds — the CLI computes it independently of the
     /// daemon and the two must agree.
-    fn instance_tag(&self) -> String {
+    pub(crate) fn instance_tag(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         h.update(normalised_key(&self.config_dir).as_bytes());
@@ -211,11 +211,34 @@ impl Paths {
         }
     }
 
-    /// `$XDG_RUNTIME_DIR` when available, else the data directory.
+    /// `$XDG_RUNTIME_DIR` when available, else a short directory under the
+    /// system temporary folder.
+    ///
+    /// # Why not the data directory
+    ///
+    /// Because it does not fit. A Unix socket path lives in `sun_path`, which
+    /// is **104 bytes on macOS** and 108 on Linux — a limit in the kernel
+    /// struct, not the filesystem — and `bind` on a longer path fails with an
+    /// error that says nothing whatever about length.
+    ///
+    /// macOS never sets `XDG_RUNTIME_DIR`, and its data directory is
+    /// `~/Library/Application Support/io.superbackup.superbackup`. With
+    /// `/run/superbackup-<tag>.sock` on the end that is 92 bytes before the
+    /// username, leaving eleven characters for it: `alice` fitted and
+    /// `andreas.wiren` did not. On those machines the daemon never bound, the
+    /// window said nothing was listening, and no backup ever ran.
+    ///
+    /// So the fallback is short by construction. The directory still belongs
+    /// to this instance and is still private — `Server::bind` restricts the
+    /// socket's *parent* to 0700, which is what keeps another local user out
+    /// of the endpoint, so putting the socket straight into the temporary
+    /// folder would make `bind` try to chmod a directory that is not ours.
+    /// Short and private, not short instead of private.
     pub fn runtime_dir(&self) -> PathBuf {
-        std::env::var_os("XDG_RUNTIME_DIR")
-            .map(|d| PathBuf::from(d).join(APP_NAME))
-            .unwrap_or_else(|| self.data_dir.join("run"))
+        if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+            return PathBuf::from(dir).join(APP_NAME);
+        }
+        std::env::temp_dir().join(format!("sb-{}", self.instance_tag()))
     }
 
     /// Single-instance lock, so two trays never drive the same repositories.

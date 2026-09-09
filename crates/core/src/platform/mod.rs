@@ -50,6 +50,7 @@ pub mod shortcut;
 pub mod single_instance;
 pub mod terminal;
 pub mod wake;
+pub mod webauthn;
 
 #[cfg(windows)]
 mod win32;

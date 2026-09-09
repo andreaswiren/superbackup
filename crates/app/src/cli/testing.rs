@@ -193,6 +193,7 @@ impl Harness {
             no_input: true,
             home: None,
             service: false,
+            minimised: false,
             timeout: 10,
             color: ColorChoice::Never,
         };
@@ -332,6 +333,7 @@ pub fn unreachable_ctx(json: bool) -> (Ctx, Captured) {
         no_input: true,
         home: None,
         service: false,
+        minimised: false,
         timeout: 2,
         color: ColorChoice::Never,
     };

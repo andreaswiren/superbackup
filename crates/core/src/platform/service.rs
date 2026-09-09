@@ -187,6 +187,19 @@ impl ServiceOptions {
     }
 
     pub fn new(executable: impl Into<PathBuf>, paths: &Paths) -> ServiceOptions {
+        // The directories the *service* will write to, which are not the ones
+        // it is being described from.
+        //
+        // `SERVICE_ARGS` is `daemon --service`, so the started process
+        // resolves `Paths::for_service()` — `/var/lib/superbackup` on Linux —
+        // and never opens the caller's own directories at all. Passing those
+        // through produced a systemd unit granting write access to three
+        // folders under `/home` that the service never touches, and none to
+        // the one it lives in. With `ProtectHome=read-only` set two lines
+        // above them in the same unit, that is a mount-namespace contradiction
+        // rather than merely a useless permission.
+        let service_paths = Paths::for_service().unwrap_or_else(|_| paths.clone());
+        let _ = paths;
         ServiceOptions {
             name: DEFAULT_SERVICE_NAME.to_string(),
             display_name: DEFAULT_DISPLAY_NAME.to_string(),
@@ -197,9 +210,9 @@ impl ServiceOptions {
             scope: ServiceScope::System,
             start_mode: StartMode::AutomaticDelayed,
             state_dirs: vec![
-                paths.data_dir.clone(),
-                paths.log_dir.clone(),
-                paths.cache_dir.clone(),
+                service_paths.data_dir.clone(),
+                service_paths.log_dir.clone(),
+                service_paths.cache_dir.clone(),
             ],
         }
     }

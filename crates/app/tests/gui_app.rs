@@ -264,8 +264,14 @@ fn unlocking_from_a_blocked_action_performs_that_action() {
     }
     let job = app.data.jobs[0].clone();
     app.request_run(&job);
-    frame(&mut app, &ctx, egui::vec2(1100.0, 720.0));
     assert!(app.modal_is_unlock(), "a blocked run must offer to unlock");
+
+    // And then the frame draws, and a locked vault is a state of the *window*:
+    // the lock screen replaces everything and owns the passphrase field, so
+    // the modal is dismissed rather than stacked on top of it. What must not
+    // be dismissed with it is the thing the user was trying to do.
+    frame(&mut app, &ctx, egui::vec2(1100.0, 720.0));
+    assert!(!app.modal_is_unlock(), "two passphrase fields were on screen at once");
     assert_eq!(handler.calls("job.run"), 0, "nothing may run while locked");
 
     app.complete_unlock_for_test();

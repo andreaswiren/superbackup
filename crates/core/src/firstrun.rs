@@ -47,6 +47,8 @@ pub struct Choices {
     pub create_shortcut: bool,
     pub autostart: bool,
     pub install_service: bool,
+    /// Start superbackup minimised to the tray rather than with a window.
+    pub start_minimised: bool,
     /// Let this machine open its own vault at login, so scheduled backups run
     /// without anybody typing anything.
     ///
@@ -94,11 +96,27 @@ pub fn apply(paths: &crate::paths::Paths, passphrase: &Secret, choices: &Choices
         Ok(mut store) => {
             if let Err(e) = store.unlock(passphrase) {
                 applied.problems.push(format!("the vault could not be opened: {e}"));
+                // Not `return`. The Start-menu entry, starting at login and
+                // installing the service have nothing to do with the vault,
+                // and returning here silently skipped all three because one
+                // unrelated thing had failed.
+                apply_platform(paths, choices, &mut applied);
                 return applied;
             }
             let mut config = store.config().clone();
             let slug = config.machine.slug.clone();
+            // The settings that describe what was just done to the machine.
+            //
+            // These are separate from doing it — `apply_platform` writes the
+            // Start-menu entry and the login entry, and this records that they
+            // are wanted — and they were not being written at all. `Settings`
+            // defaults `start_at_login` to true, so a user who declined it got
+            // no login entry, correctly, and a Settings screen showing the
+            // toggle on, which is the interface disagreeing with the machine.
             config.settings.use_os_keychain = choices.unattended_unlock;
+            config.settings.start_at_login = choices.autostart;
+            config.settings.start_minimised = choices.start_minimised;
+            config.settings.run_as_service = choices.install_service;
 
             if let Some(root) = &choices.onedrive {
                 match add_onedrive(&mut store, &mut config, root, &slug) {
@@ -113,9 +131,36 @@ pub fn apply(paths: &crate::paths::Paths, passphrase: &Secret, choices: &Choices
 
             if let Some(job) = &choices.job {
                 let mut job = job.clone();
-                job.destination_ids = config.destinations.iter().map(|d| d.id).collect();
-                applied.job = Some(job.name.clone());
-                config.jobs.push(job);
+                // Every destination except one inside the job's own folders.
+                //
+                // "Everything" backs up the home directory, and OneDrive lives
+                // inside it — so the pair the wizard offers side by side
+                // produced a job that backs up the previous run's output and
+                // grows without bound. The configuration refuses it, correctly
+                // (`validate_no_self_nesting`), which meant choosing those two
+                // perfectly reasonable options ended setup with no job at all.
+                //
+                // Dropping the destination rather than the job: the job is
+                // what the user described, and a job with a folder and no
+                // destination is still refused below, so this cannot quietly
+                // produce one that backs up nowhere.
+                job.destination_ids = config
+                    .destinations
+                    .iter()
+                    .filter(|destination| !nests_inside(destination, &job))
+                    .map(|d| d.id)
+                    .collect();
+                if job.destination_ids.is_empty() && !config.destinations.is_empty() {
+                    applied.problems.push(format!(
+                        "\"{}\" was not created: the only place to back it up to is inside the \
+                         folders it would back up, so every run would copy the last one. Make a \
+                         job with a narrower folder, or a destination outside it.",
+                        job.name
+                    ));
+                } else {
+                    applied.job = Some(job.name.clone());
+                    config.jobs.push(job);
+                }
             }
 
             if let Err(e) = store.set_config(config) {
@@ -132,11 +177,14 @@ pub fn apply(paths: &crate::paths::Paths, passphrase: &Secret, choices: &Choices
                 // a generated repository passphrase that is already in the
                 // vault, and a folder that already exists on disk. A job is
                 // three fields and a folder picker.
-                if applied.destination.is_some() {
-                    if let Err(e) = store.set_config(without_job) {
-                        applied.problems.push(format!("the configuration could not be saved: {e}"));
-                        applied.destination = None;
-                    }
+                // Unconditionally, not only when there is a destination to
+                // save. `without_job` also carries the settings — including
+                // whether this machine may unlock itself, which is a security
+                // decision the user made deliberately — and skipping the save
+                // reverted all of them to their defaults without a word.
+                if let Err(e) = store.set_config(without_job) {
+                    applied.problems.push(format!("the configuration could not be saved: {e}"));
+                    applied.destination = None;
                 }
             }
         }
@@ -145,6 +193,22 @@ pub fn apply(paths: &crate::paths::Paths, passphrase: &Secret, choices: &Choices
 
     apply_platform(paths, choices, &mut applied);
     applied
+}
+
+/// Would backing up to this destination copy the job's own output?
+///
+/// The rule the configuration enforces, applied here so the wizard can avoid
+/// producing a pair it is going to refuse. A destination inside one of the
+/// job's own folders means every run backs up the previous run, and the
+/// repository grows until the disk is full.
+///
+/// Only the destinations that live on this filesystem can nest; a bucket has
+/// no path to be inside anything.
+fn nests_inside(destination: &Destination, job: &Job) -> bool {
+    let Some(path) = destination.kind.local_path() else {
+        return false;
+    };
+    job.sources.iter().any(|source| path.starts_with(&source.path))
 }
 
 /// Add a OneDrive destination, with its own generated repository passphrase.

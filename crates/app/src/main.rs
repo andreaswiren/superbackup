@@ -66,6 +66,25 @@ fn detach_console() {
     }
 }
 
+/// Is an instance already answering for this installation?
+///
+/// Asked once, at the one moment two of them could be started: after a first
+/// run, when the setup window has already started one.
+fn daemon_is_listening(paths: &Paths) -> bool {
+    let endpoint = paths.ipc_endpoint();
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+        // No runtime to ask with. Saying "no" keeps the old behaviour, which
+        // is the safe direction: at worst the single-instance guard refuses.
+        return false;
+    };
+    runtime
+        .block_on(superbackup_core::ipc::client::Client::connect_with(
+            &endpoint,
+            std::time::Duration::from_secs(2),
+        ))
+        .is_ok()
+}
+
 fn main() -> ExitCode {
     let parsed = cli::Cli::parse();
 
@@ -107,7 +126,16 @@ fn main() -> ExitCode {
                 detach_console();
                 let code = gui::open_or_focus(paths.clone(), &global, &Default::default());
                 // Setup may have been abandoned; only go on if it finished.
-                if code == ExitCode::SUCCESS && superbackup_core::config::is_initialised(&paths) {
+                //
+                // And only if nothing is already listening. The window starts
+                // a daemon of its own the moment the vault exists, so that the
+                // rest of setup has something to talk to — starting a second
+                // one here would meet the first one's single-instance guard
+                // and report a failure at the end of a setup that worked.
+                if code == ExitCode::SUCCESS
+                    && superbackup_core::config::is_initialised(&paths)
+                    && !daemon_is_listening(&paths)
+                {
                     daemon::run_foreground(paths, &global, daemon::Surface::Tray)
                 } else {
                     code

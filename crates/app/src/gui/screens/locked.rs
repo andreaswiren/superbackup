@@ -47,6 +47,13 @@ const RECENT_RUNS: usize = 5;
 
 impl App {
     pub(crate) fn show_locked(&mut self, ctx: &egui::Context) {
+        // The authenticator answers up to a minute after the click, so the
+        // frame is what notices, not the button.
+        self.poll_passkey();
+        if self.screens.locked.passkey.is_some() {
+            // A prompt is up and this window must keep painting behind it.
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let t = theme::tokens(ctx);
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.bg_canvas)).show(ctx, |ui| {
             let available = ui.available_height();
@@ -65,10 +72,168 @@ impl App {
                         ui.add_space(space::H2);
                         self.locked_recent(ui);
                         ui.add_space(space::H2);
+                        self.locked_installation(ui);
+                        ui.add_space(space::H2);
                     },
                 );
             });
         });
+    }
+
+    /// What this window is looking at, and the ways out of it.
+    ///
+    /// A locked window used to be a passphrase field and nothing else, which
+    /// is a problem the moment somebody has more than one installation or the
+    /// background process is not running: the screen said neither, so the only
+    /// way to find out was to get in, and getting in was the thing that was
+    /// not working.
+    ///
+    /// So it says which vault it is asking about, whether anything is running
+    /// behind it, and what version this is — the same three facts the status
+    /// strip carries once you are inside — and it offers the two things a
+    /// person locked out actually wants: a different vault, or a new one.
+    fn locked_installation(&mut self, ui: &mut Ui) {
+        let t = theme::tokens(ui.ctx());
+        let mut open_other = false;
+        let mut create_new = false;
+        let mut about = false;
+
+        ui.allocate_ui_with_layout(Vec2::new(420.0, 0.0), Layout::top_down(Align::Center), |ui| {
+            // Which installation. The path, because a person with two of them
+            // needs to know which one is refusing.
+            if let Some(paths) = &self.paths {
+                widgets::text(ui, copy::vault::LOCKED_VAULT_PATH, Type::Small, t.text_secondary);
+                ui.add_space(space::XXS);
+                widgets::elided(
+                    ui,
+                    &paths.config_dir.display().to_string(),
+                    Type::MonoSmall,
+                    t.text_muted,
+                    400.0,
+                    // From the left: two installations differ at the end of
+                    // the path, not the beginning.
+                    true,
+                );
+                ui.add_space(space::L);
+            }
+
+            // The status strip's own three facts, on the screen that has no
+            // status strip.
+            let running = self.data.link_up;
+            let installed = self.data.snapshot.as_ref().is_some_and(|s| s.service_installed);
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
+                ui.painter().circle_filled(
+                    rect.center(),
+                    4.0,
+                    if running { t.success.mark } else { t.danger.mark },
+                );
+                ui.add_space(space::S);
+                widgets::text(ui, copy::locked_daemon(running), Type::Small, t.text_muted);
+                ui.add_space(space::L);
+                widgets::text(ui, copy::locked_service(installed), Type::Small, t.text_muted);
+                ui.add_space(space::L);
+                widgets::text(
+                    ui,
+                    format!("superbackup {}", superbackup_core::VERSION),
+                    Type::Small,
+                    t.text_muted,
+                );
+            });
+
+            ui.add_space(space::L);
+            ui.horizontal(|ui| {
+                if Button::ghost(copy::vault::LOCKED_OPEN_OTHER)
+                    .compact()
+                    .show(ui)
+                    .on_hover_text(copy::vault::LOCKED_OPEN_OTHER_HINT)
+                    .clicked()
+                {
+                    open_other = true;
+                }
+                if Button::ghost(copy::vault::LOCKED_NEW_VAULT)
+                    .compact()
+                    .show(ui)
+                    .on_hover_text(copy::vault::LOCKED_NEW_VAULT_HINT)
+                    .clicked()
+                {
+                    create_new = true;
+                }
+                if Button::ghost(copy::vault::LOCKED_ABOUT).compact().show(ui).clicked() {
+                    about = true;
+                }
+            });
+        });
+
+        if open_other {
+            self.switch_vault(ui.ctx(), false);
+        }
+        if create_new {
+            self.switch_vault(ui.ctx(), true);
+        }
+        if about {
+            // A dialog rather than the About *page*: the page lives behind the
+            // lock screen, which this window is not drawing. Everything on it
+            // describes the program rather than the installation, so none of
+            // it is behind the lock in the first place.
+            self.open_modal(crate::gui::modals::Modal::Confirm(self.locked_about()));
+        }
+    }
+
+    /// The About page's facts, in a dialog a locked window can show.
+    fn locked_about(&self) -> crate::gui::modals::Confirm {
+        let mut confirm = crate::gui::modals::Confirm::new(
+            copy::vault::LOCKED_ABOUT,
+            copy::about::TAGLINE,
+            copy::action::CLOSE,
+        )
+        .bullet(format!("Version {}", superbackup_core::VERSION))
+        .bullet(copy::about::LICENCE_SELF)
+        .bullet(copy::about::LICENCE_KOPIA);
+        if let Some(paths) = &self.paths {
+            confirm = confirm.bullet(format!("Vault: {}", paths.config_dir.display()));
+        }
+        confirm.destructive = false;
+        confirm
+    }
+
+    /// Point superbackup at a different configuration folder.
+    ///
+    /// Restarts, and has to: the configuration root is fixed when the process
+    /// starts — it decides the IPC endpoint, which daemon this window talks
+    /// to, and where every path is rooted — so changing it in place would
+    /// leave a window addressing one installation and a daemon serving
+    /// another.
+    ///
+    /// `create` says which mistake to refuse. Opening a folder with no vault
+    /// in it, and creating one in a folder that already has a vault, are both
+    /// the user having picked the wrong button, and neither is what they meant.
+    fn switch_vault(&mut self, ctx: &egui::Context, create: bool) {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        let paths = superbackup_core::paths::Paths::rooted_at(&folder, false);
+        let exists = superbackup_core::config::is_initialised(&paths);
+        if create && exists {
+            self.toasts.warning(copy::vault::LOCKED_ALREADY_A_VAULT);
+            return;
+        }
+        if !create && !exists {
+            self.toasts.warning(copy::vault::LOCKED_NOT_A_VAULT);
+            return;
+        }
+
+        let started = superbackup_core::ipc::client::AutoStart::current_exe(&[
+            "--home",
+            &folder.display().to_string(),
+        ])
+        .and_then(|autostart| autostart.spawn());
+        match started {
+            // This window is now looking at the wrong installation, and the
+            // new one owns the screen.
+            Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Err(e) => self.toasts.danger(copy::vault::LOCKED_OPEN_OTHER, e.to_string()),
+        }
     }
 
     /// Which machine this is. On a locked screen it is the only way to tell one
@@ -95,6 +260,7 @@ impl App {
         let t = theme::tokens(ui.ctx());
         let busy = self.screens.locked.busy;
         let mut submit = false;
+        let mut use_passkey = None;
 
         ui.allocate_ui_with_layout(Vec2::new(360.0, 0.0), Layout::top_down(Align::Center), |ui| {
             widgets::paragraph_at(ui, copy::vault::LOCKED_BODY, Type::Small, t.text_muted, 360.0);
@@ -141,6 +307,31 @@ impl App {
                 submit = true;
             }
 
+            // The other way in, offered only where there is one.
+            //
+            // Below the passphrase and not above it: the passphrase is the way
+            // that always works, and a passkey is an addition. Putting it
+            // first would suggest the machine prefers it, on a screen where
+            // the honest hierarchy matters — a lost authenticator must not
+            // read like a lost vault.
+            if let Some(entry) = self.first_passkey() {
+                ui.add_space(space::L);
+                let waiting = self.screens.locked.passkey.is_some();
+                let label = match &self.screens.locked.passkey {
+                    Some(pending) => pending.line,
+                    None => copy::vault::UNLOCK_PASSKEY,
+                };
+                if Button::secondary(label)
+                    .busy(waiting)
+                    .enabled(!waiting && !busy)
+                    .show(ui)
+                    .on_hover_text(copy::vault::UNLOCK_PASSKEY_HINT)
+                    .clicked()
+                {
+                    use_passkey = Some(entry);
+                }
+            }
+
             // A passphrase that cannot be recovered is worth saying once
             // the user has clearly stopped remembering it, and not before.
             if self.screens.locked.attempts >= 3 {
@@ -160,6 +351,54 @@ impl App {
             self.screens.locked.error = None;
             let passphrase = self.screens.locked.passphrase.clone();
             self.unlock(passphrase);
+        }
+
+        if let Some(entry) = use_passkey {
+            if let Some(paths) = self.paths.clone() {
+                self.screens.locked.error = None;
+                self.screens.locked.passkey =
+                    Some(crate::gui::passkey::Pending::unlock(paths, entry));
+            }
+        }
+    }
+
+    /// The passkey to offer, when this machine has one and can use it.
+    ///
+    /// The first enrolled, not a chooser. Most people have one, and an unlock
+    /// screen is the wrong place to make somebody pick from a list before they
+    /// can get in — an authenticator that is not the one asked for simply
+    /// refuses, and they can try the next.
+    fn first_passkey(&self) -> Option<superbackup_core::credentials::passkey::Enrolled> {
+        let paths = self.paths.as_ref()?;
+        if !superbackup_core::platform::webauthn::support().usable() {
+            return None;
+        }
+        superbackup_core::credentials::passkey::list(paths).into_iter().next()
+    }
+
+    /// Take whatever the authenticator said, once per frame.
+    ///
+    /// Called from the frame rather than from the button, because the answer
+    /// arrives up to a minute after the click.
+    pub(crate) fn poll_passkey(&mut self) {
+        let Some(pending) = &mut self.screens.locked.passkey else {
+            return;
+        };
+        let Some(outcome) = pending.poll() else {
+            return;
+        };
+        self.screens.locked.passkey = None;
+        match outcome {
+            crate::gui::passkey::Outcome::Unlocked(passphrase) => {
+                // Straight to the ordinary unlock. The daemon is not told a
+                // passkey was involved, and does not need to be: what it is
+                // handed is a passphrase somebody proved they were entitled
+                // to.
+                self.screens.locked.busy = true;
+                self.unlock(passphrase.expose_str().unwrap_or_default().to_string());
+            }
+            crate::gui::passkey::Outcome::Failed(why) => self.screens.locked.fail(why),
+            crate::gui::passkey::Outcome::Enrolled(_) => {}
         }
     }
 
@@ -268,6 +507,8 @@ pub struct State {
     pub error: Option<String>,
     /// Focus is claimed once. See `locked_unlock`.
     pub focused: bool,
+    /// The authenticator prompt that is up, if one is.
+    pub passkey: Option<crate::gui::passkey::Pending>,
 }
 
 impl State {
@@ -289,6 +530,10 @@ impl State {
         self.attempts = 0;
         self.error = None;
         self.focused = false;
+        // Dropping the handle does not cancel the operating system's prompt —
+        // nothing here can — but the vault is open, so whatever it returns has
+        // nothing left to do.
+        self.passkey = None;
     }
 }
 

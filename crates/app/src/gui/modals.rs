@@ -479,6 +479,24 @@ pub enum Modal {
     GitInit(Box<GitInitState>),
     /// Making a new SSH key pair.
     NewKey(NewKeyState),
+    /// Enrolling a passkey: a name for it, and the master passphrase it will
+    /// seal.
+    AddPasskey(AddPasskeyState),
+}
+
+/// `Settings -> Security -> Add a passkey`.
+///
+/// The passphrase is asked for here rather than taken from wherever the
+/// session happens to have one, because this is the one operation that seals
+/// it: getting it wrong produces a passkey that opens onto a passphrase the
+/// vault rejects. It is checked against the vault before anything is written.
+#[derive(Debug, Clone, Default)]
+pub struct AddPasskeyState {
+    /// What the user will see beside it afterwards.
+    pub label: String,
+    pub passphrase: String,
+    pub revealed: bool,
+    pub error: Option<String>,
 }
 
 /// What key to make, and whether to open it straight away.
@@ -790,7 +808,84 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::KeyBundle(state) => show_key_bundle(app, ctx, state),
         Modal::GitInit(state) => show_git_init(app, ctx, state),
         Modal::NewKey(state) => show_new_key(app, ctx, state),
+        Modal::AddPasskey(state) => show_add_passkey(app, ctx, state),
     }
+}
+
+/// Name a passkey and prove who you are, then hand both to the authenticator.
+fn show_add_passkey(
+    app: &mut App,
+    ctx: &egui::Context,
+    mut state: AddPasskeyState,
+) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let mut submit = false;
+    let mut cancel = false;
+
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-add-passkey",
+        ModalSize::Small,
+        copy::vault::PASSKEY_ADD,
+        Some((Icon::KeyRound, t.accent)),
+        false,
+        |m| {
+            m.body(|ui| {
+                widgets::paragraph(
+                    ui,
+                    copy::vault::PASSKEY_ADD_BODY,
+                    Type::Small,
+                    t.text_secondary,
+                );
+                ui.add_space(space::L);
+                widgets::Field::new()
+                    .label(copy::vault::PASSKEY_NAME)
+                    .placeholder(copy::vault::PASSKEY_NAME_PLACEHOLDER)
+                    .width(280.0)
+                    .show(ui, &mut state.label);
+                ui.add_space(space::L);
+                let response = widgets::passphrase_field(
+                    ui,
+                    &mut state.passphrase,
+                    copy::vault::UNLOCK_FIELD,
+                    &mut state.revealed,
+                    state.error.as_deref(),
+                    280.0,
+                );
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    submit = true;
+                }
+            });
+            m.footer(|ui| {
+                let ready = !state.label.trim().is_empty() && !state.passphrase.is_empty();
+                if Button::primary(copy::action::CONTINUE).enabled(ready).show(ui).clicked() {
+                    submit = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    cancel = true;
+                }
+            });
+        },
+    );
+
+    if submit && !state.label.trim().is_empty() && !state.passphrase.is_empty() {
+        if let Some(paths) = app.paths.clone() {
+            // The dialog closes and the operating system's prompt takes over.
+            // Two dialogs stacked, one of them ours and one of them Windows',
+            // is a worse way to ask for a fingerprint than one.
+            app.screens.settings.passkey = Some(crate::gui::passkey::Pending::enrol(
+                paths,
+                state.label.trim().to_string(),
+                superbackup_core::secret::Secret::from_string(state.passphrase.clone()),
+            ));
+            return None;
+        }
+        state.error = Some(copy::onboarding::VAULT_NO_PATHS.to_string());
+    }
+    if cancel || close {
+        return None;
+    }
+    Some(Modal::AddPasskey(state))
 }
 
 fn show_unlock(app: &mut App, ctx: &egui::Context, mut state: UnlockState) -> Option<Modal> {

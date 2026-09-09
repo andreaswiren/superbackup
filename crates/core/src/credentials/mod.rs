@@ -25,6 +25,7 @@
 
 pub mod agent;
 pub mod keygen;
+pub mod passkey;
 pub mod ssh;
 
 use serde::{Deserialize, Serialize};

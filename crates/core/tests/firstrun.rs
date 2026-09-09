@@ -86,6 +86,7 @@ fn quiet(onedrive: Option<PathBuf>, job: Option<superbackup_core::model::Job>) -
         create_shortcut: false,
         autostart: false,
         install_service: false,
+        start_minimised: false,
         // Off, so the tests never write to the machine's credential store.
         unattended_unlock: false,
     }
@@ -247,4 +248,87 @@ fn the_unattended_unlock_answer_is_written_down() {
             "the answer on the last step was dropped"
         );
     }
+}
+
+/// The two options the wizard offers side by side must not cancel each other.
+///
+/// "Everything" backs up the home directory and OneDrive lives inside it, so
+/// attaching that destination to that job describes a backup that copies its
+/// own output and grows until the disk is full. The configuration refuses it,
+/// correctly — which meant choosing both perfectly reasonable options ended
+/// setup with a destination and no job, and no explanation.
+#[test]
+fn a_destination_inside_the_folder_being_backed_up_is_not_attached_to_it() {
+    let home = Home::new("nested");
+    let paths = installed(&home);
+
+    // The job backs up the folder the OneDrive destination sits inside.
+    let mut job = test_job("Everything");
+    job.sources = vec![superbackup_core::model::Source::new(&home.0)];
+
+    let applied = firstrun::apply(
+        &paths,
+        &Secret::from_str(PASSPHRASE),
+        &quiet(Some(home.onedrive()), Some(job)),
+    );
+
+    // The destination is real and is kept. The job is not made, because there
+    // is nowhere it could put its copies: every place it has is inside the
+    // folder it would be copying. That is not a configuration that can be
+    // rescued, so what matters is that it is explained rather than reported as
+    // an internal validation failure the user did not cause.
+    assert_eq!(applied.destination.as_deref(), Some("OneDrive"));
+    assert_eq!(applied.job, None);
+    assert_eq!(applied.problems.len(), 1, "{:?}", applied.problems);
+    let why = &applied.problems[0];
+    assert!(why.contains("Everything"), "it must name the job: {why}");
+    assert!(why.contains("inside"), "it must say what the actual problem is: {why}");
+
+    let mut store = Store::open(paths).expect("reopen");
+    store.unlock(&Secret::from_str(PASSPHRASE)).expect("unlock");
+    let config = store.config().clone();
+    assert_eq!(config.destinations.len(), 1, "the destination was lost too");
+    assert!(config.jobs.is_empty());
+}
+
+/// The switches on the last step reach the configuration, not just the
+/// operating system.
+///
+/// `Settings` defaults `start_at_login` to true while the wizard defaults it
+/// to false, so a user who declined it got no login entry — correctly — and a
+/// Settings screen showing the toggle on.
+#[test]
+fn the_platform_answers_are_recorded_as_settings_too() {
+    let home = Home::new("settings");
+    let paths = installed(&home);
+
+    let choices = quiet(None, None);
+    let applied = firstrun::apply(&paths, &Secret::from_str(PASSPHRASE), &choices);
+    assert_eq!(applied.problems, Vec::<String>::new());
+
+    let mut store = Store::open(paths).expect("reopen");
+    store.unlock(&Secret::from_str(PASSPHRASE)).expect("unlock");
+    let settings = &store.config().settings;
+    assert!(!settings.start_at_login, "declining autostart must be written down");
+    assert!(!settings.run_as_service, "declining the service must be written down");
+    assert!(!settings.start_minimised);
+}
+
+/// A vault that will not open must not silently cost the user the three things
+/// that have nothing to do with it.
+///
+/// Asserted through `problems` rather than by watching the platform: the test
+/// leaves all three switches off, so nothing is installed either way, and what
+/// is being checked is that the function reaches the end rather than returning
+/// from the middle.
+#[test]
+fn a_vault_that_will_not_open_still_reaches_the_end() {
+    let home = Home::new("noreturn");
+    let paths = installed(&home);
+
+    let applied =
+        firstrun::apply(&paths, &Secret::from_str("wrong passphrase entirely"), &quiet(None, None));
+
+    assert_eq!(applied.problems.len(), 1, "{:?}", applied.problems);
+    assert!(applied.problems[0].contains("vault could not be opened"));
 }

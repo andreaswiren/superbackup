@@ -33,6 +33,7 @@ pub mod kopia;
 pub mod markdown;
 pub mod modals;
 pub mod nav;
+pub mod passkey;
 pub mod render;
 pub mod screens;
 pub mod theme;
@@ -113,6 +114,16 @@ pub fn open_or_focus(
     let timeout = Duration::from_secs(global.timeout.max(5));
     let route = route_for(args.screen.as_deref(), args.job.as_deref());
 
+    // What this window would run to start a daemon of its own. Carried through
+    // so the started instance reads the same files this one does — a window on
+    // `--home dist/demo-home` that started a daemon on the default root would
+    // set up an installation nobody asked for and then fail to talk to it.
+    let mut launch = vec!["daemon".to_string()];
+    if let Some(home) = &global.home {
+        launch.push("--home".to_string());
+        launch.push(home.display().to_string());
+    }
+
     let viewport = egui::ViewportBuilder::default()
         .with_title(copy::window_title(superbackup_core::state::Health::Idle.title()))
         .with_inner_size(DEFAULT_SIZE)
@@ -128,7 +139,7 @@ pub fn open_or_focus(
         "superbackup",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(Window::new(&cc.egui_ctx, endpoint, timeout, paths, route)))
+            Ok(Box::new(Window::new(&cc.egui_ctx, endpoint, timeout, paths, route, launch)))
         }),
     );
 
@@ -153,8 +164,10 @@ impl Window {
         timeout: Duration,
         paths: Paths,
         route: Option<Route>,
+        launch: Vec<String>,
     ) -> Window {
         let mut app = app::App::new(ctx, endpoint, timeout).with_paths(paths);
+        app.launch = launch;
         // After `with_paths`, so a first run still opens onboarding rather
         // than the screen the tray asked for: a window that cannot do
         // anything yet must not pretend otherwise.

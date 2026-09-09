@@ -760,7 +760,12 @@ impl AutoStart {
     /// Standard streams go to null: the daemon logs to its own file, and a
     /// child inheriting the CLI's stdout would interleave its log with the
     /// command's output, which is how `--json` gets corrupted.
-    fn spawn(&self) -> Result<()> {
+    ///
+    /// Public because the window needs it too. On a first run there is no
+    /// daemon to connect to and none can exist until the vault the window is
+    /// creating exists, so `connect_or_start` has nothing to try first — the
+    /// window has to start one outright.
+    pub fn spawn(&self) -> Result<()> {
         use std::process::{Command, Stdio};
         let mut command = Command::new(&self.program);
         command.args(&self.args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());

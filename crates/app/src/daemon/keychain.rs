@@ -2,12 +2,15 @@
 //! back up without anyone typing it.
 //!
 //! Gated by [`Settings::use_os_keychain`](superbackup_core::model::Settings),
-//! which is **off by default and must stay that way**.
-//! `docs/compliance/THREAT_MODEL.md` §5 states the trade explicitly: caching
-//! moves the boundary from "something the user knows" to "something the
-//! machine holds", so an attacker who reaches the logged-in account reaches
-//! every backup. That is a decision only the machine's owner may make, and
-//! nothing here widens it beyond what they agreed to.
+//! which is **on by default since 0.9.0**. It was off, and the reason it can
+//! now be on is the two-tier model rather than a change of mind about the
+//! trade: holding the keys lets this machine run its backups, and changing
+//! anything still requires the passphrase in the session. See
+//! `docs/compliance/THREAT_MODEL.md` §5, which is written around that split.
+//!
+//! What it costs is unchanged and worth restating: an attacker who reaches the
+//! logged-in account can read what is *in* a backup. What they cannot do is
+//! redirect one, add a destination, or read out a stored credential.
 //!
 //! # What is stored, and where
 //!
@@ -106,8 +109,35 @@ pub fn sidecar_path(paths: &Paths) -> PathBuf {
 }
 
 /// Whether this build can reach a platform keychain at all.
+///
+/// Windows and macOS always can: Credential Manager and the Keychain are part
+/// of the operating system and need no session bus.
+///
+/// Linux is the one that can honestly answer no. The only backend compiled in
+/// is the D-Bus Secret Service, which needs a session bus and an unlocked
+/// `gnome-keyring` or `kwallet` — so a headless server, a container, an SSH
+/// session or a minimal window manager has nowhere to put a passphrase. This
+/// returned `true` unconditionally, which made the branch that says so at
+/// start-up dead code, and a Linux box with no Secret Service was instead told
+/// the reassuring thing: "unlock once and your passphrase will be remembered
+/// from then on". It was not, and the user found out when their backups
+/// silently stopped happening.
+///
+/// The check is for a *bus*, not for a working keyring: a bus with a locked
+/// keyring behind it is a real failure the store itself reports, with a better
+/// message than anything guessed from here.
 pub fn available() -> bool {
-    true
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some()
+            || std::env::var_os("XDG_RUNTIME_DIR")
+                .map(|dir| std::path::Path::new(&dir).join("bus").exists())
+                .unwrap_or(false)
+    }
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    {
+        true
+    }
 }
 
 /// The sentence shown when the keychain cannot be used.

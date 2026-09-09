@@ -24,6 +24,11 @@ use crate::gui::widgets::{self, Button, StepState};
 
 #[derive(Default)]
 pub struct State {
+    /// The authenticator prompt that is up while a passkey is being enrolled.
+    ///
+    /// Held here rather than passed around because the answer arrives up to a
+    /// minute after the click, and the frame is what notices.
+    pub passkey: Option<crate::gui::passkey::Pending>,
     pub doctor: Option<DoctorReply>,
     pub doctor_running: bool,
     pub pause_reason: String,
@@ -961,10 +966,114 @@ impl App {
         }
     }
 
+    /// Take whatever the authenticator said about an enrolment.
+    fn poll_passkey_enrolment(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &mut self.screens.settings.passkey else {
+            return;
+        };
+        // The operating system's prompt is on top of a window that must keep
+        // painting behind it.
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        let Some(outcome) = pending.poll() else {
+            return;
+        };
+        self.screens.settings.passkey = None;
+        match outcome {
+            crate::gui::passkey::Outcome::Enrolled(entry) => {
+                self.toasts.success(copy::passkey_added(&entry.label))
+            }
+            crate::gui::passkey::Outcome::Failed(why) => {
+                self.toasts.danger(copy::vault::PASSKEY_ADD, why)
+            }
+            // `enrol` produces one of the two above and nothing else.
+            crate::gui::passkey::Outcome::Unlocked(_) => {}
+        }
+    }
+
+    /// The passkeys enrolled on this machine, and the way to add one.
+    ///
+    /// Absent rather than disabled where the platform cannot do it: a greyed
+    /// out control on a machine that will never be able to use it is a
+    /// permanent unanswered question. `Support::why_not` says what is missing
+    /// whenever there is something a person could act on.
+    fn security_passkeys(&mut self, ui: &mut Ui, unlocked: bool, act: &mut Option<&'static str>) {
+        let t = theme::tokens(ui.ctx());
+        let support = superbackup_core::platform::webauthn::support();
+        let Some(paths) = self.paths.clone() else {
+            return;
+        };
+
+        widgets::form_group(ui, copy::vault::PASSKEY_GROUP, Some(copy::vault::PASSKEY_GROUP_BODY));
+
+        if !support.usable() {
+            if let Some(why) = support.why_not() {
+                widgets::paragraph_at(ui, why, Type::Small, t.text_muted, 560.0);
+            }
+            return;
+        }
+
+        let enrolled = superbackup_core::credentials::passkey::list(&paths);
+        if enrolled.is_empty() {
+            widgets::paragraph_at(ui, copy::vault::PASSKEY_NONE, Type::Small, t.text_muted, 560.0);
+        }
+        let mut remove = None;
+        for entry in &enrolled {
+            ui.add_space(space::S);
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                Icon::KeyRound.paint(ui.painter(), rect, t.text_secondary);
+                ui.add_space(space::M);
+                widgets::text(
+                    ui,
+                    copy::passkey_enrolled_on(
+                        &entry.label,
+                        &crate::gui::format::absolute_zoned(entry.created_at),
+                    ),
+                    Type::Body,
+                    t.text_primary,
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if Button::danger_ghost(copy::vault::PASSKEY_REMOVE)
+                        .compact()
+                        .show(ui)
+                        .clicked()
+                    {
+                        remove = Some(entry.clone());
+                    }
+                });
+            });
+        }
+        if let Some(entry) = remove {
+            match superbackup_core::credentials::passkey::forget(&paths, entry.id) {
+                Ok(()) => self.toasts.success(copy::passkey_removed(&entry.label)),
+                Err(e) => self.toasts.danger(copy::passkey_removed(&entry.label), e.to_string()),
+            }
+        }
+
+        ui.add_space(space::M);
+        let working = self.screens.settings.passkey.is_some();
+        let label = if working { copy::vault::PASSKEY_WORKING } else { copy::vault::PASSKEY_ADD };
+        let mut add = Button::secondary(label).icon(Icon::Plus).busy(working);
+        if !unlocked {
+            // Enrolling seals the master passphrase, so there has to be one to
+            // seal.
+            add = add.disabled_because(copy::locked::ACTION_BLOCKED);
+        }
+        if add.show(ui).clicked() && !working {
+            *act = Some("passkey-add");
+        }
+        ui.add_space(space::XS);
+        widgets::paragraph_at(ui, copy::vault::PASSKEY_ADD_BODY, Type::Small, t.text_muted, 560.0);
+    }
+
     fn settings_security(&mut self, ui: &mut Ui) {
         let t = theme::tokens(ui.ctx());
         let mut changed = false;
         let unlocked = self.data.unlocked();
+
+        // The authenticator answers up to a minute after the click, so the
+        // frame is what notices rather than the button.
+        self.poll_passkey_enrolment(ui.ctx());
 
         widgets::text(ui, copy::set::SEC_VAULT, Type::H3, t.text_primary);
         ui.add_space(space::M);
@@ -1047,6 +1156,12 @@ impl App {
             }
         }
 
+        // Passkeys, beside the credential store because they answer the same
+        // question — how this machine gets its passphrase without somebody
+        // typing it — by a different route, and a reader comparing the two
+        // should not have to scroll between them.
+        self.security_passkeys(ui, unlocked, &mut act);
+
         widgets::form_group(ui, "Passphrases", None);
         ui.horizontal(|ui| {
             let mut change = Button::secondary(copy::set::SEC_CHANGE).icon(Icon::KeyRound);
@@ -1101,6 +1216,9 @@ impl App {
             }
             Some("keychain-on") => {
                 self.open_modal(Modal::ChangePassphrase(Default::default()));
+            }
+            Some("passkey-add") => {
+                self.open_modal(Modal::AddPasskey(Default::default()));
             }
             Some("reset-vault") => {
                 let confirm = modals::reset_vault_confirm(&self.data);

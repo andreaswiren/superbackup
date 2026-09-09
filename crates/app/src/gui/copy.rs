@@ -228,6 +228,8 @@ pub mod onboarding {
     pub const JOB_DESTINATIONS: &str = "Where to keep the copies";
     pub const JOB_LATER: &str =
         "Object storage such as StorJ or S3 can be added later, in Destinations.";
+    /// Shown when the chosen template matched no folder on this machine.
+    pub const JOB_NO_FOLDERS: &str = "None of the folders this template looks for exist on this computer, so no job will be created. You can make one in a few clicks once setup has finished.";
     pub const JOB_DERIVED: &str = "The repository encryption key is worked out from your master passphrase, so there is only one secret to keep safe.";
     pub const JOB_DERIVED_CHANGE: &str = "Change…";
     pub const JOB_NAME: &str = "Job name";
@@ -274,6 +276,42 @@ pub fn onboarding_kopia_found(version: &str) -> String {
 pub fn onboarding_onedrive_found(account: &str) -> String {
     format!("OneDrive — {account}")
 }
+pub fn onboarding_job_folders(folders: &[String]) -> String {
+    format!("Will back up: {}", folders.join(", "))
+}
+
+pub fn locked_daemon(running: bool) -> &'static str {
+    if running {
+        "Background process: running"
+    } else {
+        "Background process: not running"
+    }
+}
+pub fn locked_service(installed: bool) -> &'static str {
+    if installed {
+        "Service: installed"
+    } else {
+        "Service: not installed"
+    }
+}
+
+pub fn daemon_not_started(reason: &str) -> String {
+    format!(
+        "Setup finished, but the background process could not be started ({reason}). \
+         Start superbackup again and it will run normally."
+    )
+}
+
+pub fn passkey_added(label: &str) -> String {
+    format!("\"{label}\" can now unlock superbackup")
+}
+pub fn passkey_removed(label: &str) -> String {
+    format!("\"{label}\" can no longer unlock superbackup")
+}
+pub fn passkey_enrolled_on(label: &str, when: &str) -> String {
+    format!("{label} — added {when}")
+}
+
 pub fn onboarding_onedrive_room(free: &str, path: &str) -> String {
     format!("{free} free — {path}")
 }
@@ -404,6 +442,34 @@ pub mod vault {
     pub const UNLOCK_FIELD: &str = "Master passphrase";
     pub const UNLOCK_REMEMBER: &str = "Remember until I sign out";
     pub const UNLOCK_BUTTON: &str = "Unlock";
+    /// The second way in, offered only where one is enrolled.
+    pub const UNLOCK_PASSKEY: &str = "Use a passkey";
+    /// The lock screen's footer. A locked window still has to say what it is
+    /// and which installation it is looking at.
+    pub const LOCKED_VAULT_PATH: &str = "Vault";
+    pub const LOCKED_OPEN_OTHER: &str = "Open another vault…";
+    pub const LOCKED_OPEN_OTHER_HINT: &str =
+        "Point superbackup at a different configuration folder. It restarts against that one.";
+    pub const LOCKED_NEW_VAULT: &str = "Create a new vault…";
+    pub const LOCKED_NEW_VAULT_HINT: &str =
+        "Set up a second, separate installation in a folder of its own. This one is left alone.";
+    pub const LOCKED_ABOUT: &str = "About superbackup";
+    pub const LOCKED_NOT_A_VAULT: &str =
+        "That folder holds no superbackup vault, and none was created there.";
+    pub const LOCKED_ALREADY_A_VAULT: &str =
+        "That folder already holds a vault. Use \"Open another vault\" for it.";
+    pub const PASSKEY_GROUP: &str = "Passkeys";
+    pub const PASSKEY_GROUP_BODY: &str = "Unlock with a security key or your fingerprint instead of typing the passphrase. Your passphrase always still works — a passkey is an extra door, not a replacement, and an authenticator can be lost or reset.";
+    pub const PASSKEY_ADD: &str = "Add a passkey";
+    pub const PASSKEY_ADD_BODY: &str =
+        "You will be asked for your master passphrase, then for your security key or fingerprint.";
+    pub const PASSKEY_NAME: &str = "What to call it";
+    pub const PASSKEY_NAME_PLACEHOLDER: &str = "YubiKey on my keyring";
+    pub const PASSKEY_REMOVE: &str = "Remove";
+    pub const PASSKEY_NONE: &str = "No passkeys are set up on this computer.";
+    pub const PASSKEY_WORKING: &str = "Follow the prompt";
+    pub const UNLOCK_PASSKEY_HINT: &str =
+        "Unlock with the security key or fingerprint you set up. Your passphrase still works.";
     pub const UNLOCK_BUSY: &str = "Unlocking…";
     pub const UNLOCK_WRONG: &str =
         "That passphrase did not open the vault. Passphrases are case sensitive.";

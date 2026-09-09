@@ -81,6 +81,12 @@ pub struct App {
     /// answer the request is the process that will not start. It is the same
     /// reason `superbackup init` writes the vault itself.
     pub paths: Option<superbackup_core::paths::Paths>,
+    /// The arguments this window would start a daemon with.
+    ///
+    /// Set by the window's own entry point, which is the only place that knows
+    /// whether `--home` was on the command line. Empty for a test window,
+    /// which must never start a background process.
+    pub launch: Vec<String>,
     tokens: Tokens,
     style_installed: bool,
     system_dark: bool,
@@ -142,6 +148,7 @@ impl App {
             pending: None,
             blocked: None,
             paths: None,
+            launch: Vec::new(),
             tokens,
             style_installed: true,
             system_dark: ctx.style().visuals.dark_mode,
@@ -1210,6 +1217,38 @@ impl App {
         );
     }
 
+    /// Start a daemon for this installation, if one is not already running.
+    ///
+    /// # Why the window does this at all
+    ///
+    /// Only on a first run, and only because nothing else can. The daemon
+    /// refuses to start without a vault; the vault is created by this window,
+    /// seconds earlier. So between "setup finished" and "the window closed"
+    /// there was no daemon at all — which meant the Done step offered a "Run
+    /// now" that reached nothing, the dashboard showed a locked vault it could
+    /// not unlock, and typing the passphrase answered "the superbackup daemon
+    /// is not running". The installation was finished and unusable.
+    ///
+    /// A detached child rather than a thread. The daemon holds a
+    /// single-instance guard that is `!Send` and a tray icon that wants a
+    /// message loop of its own, and this window is about to exit anyway: the
+    /// process that outlives it should be the one that does the work.
+    ///
+    /// Failure is reported and not fatal. The vault exists and the
+    /// configuration is written either way; what is lost is convenience.
+    pub(crate) fn start_daemon(&mut self) {
+        if self.launch.is_empty() {
+            return;
+        }
+        let args: Vec<&str> = self.launch.iter().map(String::as_str).collect();
+        let started = superbackup_core::ipc::client::AutoStart::current_exe(&args)
+            .and_then(|autostart| autostart.spawn());
+        match started {
+            Ok(()) => self.data.link_up = true,
+            Err(e) => self.toasts.warning(copy::daemon_not_started(&e.to_string())),
+        }
+    }
+
     /// An unlock attempt has ended, however it ended.
     ///
     /// # The bug this exists to prevent
@@ -1366,8 +1405,29 @@ impl App {
         // stops registering, and it protects the keys while showing the map to
         // them. `loading` is excluded so the lock screen cannot flash before
         // the first status reply says whether the vault is even locked.
-        if !self.data.loading && self.data.link_up && !self.data.unlocked() {
+        // Not `link_up`: a window that cannot reach a daemon does not know
+        // the vault is unlocked, and "we do not know" has to be treated as
+        // locked. It was treated as unlocked, so a machine whose daemon was
+        // not running showed the whole application — the jobs, the
+        // destinations, the storage providers — with a banner on top saying
+        // the vault was locked. That is the exact failure the lock screen was
+        // built to end: protecting the keys while publishing the map to them.
+        if !self.data.loading && !self.data.unlocked() {
+            // The lock screen owns unlocking, so an unlock modal on top of it
+            // is two passphrase fields at once. Anything else — the About
+            // dialog, a confirmation — still has to be able to draw, and a
+            // blocking modal parked here with nothing to render it is a window
+            // that has silently stopped accepting input.
+            // The lock screen owns unlocking, so an unlock modal on top of it
+            // is two passphrase fields at once. `pending` and `blocked` stay:
+            // they are what the user was trying to do, and the lock screen's
+            // own unlock performs them. Dropping the prompt must not drop the
+            // intention behind it.
+            if self.modal_is_unlock() {
+                self.modal = None;
+            }
             self.show_locked(ctx);
+            self.show_modal(ctx);
             self.schedule_repaint(ctx);
             return;
         }
@@ -1996,7 +2056,17 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(t.bg_canvas).inner_margin(egui::Margin::ZERO))
             .show(ctx, |ui| {
+                let full = ui.max_rect();
                 screens::onboarding::show(self, ui);
+                // Toasts, here as well as on the ordinary screen.
+                //
+                // `self.toasts.show` used to be called from exactly one place,
+                // inside the layout the application draws once it is running.
+                // Setup replaces that layout entirely, so everything setup
+                // reported — "OneDrive is ready", "the first backup job was
+                // not created", every line of `firstrun::Applied::problems` —
+                // was raised into a screen with nowhere to put it.
+                self.toasts.show(ui, full);
             });
     }
 

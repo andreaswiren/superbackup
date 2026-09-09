@@ -16,6 +16,7 @@ use crate::gui::screens::wizard::Template;
 use crate::gui::theme::{self, radius, space, Type};
 use crate::gui::validation::{self, OnboardingStep};
 use crate::gui::widgets::{self, Button};
+use superbackup_core::model::JobContent;
 
 #[derive(Debug)]
 pub struct Onboarding {
@@ -75,7 +76,12 @@ impl Default for Onboarding {
             revealed: false,
             acknowledged: false,
             weak_acknowledged: false,
-            template: None,
+            // The step draws `Development` as the selected card, so this is
+            // what the user is looking at. Leaving it `None` until they
+            // clicked meant the ordinary path — read the highlighted default,
+            // press Continue — chose nothing and created no job at all, while
+            // the screen showed one selected.
+            template: Some(Template::Development),
             kopia: None,
             create_onedrive: false,
             onedrive_path: None,
@@ -160,14 +166,24 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     );
     content.add_space(space::H2);
 
-    widgets::scroll_area(&mut content, ("onboarding", state.step), |ui| match state.step {
-        OnboardingStep::Welcome => welcome(ui),
-        OnboardingStep::Passphrase => passphrase(ui, &mut state),
-        OnboardingStep::NoRecovery => no_recovery(ui, &mut state, app),
-        OnboardingStep::Scan => scan(ui, &mut state, app),
-        OnboardingStep::FirstJob => first_job(ui, &mut state, app),
-        OnboardingStep::KeepRunning => keep_running(ui, &mut state),
-        OnboardingStep::Done => done(ui, app),
+    widgets::scroll_area(&mut content, ("onboarding", state.step), |ui| {
+        match state.step {
+            OnboardingStep::Welcome => welcome(ui),
+            OnboardingStep::Passphrase => passphrase(ui, &mut state),
+            OnboardingStep::NoRecovery => no_recovery(ui, &mut state, app),
+            OnboardingStep::Scan => scan(ui, &mut state, app),
+            OnboardingStep::FirstJob => first_job(ui, &mut state, app),
+            OnboardingStep::KeepRunning => keep_running(ui, &mut state),
+            OnboardingStep::Done => done(ui, app),
+        }
+        // Room at the bottom of every step.
+        //
+        // The scroll area ends exactly where the footer's rule begins, so a
+        // step tall enough to scroll put its last control hard against the
+        // line — which reads as clipped rather than as scrolled to the end.
+        // Here rather than at the end of each step, so a step added later
+        // cannot forget it.
+        ui.add_space(space::H2);
     });
 
     // The fixed 72px footer.
@@ -264,6 +280,21 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         }
     }
     if skip {
+        // Not "throw the answers away".
+        //
+        // "Skip setup" and "Go to dashboard" both landed here, and both meant
+        // the user had finished with the wizard — not that they wanted the
+        // vault and nothing else. Somebody who ticked every box on the way
+        // through and then pressed "Go to dashboard" got no job, no
+        // destination, no Start-menu entry, no service, and no daemon: the
+        // same nothing this whole path was rewritten to stop producing.
+        //
+        // The vault is the test. Before it exists there is nothing to apply
+        // and nothing has been chosen; after it, every answer collected so far
+        // is worth carrying out.
+        if state.vault_created {
+            apply_setup_choices(app, &state);
+        }
         app.onboarding = None;
         return;
     }
@@ -323,14 +354,29 @@ fn apply_setup_choices(app: &mut App, state: &Onboarding) {
 
     // The job the template describes, built here rather than left as an
     // `Option<Template>` nothing ever read.
-    let job = state.template.map(|template| {
-        let mut job = super::wizard::blank_job();
-        super::wizard::apply_template(&mut job, template, &app.data);
-        if job.name.trim().is_empty() {
-            job.name = "Backup".to_string();
-        }
-        job
-    });
+    // The job the template describes — but only if it describes one.
+    //
+    // A template proposes folders that exist: `Development` looks for `dev`,
+    // `source`, `repos` and `Projects` under the home directory and takes the
+    // first it finds. On a machine with none of them it finds nothing, and a
+    // job with no sources is refused by the configuration — so setup ended by
+    // reporting "a job with no sources backs up nothing", which is true and
+    // is not the user's fault or their problem to read.
+    //
+    // Nothing is created instead, and the Done step says so. An empty Jobs
+    // page with a "Create your first job" button is a better answer than an
+    // error about a job nobody asked for.
+    let job = state
+        .template
+        .map(|template| {
+            let mut job = super::wizard::blank_job();
+            super::wizard::apply_template(&mut job, template, &app.data);
+            if job.name.trim().is_empty() {
+                job.name = "Backup".to_string();
+            }
+            job
+        })
+        .filter(|job| !job.sources.is_empty() || job.content != JobContent::Files);
 
     // The fallback OneDrive covers the person who ticked the box on the scan
     // step and never went back to it: it is the same account that step showed
@@ -358,6 +404,12 @@ fn apply_setup_choices(app: &mut App, state: &Onboarding) {
     for problem in &applied.problems {
         app.toasts.warning(problem.clone());
     }
+
+    // And now there is a vault, so there can be a daemon. Until this, setup
+    // finished into an installation with nothing running behind it: the Done
+    // step's "Run now" reached nothing, and the passphrase that had just been
+    // chosen would not open anything.
+    app.start_daemon();
 }
 
 /// The wizard's answers, in the form the thing that carries them out takes.
@@ -388,6 +440,7 @@ pub(crate) fn setup_choices(
         create_shortcut: state.create_shortcut,
         autostart: state.autostart,
         install_service: state.install_service,
+        start_minimised: state.start_minimised,
         unattended_unlock: state.use_keychain,
     }
 }
@@ -660,6 +713,14 @@ fn scan(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
     let mut install_failed: Option<String> = None;
     if let Some(install) = &mut state.kopia {
         install.poll();
+        // The download posts progress into a plain channel from a thread that
+        // has never heard of egui, and an idle window repaints at nothing at
+        // all — so the progress bar froze at its first value and the step
+        // never noticed the install had finished unless somebody happened to
+        // move the mouse over it.
+        if install.finished.is_none() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        }
         match &install.finished {
             None => installing = Some((install.line.clone(), install.fraction)),
             Some(Ok(_)) => {}
@@ -952,6 +1013,8 @@ fn first_job(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
     ui.add_space(space::H3);
 
     let selected = state.template.unwrap_or(Template::Development);
+    // Whatever is drawn as selected *is* selected. See `Onboarding::default`.
+    state.template = Some(selected);
     let width = ((ui.available_width() - space::XL) / 2.0).floor().min(340.0);
     let mut chosen: Option<Template> = None;
     for row in Template::ALL.chunks(2) {
@@ -1002,6 +1065,34 @@ fn first_job(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
     }
     if let Some(template) = chosen {
         state.template = Some(template);
+    }
+
+    // What the chosen template actually found here, rather than what it looks
+    // for in general.
+    //
+    // Without this the step described the idea and the last screen reported
+    // the consequence: a machine with no `dev` or `source` folder finished
+    // setup with an error about a job with no sources, which is the first
+    // moment anybody could have known.
+    ui.add_space(space::L);
+    let found: Vec<String> =
+        selected.sources().iter().map(|source| source.path.display().to_string()).collect();
+    if found.is_empty() && selected.content() == JobContent::Files {
+        widgets::paragraph_at(
+            ui,
+            copy::onboarding::JOB_NO_FOLDERS,
+            Type::Small,
+            t.warning.tint_text,
+            560.0,
+        );
+    } else if !found.is_empty() {
+        widgets::paragraph_at(
+            ui,
+            copy::onboarding_job_folders(&found),
+            Type::Small,
+            t.text_secondary,
+            560.0,
+        );
     }
 
     ui.add_space(space::L);

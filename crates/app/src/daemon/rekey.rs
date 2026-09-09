@@ -226,6 +226,35 @@ pub async fn change_passphrase(
             ),
         ));
     }
+    // Every enrolled passkey opens onto the *old* passphrase, so they all go.
+    //
+    // They cannot be re-sealed here the way the keychain cache can: doing so
+    // means asking each authenticator for its key, and an authenticator only
+    // answers to a person standing in front of it. So they are removed and the
+    // user is told, which is better than leaving doors that open onto a
+    // passphrase the vault has stopped accepting — a failure that would
+    // surface at the next unlock, with nothing to explain it.
+    let passkeys = superbackup_core::credentials::passkey::list(&runtime.paths);
+    if !passkeys.is_empty() {
+        match superbackup_core::credentials::passkey::forget_all(&runtime.paths) {
+            Ok(()) => runtime.record_event(Event::new(
+                Severity::Warning,
+                "vault.passkeys_cleared",
+                format!(
+                    "The passphrase was changed, so the {} passkey(s) set up on this computer                      were removed — each one held the old passphrase. Set them up again in                      Settings.",
+                    passkeys.len()
+                ),
+            )),
+            Err(e) => runtime.record_event(Event::new(
+                Severity::Error,
+                "vault.passkeys_not_cleared",
+                format!(
+                    "The passphrase was changed, but the passkeys on this computer could not be                      removed ({e}). They still hold the old passphrase and will no longer                      unlock anything."
+                ),
+            )),
+        }
+    }
+
     let wants_cache = { runtime.store.lock().await.config().settings.use_os_keychain };
     if wants_cache {
         if let Err(e) = super::keychain::store(&runtime.paths, &replacement).await {

@@ -99,6 +99,17 @@ pub struct GlobalArgs {
     #[arg(long, global = true, default_value = "30", value_name = "SECS")]
     pub timeout: u64,
 
+    /// Start without opening a window: the tray only.
+    ///
+    /// Written into every autostart entry by
+    /// [`platform::autostart`](superbackup_core::platform::autostart) — and
+    /// accepted by nothing, until now. `clap` rejected the unknown flag and
+    /// exited 2, so a user who ticked "start superbackup when I sign in" got a
+    /// process that died at every login, silently on Linux and macOS and with
+    /// a console flash on Windows.
+    #[arg(long, global = true)]
+    pub minimised: bool,
+
     /// Colour output. Defaults to auto-detecting a terminal.
     #[arg(long, global = true, value_enum, default_value = "auto")]
     pub color: ColorChoice,
