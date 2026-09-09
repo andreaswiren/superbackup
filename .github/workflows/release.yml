@@ -390,6 +390,17 @@ jobs:
           body_path: notes.md
           # Never publish automatically. A human presses the button.
           draft: true
-          prerelease: ${{ startsWith(needs.preflight.outputs.version, '0.') || contains(needs.preflight.outputs.version, '-') }}
+          # A pre-release is a candidate, not a version number below one.
+          #
+          # Marking every 0.x as a pre-release meant GitHub never showed
+          # one: the repository sidebar reports the latest *stable*
+          # release, so a project with nothing but pre-releases shows a tag
+          # count and a "Create a new release" link — and a release that
+          # had been built, tested, published and downloaded looked from
+          # the front page like it had never happened.
+          #
+          # So the flag now means what the word means: a tag carrying
+          # `-rc.1`, `-beta.2` or the like. 0.9.0 is a release of 0.9.0.
+          prerelease: ${{ contains(needs.preflight.outputs.version, '-') }}
           files: dist/*
           fail_on_unmatched_files: true

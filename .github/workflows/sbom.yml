@@ -95,9 +95,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ steps.version.outputs.version }}
+          # This version's, not every version's. `sbom/` keeps one pair of
+          # files per release on purpose, so a glob here carried the bills
+          # of materials for 0.1.0 and 0.8.0 into the 0.9.0 release —
+          # worse than attaching none, because a scanner believes them.
           path: |
-            sbom/superbackup-*.cdx.json
-            sbom/superbackup-*.cdx.xml
+            sbom/superbackup-${{ steps.version.outputs.version }}.cdx.json
+            sbom/superbackup-${{ steps.version.outputs.version }}.cdx.xml
           if-no-files-found: error
           retention-days: 90
 
@@ -217,7 +221,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version="${{ needs.freshness.outputs.version }}"
           gh release upload "${{ github.event.release.tag_name }}" \
-            sbom-artifact/superbackup-*.cdx.json \
-            sbom-artifact/superbackup-*.cdx.xml \
+            "sbom-artifact/superbackup-$version.cdx.json" \
+            "sbom-artifact/superbackup-$version.cdx.xml" \
             --clobber
