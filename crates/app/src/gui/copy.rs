@@ -186,7 +186,16 @@ pub mod onboarding {
     pub const NORECOVERY_TITLE: &str = "There is no way to recover this";
     pub const NORECOVERY_BODY: &str = "Your master passphrase encrypts the vault on this machine. It is never sent anywhere, and it is not stored in a form anyone can read.\n\nThat means there is no reset link, no backdoor and no support address that can open your vault for you. If the passphrase is lost, the repository keys inside are lost with it, and the backups they protect cannot be read again.\n\nPut it in a password manager now, or write it down and keep the paper somewhere you would keep a spare key.";
     pub const NORECOVERY_COPY: &str = "Copy passphrase to clipboard";
-    pub const NORECOVERY_COPIED: &str = "Copied. The clipboard will be cleared in 60 seconds.";
+    /// What was actually done, and what was not.
+    ///
+    /// This used to say "the clipboard will be cleared in 60 seconds". Nothing
+    /// cleared it — there is no such timer anywhere in the application — so
+    /// the master passphrase sat on the clipboard indefinitely under a
+    /// sentence saying it would not. A promise nobody keeps about a secret is
+    /// worse than no promise at all.
+    pub const NORECOVERY_COPIED: &str =
+        "Copied. It stays on the clipboard until something else replaces it, so paste it \
+         somewhere safe now.";
     pub const NORECOVERY_SAVE: &str = "Save a recovery sheet…";
     pub const NORECOVERY_SAVE_NOTE: &str =
         "The recovery sheet is a plain text file. Anyone who can read the file can read the passphrase.";
@@ -293,6 +302,13 @@ pub fn locked_service(installed: bool) -> &'static str {
     } else {
         "Service: not installed"
     }
+}
+
+pub fn recovery_sheet_saved(path: &str) -> String {
+    format!("Recovery sheet saved to {path}")
+}
+pub fn recovery_sheet_failed(reason: &str) -> String {
+    format!("The recovery sheet could not be saved: {reason}")
 }
 
 pub fn daemon_not_started(reason: &str) -> String {
@@ -1331,7 +1347,9 @@ pub mod writedown {
     pub const TITLE: &str = "Write this down now";
     pub const GROUPING: &str = "The passphrase is shown in groups only to make it easier to copy. The spaces are not part of it.";
     pub const COPY: &str = "Copy";
-    pub const COPIED: &str = "Copied. The clipboard will be cleared in 60 seconds.";
+    /// See `onboarding::NORECOVERY_COPIED`: the clipboard is not cleared, and
+    /// saying it is was the only untrue thing on the screen.
+    pub const COPIED: &str = "Copied. It stays on the clipboard until something else replaces it.";
     pub const SAVE: &str = "Save to a file…";
     pub const SAVE_NOTE: &str =
         "The file is plain text. Treat it the way you would treat the passphrase.";

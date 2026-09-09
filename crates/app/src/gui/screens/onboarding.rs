@@ -445,6 +445,46 @@ pub(crate) fn setup_choices(
     }
 }
 
+/// Write a recovery sheet: the passphrase, and what it is for.
+///
+/// # Why a file at all, when the advice is to write it on paper
+///
+/// Because people do not, and a printable file is the version of "write it
+/// down" that actually happens. It is deliberately plain text: this has to be
+/// readable on a machine that has lost superbackup, which is the only
+/// circumstance in which anybody will ever open it.
+///
+/// The user picks where it goes. Superbackup does not choose a folder for a
+/// file containing a master passphrase — that is a decision about who can read
+/// it, and it is not ours to make.
+fn save_recovery_sheet(app: &mut App, passphrase: &str) {
+    let Some(path) = rfd::FileDialog::new()
+        .set_file_name("superbackup-recovery.txt")
+        .add_filter("Text", &["txt"])
+        .save_file()
+    else {
+        // Cancelled. Not a failure and not worth a message.
+        return;
+    };
+
+    let machine = app.data.machine_label();
+    let when = crate::gui::format::absolute_zoned(chrono::Utc::now());
+    let sheet = format!(
+        "superbackup recovery sheet\n         ==========================\n\n         Machine:  {machine}\n         Written:  {when}\n\n         Master passphrase:\n\n    {passphrase}\n\n         This one phrase decrypts every backup this machine makes. There is no\n         way to recover it and no way to reset it: superbackup does not hold a\n         copy, and neither does anybody else.\n\n         Keep this somewhere a person can reach and a program cannot — printed,\n         in a safe, or in a password manager. Anyone who reads this file can\n         read every backup it belongs to.\n\n         To restore on a new machine: install superbackup, choose \"Open another\n         vault\", point it at your backup destination, and enter the phrase above.\n"
+    );
+
+    match std::fs::write(&path, sheet) {
+        Ok(()) => {
+            // Owner-only where the platform can express it. A recovery sheet
+            // in a shared Downloads folder is otherwise readable by every
+            // account on the machine.
+            let _ = superbackup_core::paths::harden_file(&path);
+            app.toasts.success(copy::recovery_sheet_saved(&path.display().to_string()));
+        }
+        Err(e) => app.toasts.danger(copy::onboarding::NORECOVERY_SAVE, e.to_string()),
+    }
+}
+
 fn welcome(ui: &mut Ui) {
     let t = theme::tokens(ui.ctx());
     ui.allocate_ui_with_layout(
@@ -655,7 +695,13 @@ fn no_recovery(ui: &mut Ui, state: &mut Onboarding, app: &mut App) {
                     .show(ui)
                     .clicked()
                 {
-                    app.toasts.info(copy::onboarding::NORECOVERY_SAVE_NOTE);
+                    // Write the sheet. The button's label ends in an ellipsis,
+                    // which promises a dialog, and it used to raise a toast
+                    // repeating the sentence already printed three lines
+                    // below it — so at the one step that tells the user their
+                    // passphrase cannot be recovered, the control offering to
+                    // help them keep it did nothing whatever.
+                    save_recovery_sheet(app, &state.passphrase);
                 }
             });
             ui.add_space(space::M);
