@@ -14,6 +14,89 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.10.0] - 2026-09-10
+
+The first release built for Linux and macOS, and the first one whose setup
+wizard does what it says.
+
+### Added
+
+- **Unlock with a passkey.** A security key or Windows Hello, as an addition to
+  your master passphrase rather than a replacement for it.
+
+  A passkey signs a fresh random challenge, so there is nothing in a signature
+  to derive a key from — an application that "unlocks" on a successful one has
+  wrapped an `if` around its own decryption and encrypted nothing. What works
+  is CTAP2's `hmac-secret`: the authenticator returns HMAC(a secret it never
+  reveals, a salt), the same 32 bytes every time. That is a wrap key, and your
+  passphrase is sealed under it exactly as the platform keychain seals it.
+
+  User verification is required rather than preferred, so a stolen key is not a
+  stolen backup. Your passphrase always still works, because an authenticator
+  can be lost or factory-reset and a backup nobody can restore is not a backup.
+  Changing your passphrase removes every enrolled passkey, since each one holds
+  the old one. Windows for now; Settings says plainly where it is not available.
+
+- **Backups are read back on a schedule, and now that means something.**
+  Weekly, one destination at a time, never during a backup, never on battery or
+  a metered connection.
+
+  The check that existed did not read anything. It fetched blob statistics,
+  multiplied the count by a sample percentage, and reported the product — so a
+  repository that had lost half its contents to bit rot or a bucket lifecycle
+  rule would have reported itself verified. Nothing ever called it, either.
+
+  It now runs `kopia snapshot verify`: every snapshot's objects confirmed to
+  exist in full, and a sample of file contents downloaded and rehashed, which
+  is the only way to catch data that is present and wrong. A destination that
+  fails stays due rather than being marked verified by the run that found the
+  damage.
+
+### Fixed
+
+- **Linux and macOS releases, for the first time.** The test jobs were not
+  failing, they were hanging: six hours, then killed by GitHub's ceiling, which
+  reports as "cancelled". Three causes, all of them things a Windows machine
+  cannot see. A single-instance test started a daemon that nothing would ever
+  stop. A socket path exceeded macOS's `sun_path` limit of 104 bytes, so all
+  thirty-two IPC tests failed at `bind` with an errno that says nothing about
+  length. And a request sent after the daemon had gone waited out its full
+  thirty-second timeout instead of failing, because writing to a closed Unix
+  socket does not fail the way writing to a closed named pipe does.
+
+  That last one was a real defect, not a test artefact: a command line that
+  hangs for half a minute before admitting the daemon is gone.
+
+- **Setting up superbackup now sets up superbackup.** Two audits of the first
+  run found, among other things: the template card drawn as selected was not
+  selected, so the ordinary path created no job at all; "Go to dashboard" threw
+  every answer away; every message setup produced was rendered into a screen
+  with nowhere to put it, so "the first backup job was not created" was
+  formatted and discarded unseen; and there was no daemon at all between
+  "setup finished" and "the window closed", so the last step's "Run now"
+  reached nothing and the passphrase just chosen would not open anything.
+
+- **A locked vault locks the application.** The lock screen was skipped when
+  the daemon could not be reached — so a machine with nothing running showed
+  the jobs, the destinations and the storage providers with a banner on top
+  saying the vault was locked. It now treats "we do not know" as locked, and
+  says which vault it is asking about, what is running behind it, and offers
+  another vault, a new one, or About.
+
+- **"Start superbackup when I sign in" now does.** Every autostart entry on
+  every platform carried `--minimised`, which the command line did not accept,
+  so the process exited 2 at every login.
+
+- **The service Linux and macOS are offered is one they can run.** They were
+  being given the system-scope variant: needs root, binds a socket in a
+  directory `ProtectSystem=strict` forbids creating, and as root cannot see the
+  OneDrive folder the same wizard just made. The user-scope one — no
+  privileges, and it can see your files — was written, tested and reachable
+  from nowhere.
+
+- **"Save a recovery sheet…" saves one**, and the clipboard no longer promises
+  to clear itself in sixty seconds when nothing clears it.
+
 ## [0.9.0] - 2026-09-09
 
 ### Added

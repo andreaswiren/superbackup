@@ -17,7 +17,7 @@ on:
       platforms:
         description: "Which platforms to build"
         required: false
-        default: windows
+        default: all
         type: choice
         options: [windows, all]
 
@@ -83,14 +83,18 @@ jobs:
 
       # Which platforms this release builds.
       #
-      # Windows only by default, including for a tag push. Windows is the
-      # stated priority platform and the one this is used on daily; building
-      # the other five costs the wall clock of the slowest of them for
-      # artefacts nobody is waiting on. Run the workflow by hand with
-      # `platforms: all` for a full set.
+      # All of them, which it could not be until now. The Linux and macOS
+      # test jobs did not fail — they *hung*, for six hours, and were killed by
+      # GitHub's own ceiling; a job killed that way reports "cancelled", which
+      # reads like somebody pressed a button rather than like a suite that
+      # never finished. So no release for either platform was ever built, and
+      # the default was cut back to Windows to stop paying for the discovery.
       #
-      # The other targets are not deleted, because "for now" is what this
-      # is: they are one input away.
+      # Fixed at the root: a single-instance test that started a daemon nothing
+      # would ever stop, a socket path longer than macOS's `sun_path`, and a
+      # request that waited out its timeout instead of noticing the daemon had
+      # gone. All three platforms pass. Run the workflow by hand with
+      # `platforms: windows` for a quick Windows-only build.
       - name: Choose the platforms
         id: platforms
         run: |
