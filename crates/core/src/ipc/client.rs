@@ -180,6 +180,24 @@ struct Inner {
     /// `interprocess` stream, so the daemon would keep serving a client that
     /// no longer exists.
     _closed: watch::Sender<bool>,
+    /// Set when the read loop ends, which is when the connection is gone.
+    ///
+    /// # Why a flag rather than waiting to find out
+    ///
+    /// A request sent down a dead connection has nobody to answer it. The
+    /// in-flight ones are failed when the read loop drains `pending`, but a
+    /// request registered *afterwards* simply sat there until the client's own
+    /// timeout — thirty seconds by default — and then reported "the daemon did
+    /// not answer", which is true and is the wrong answer: the daemon is not
+    /// slow, it is gone.
+    ///
+    /// It showed up as a platform difference, which is what platform
+    /// differences usually are. Writing to a closed named pipe fails at once,
+    /// so on Windows the send failed and the caller got `DaemonUnreachable`
+    /// immediately. Writing to a closed Unix socket does not, so on macOS and
+    /// Linux the same call waited out the whole timeout. The behaviour is now
+    /// the same on all three, and it is the useful one.
+    dead: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// An asynchronous, cloneable connection to the daemon.
@@ -321,8 +339,10 @@ impl Client {
         // Reader: sole owner of the receive half, and the only thing that
         // resolves a pending request.
         let reader_pending = Arc::clone(&pending);
+        let dead = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader_dead = Arc::clone(&dead);
         tokio::spawn(async move {
-            read_loop(reader, line, reader_pending, closed_rx).await;
+            read_loop(reader, line, reader_pending, closed_rx, reader_dead).await;
         });
 
         Ok(Client {
@@ -334,6 +354,7 @@ impl Client {
                 endpoint: endpoint.to_string(),
                 timeout,
                 _closed: closed,
+                dead,
             }),
         })
     }
@@ -389,6 +410,10 @@ impl Client {
     /// [`ErrorCode`] the daemon sent, so a caller can
     /// branch on `error.code()` exactly as it would in-process.
     pub async fn request(&self, request: Request) -> Result<Reply> {
+        // Nothing is going to answer. See `Inner::dead`.
+        if self.inner.is_dead() {
+            return Err(Error::DaemonUnreachable);
+        }
         let id = self.inner.next_request_id();
         let (tx, rx) = oneshot::channel();
         self.inner.register(id, Pending::Once(tx));
@@ -421,6 +446,9 @@ impl Client {
     /// *before* the request is sent, so an item published between the
     /// daemon's reply and this function returning is not lost.
     pub async fn subscribe(&self, topics: Vec<Topic>) -> Result<Subscription> {
+        if self.inner.is_dead() {
+            return Err(Error::DaemonUnreachable);
+        }
         let id = self.inner.next_request_id();
         let (reply_tx, reply_rx) = oneshot::channel();
         let (items_tx, items_rx) = mpsc::channel(SUBSCRIPTION_DEPTH);
@@ -547,12 +575,20 @@ impl Inner {
     }
 }
 
+impl Inner {
+    /// Has the connection ended?
+    fn is_dead(&self) -> bool {
+        self.dead.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 /// Read frames until the connection ends, resolving pending requests.
 async fn read_loop<R>(
     mut reader: BufReader<R>,
     mut line: Vec<u8>,
     pending: PendingMap,
     mut closed: watch::Receiver<bool>,
+    dead: Arc<std::sync::atomic::AtomicBool>,
 ) where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -607,9 +643,14 @@ async fn read_loop<R>(
         }
     }
 
-    // The connection is gone. Fail everything still waiting rather than
-    // leaving a caller blocked until its timeout: "the daemon stopped" now is
-    // better than "no answer" in sixty seconds.
+    // The connection is gone. Say so before draining, so that a request
+    // arriving in the same breath is refused rather than registered into a map
+    // nobody will ever read again.
+    dead.store(true, std::sync::atomic::Ordering::Release);
+
+    // Fail everything still waiting rather than leaving a caller blocked until
+    // its timeout: "the daemon stopped" now is better than "no answer" in
+    // sixty seconds.
     let message = goodbye.unwrap_or_else(|| "the connection to the daemon was closed".to_string());
     if let Ok(mut map) = pending.lock() {
         for (_, entry) in map.drain() {

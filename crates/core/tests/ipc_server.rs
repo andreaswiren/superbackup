@@ -1083,3 +1083,48 @@ impl RawClient {
         }
     }
 }
+
+/// A request made after the daemon has gone fails at once.
+///
+/// # The platform difference this closes
+///
+/// Writing to a closed named pipe fails immediately, so on Windows the send
+/// failed and the caller was told `DaemonUnreachable` straight away. Writing
+/// to a closed Unix socket does not fail, so the same call sat there until the
+/// client's own timeout — thirty seconds by default — and then reported "the
+/// daemon did not answer within 30s". True, and the wrong answer: the daemon
+/// is not slow, it is gone, and a command line that hangs for half a minute
+/// before saying so is one people stop trusting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_after_shutdown_fails_immediately_rather_than_timing_out() {
+    let harness = Harness::start("dead-connection");
+    let client = harness.client().await;
+    client.ping().await.expect("the daemon answers while it is alive");
+
+    harness.stop().await;
+
+    // Let the read loop notice. It is the thing that learns the connection has
+    // gone, and it learns it by reading nothing.
+    let noticed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if client.ping().await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(noticed.is_ok(), "the client never noticed the daemon had gone");
+
+    // And from here on it is immediate. Well inside the client's own timeout,
+    // which is what this is really asserting: that the answer comes from
+    // knowing rather than from waiting.
+    let started = std::time::Instant::now();
+    let error = client.ping().await.expect_err("the daemon is gone");
+    assert_eq!(error.code(), ErrorCode::DaemonUnreachable, "{error}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "it took {:?}, which means it waited rather than knew",
+        started.elapsed()
+    );
+}

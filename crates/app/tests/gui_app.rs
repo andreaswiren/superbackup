@@ -244,12 +244,21 @@ fn the_first_frame_asks_the_daemon_for_what_it_needs() {
     let mut app = App::new_with_daemon(&ctx, Arc::new(MockDaemon::new(handler.clone())));
     frame(&mut app, &ctx, egui::vec2(1100.0, 720.0));
 
+    // Wait for all of them, not just the first.
+    //
+    // The five go out together on a two-worker runtime and arrive in whatever
+    // order they arrive in. Waiting only for `status` and then asserting the
+    // other four is a race that a fast machine wins every time and a loaded CI
+    // runner does not — which is exactly what it did on Linux.
+    const WANTED: [&str; 5] = ["status", "settings.get", "job.list", "dest.list", "provider.list"];
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline && handler.calls("status") == 0 {
+    while std::time::Instant::now() < deadline
+        && WANTED.iter().any(|command| handler.calls(command) == 0)
+    {
         std::thread::sleep(std::time::Duration::from_millis(20));
         frame(&mut app, &ctx, egui::vec2(1100.0, 720.0));
     }
-    for command in ["status", "settings.get", "job.list", "dest.list", "provider.list"] {
+    for command in WANTED {
         assert!(handler.calls(command) > 0, "the window never asked for {command}");
     }
 }
