@@ -37,6 +37,14 @@ pub struct State {
     pub check_remotes: bool,
     pub at_risk_only: bool,
     pub search: String,
+    /// Two lines per repository — the name and the folder — rather than one.
+    ///
+    /// Off by default. A development machine can hold hundreds of
+    /// repositories, and at 52 pixels a row that is a table nobody scrolls to
+    /// the end of; at 28 it is a list. The path is the thing that tells two
+    /// `api` folders apart, so it does not disappear when this is off — it
+    /// moves to the row's tooltip.
+    pub roomy: bool,
     /// The repository a modal is about, by path — not by index, which changes
     /// under the modal the moment a scan finishes.
     pub acting_on: Option<std::path::PathBuf>,
@@ -189,6 +197,15 @@ impl App {
         let mut at_risk = self.screens.git.at_risk_only;
         if widgets::checkbox(ui, &mut at_risk, copy::git::AT_RISK_ONLY, None, true).clicked() {
             self.screens.git.at_risk_only = at_risk;
+        }
+        ui.add_space(space::S);
+
+        let mut roomy = self.screens.git.roomy;
+        if widgets::checkbox(ui, &mut roomy, copy::git::ROOMY, None, true)
+            .on_hover_text(copy::git::ROOMY_HINT)
+            .clicked()
+        {
+            self.screens.git.roomy = roomy;
         }
 
         widgets::Field::new()
@@ -395,6 +412,8 @@ impl App {
         let mut visit: Option<String> = None;
         let mut expand: Option<std::path::PathBuf> = None;
         let busy = self.screens.git.acting;
+        let roomy = self.screens.git.roomy;
+        let row_height = if roomy { 52.0 } else { size::TABLE_ROW_H_COMPACT };
 
         widgets::table_frame(ui, |ui| {
             let gap = ui.spacing().item_spacing.x;
@@ -463,7 +482,7 @@ impl App {
                     });
                 })
                 .body(|body| {
-                    body.rows(52.0, rows.len(), |mut row| {
+                    body.rows(row_height, rows.len(), |mut row| {
                         let index = row.index();
                         let Some(repo) = rows.get(index) else { return };
                         let state = repo.state();
@@ -472,8 +491,36 @@ impl App {
                         let mut handled = false;
 
                         row.col(|ui| {
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
+                            let path = repo.path.display().to_string();
+                            if roomy {
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    widgets::elided(
+                                        ui,
+                                        &repo.name,
+                                        Type::BodyStrong,
+                                        t.text_primary,
+                                        name_width - 12.0,
+                                        false,
+                                    );
+                                    // The path from the left would elide the
+                                    // part that differs between two projects
+                                    // with the same folder name; from the
+                                    // right it keeps it.
+                                    widgets::elided(
+                                        ui,
+                                        &path,
+                                        Type::MonoSmall,
+                                        t.text_muted,
+                                        name_width - 12.0,
+                                        true,
+                                    );
+                                });
+                            } else {
+                                // One line, and the path on hover rather than
+                                // gone: two folders called `api` are told
+                                // apart by where they are, and that is the
+                                // question a compact list makes harder.
                                 widgets::elided(
                                     ui,
                                     &repo.name,
@@ -481,19 +528,9 @@ impl App {
                                     t.text_primary,
                                     name_width - 12.0,
                                     false,
-                                );
-                                // The path from the left would elide the part
-                                // that differs between two projects with the
-                                // same folder name; from the right it keeps it.
-                                widgets::elided(
-                                    ui,
-                                    &repo.path.display().to_string(),
-                                    Type::MonoSmall,
-                                    t.text_muted,
-                                    name_width - 12.0,
-                                    true,
-                                );
-                            });
+                                )
+                                .on_hover_text(&path);
+                            }
                         });
                         row.col(|ui| {
                             let response =

@@ -318,6 +318,15 @@ pub fn daemon_not_started(reason: &str) -> String {
     )
 }
 
+pub fn cred_backup_made(job: &str, destinations: usize) -> String {
+    let where_to =
+        if destinations == 1 { "1 destination" } else { &format!("{destinations} destinations") };
+    format!("\"{job}\" will back up your keys to {where_to}, nightly")
+}
+pub fn cred_backup_exists(job: &str) -> String {
+    format!("\"{job}\" copies them, sealed under your master passphrase.")
+}
+
 pub fn passkey_added(label: &str) -> String {
     format!("\"{label}\" can now unlock superbackup")
 }
@@ -1717,6 +1726,13 @@ pub mod git {
         "Add a job with the folders you want backed up, and this page will show what is in them.";
     pub const SCANNING: &str = "Looking for repositories…";
     pub const SEARCH: &str = "Search repositories";
+    /// The density switch. Named for what it gives you rather than for what
+    /// it is: "compact" is the state, "show the paths" is the reason anybody
+    /// would turn it off.
+    pub const ROOMY: &str = "Show paths";
+    pub const ROOMY_HINT: &str =
+        "Two lines per repository, with the folder under the name. Off, one line each, which is \
+         what a machine with hundreds of them wants.";
     pub const SCAN_FAILED: &str = "The scan could not run";
 
     pub const COL_REPO: &str = "Repository";
@@ -1883,6 +1899,16 @@ pub mod cred {
     pub const RESCAN: &str = "Look again";
     pub const FAILED: &str = "The keys could not be listed";
     pub const EMPTY: &str = "No SSH keys found";
+    /// The one-click job for the keys on this page.
+    pub const BACKUP_TITLE: &str = "Nothing is backing these up yet";
+    pub const BACKUP_BODY: &str = "A private key you cannot replace is worth a backup of its own. superbackup can make one job that copies just these keys, nightly, sealed under your master passphrase.";
+    pub const BACKUP_ACTION: &str = "Back up these keys";
+    pub const BACKUP_JOB_NAME: &str = "Keys";
+    pub const BACKUP_NO_DESTINATION: &str =
+        "Add a destination first — there is nowhere to put the copies yet.";
+    /// Shown once a job exists, so the page says so rather than offering it
+    /// again.
+    pub const BACKUP_DONE: &str = "These keys are backed up";
     pub const EMPTY_BODY: &str =
         "Nothing was found in this account's key folder. Keys made elsewhere will not appear here.";
     pub const SEALED_TITLE: &str = "Keys are never copied in the clear";

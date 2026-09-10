@@ -136,6 +136,15 @@ impl App {
             );
             ui.add_space(space::XL);
 
+            // The one thing this page could not do.
+            //
+            // It lists the keys, explains that they are sealed before they
+            // leave the machine, and offered no way to actually copy them
+            // anywhere — the job that does it had to be built by hand through
+            // the wizard, choosing a template most people would never guess
+            // was the right one.
+            self.credential_backup(ui, &t);
+
             let mut role: Option<(String, bool, bool)> = None;
             for credential in &credentials {
                 if let Some(change) = self.credential_card(ui, credential, &t) {
@@ -306,6 +315,108 @@ impl App {
         });
         ui.add_space(space::M);
         change
+    }
+
+    /// Offer, in one press, a job that backs up nothing but these keys.
+    ///
+    /// # Why a job of its own rather than a folder in an existing one
+    ///
+    /// Because what it backs up is not a folder. A keys job carries no
+    /// sources: the payload is built when the run starts, by sealing each key
+    /// under the master passphrase into a bundle, and it is the bundle that
+    /// reaches the destination. A private key is never written anywhere in the
+    /// clear — not to a folder mirror, not to OneDrive, not to a bucket — and
+    /// that is a property of how the payload is made, not a setting.
+    ///
+    /// So the job cannot be "add `~/.ssh` to my documents backup". That would
+    /// copy the keys as they are.
+    fn credential_backup(&mut self, ui: &mut Ui, t: &theme::Tokens) {
+        use superbackup_core::model::JobContent;
+
+        // Already done? Say so and stop offering.
+        if let Some(job) = self.data.jobs.iter().find(|j| j.content == JobContent::Keys) {
+            let name = job.name.clone();
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                Icon::CheckCircle.paint(ui.painter(), rect, t.success.mark);
+                ui.add_space(space::M);
+                widgets::text(ui, copy::cred::BACKUP_DONE, Type::BodyStrong, t.text_primary);
+                ui.add_space(space::S);
+                widgets::text(ui, copy::cred_backup_exists(&name), Type::Small, t.text_secondary);
+            });
+            ui.add_space(space::XL);
+            return;
+        }
+
+        let mut make = false;
+        widgets::banner(
+            ui,
+            widgets::BannerKind::Warning,
+            copy::cred::BACKUP_TITLE,
+            Some(copy::cred::BACKUP_BODY),
+            |ui| {
+                if Button::primary(copy::cred::BACKUP_ACTION)
+                    .icon(Icon::KeyRound)
+                    .compact()
+                    .show(ui)
+                    .clicked()
+                {
+                    make = true;
+                }
+            },
+        );
+        ui.add_space(space::XL);
+
+        if make {
+            self.create_keys_job();
+        }
+    }
+
+    /// Build and send the keys job.
+    ///
+    /// Every enabled destination, because a key is small and the whole point
+    /// of backing one up is that it survives losing a machine — sending it to
+    /// one place and not the other five is a choice nobody would make on
+    /// purpose. The job page is opened afterwards so the schedule and the
+    /// destinations can be changed while the decision is still fresh, rather
+    /// than a toast claiming something happened somewhere.
+    fn create_keys_job(&mut self) {
+        let job = match self.keys_job() {
+            Some(job) => job,
+            None => {
+                self.toasts.warning(copy::cred::BACKUP_NO_DESTINATION);
+                return;
+            }
+        };
+        let name = job.name.clone();
+        let count = job.destination_ids.len();
+        self.ask(Intent::SaveJob(name.clone()), Request::JobCreate { job: Box::new(job) });
+        self.toasts.success(copy::cred_backup_made(&name, count));
+        self.go(crate::gui::Route::Jobs);
+    }
+
+    /// The keys job this machine would get, or `None` when there is nowhere to
+    /// put it.
+    ///
+    /// Separate from sending it so that what it *is* can be asserted without a
+    /// daemon: the two properties that matter — that it carries no folders,
+    /// and that it reaches every destination that is switched on — are
+    /// decided here and are invisible from the other side of an IPC call.
+    pub(crate) fn keys_job(&self) -> Option<superbackup_core::model::Job> {
+        let destinations: Vec<uuid::Uuid> =
+            self.data.destinations.iter().filter(|d| d.enabled).map(|d| d.id).collect();
+        if destinations.is_empty() {
+            return None;
+        }
+
+        let mut job = crate::gui::screens::wizard::blank_job();
+        job.content = superbackup_core::model::JobContent::Keys;
+        job.name = crate::gui::validation::unique_name(
+            copy::cred::BACKUP_JOB_NAME,
+            &self.data.jobs.iter().map(|j| j.name.clone()).collect::<Vec<_>>(),
+        );
+        job.destination_ids = destinations;
+        Some(job)
     }
 
     /// Which agent is running, and whether it holds this machine's keys.
@@ -573,4 +684,78 @@ fn account_name() -> String {
     std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_else(|_| "superbackup".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::gui::app::App;
+    use superbackup_core::model::JobContent;
+
+    fn app() -> (App, egui::Context) {
+        let ctx = egui::Context::default();
+        let app = App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(std::sync::Arc::new(
+                superbackup_core::ipc::testing::MockHandler::new(),
+            ))),
+        );
+        (app, ctx)
+    }
+
+    /// One press makes a job that backs up the keys and nothing else.
+    ///
+    /// A keys job carries no sources on purpose: the payload is built when the
+    /// run starts, by sealing each key under the master passphrase, and it is
+    /// the sealed bundle that reaches the destination. A job with `~/.ssh` in
+    /// its sources would copy the keys as they are, which is the one thing
+    /// this must never do.
+    #[test]
+    fn the_keys_job_carries_no_folders_of_its_own() {
+        let (mut app, _ctx) = app();
+        crate::gui::fixtures::seed(&mut app.data);
+        app.data.jobs.clear();
+
+        let sent = app.keys_job().expect("a job to create");
+        assert_eq!(sent.content, JobContent::Keys);
+        assert!(
+            sent.sources.is_empty(),
+            "a keys job with folders would copy the keys in the clear: {:?}",
+            sent.sources
+        );
+        assert!(!sent.destination_ids.is_empty(), "a job with nowhere to write backs up nothing");
+    }
+
+    /// Every enabled destination, none of the disabled ones.
+    ///
+    /// A key is small and the reason to back one up is surviving the loss of a
+    /// machine, so sending it to one place and not the others is a choice
+    /// nobody makes on purpose.
+    #[test]
+    fn the_keys_job_goes_everywhere_that_is_switched_on() {
+        let (mut app, _ctx) = app();
+        crate::gui::fixtures::seed(&mut app.data);
+        app.data.jobs.clear();
+        assert!(app.data.destinations.len() > 1, "the fixture needs more than one destination");
+        app.data.destinations[0].enabled = false;
+
+        let sent = app.keys_job().expect("a job to create");
+        let expected: Vec<_> =
+            app.data.destinations.iter().filter(|d| d.enabled).map(|d| d.id).collect();
+        assert_eq!(sent.destination_ids, expected);
+    }
+
+    /// With nowhere to write, say so rather than making a job that cannot run.
+    #[test]
+    fn with_no_destinations_it_explains_instead_of_creating_one() {
+        let (mut app, _ctx) = app();
+        crate::gui::fixtures::seed(&mut app.data);
+        app.data.jobs.clear();
+        app.data.destinations.clear();
+
+        assert!(app.keys_job().is_none(), "a job with no destination was described");
+
+        // And the press says why rather than doing nothing.
+        app.create_keys_job();
+        assert_eq!(app.toasts.len(), 1, "the user must be told why nothing happened");
+    }
 }

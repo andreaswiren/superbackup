@@ -14,6 +14,32 @@ rather than mangling it.
 
 Nothing yet.
 
+## [0.11.0] - 2026-09-11
+
+### Added
+
+- **One press backs up your keys.** The Credentials page listed the private
+  keys it had found, explained that they are sealed before they leave the
+  machine, and offered no way to copy them anywhere: the job that does it had
+  to be assembled by hand in the wizard, from a template most people would
+  never guess was the right one.
+
+  There is now a button. It makes one job that backs up nothing but the keys,
+  nightly, to every destination that is switched on — a key is small, and the
+  reason to back one up is surviving the loss of a machine, so sending it to
+  one place and not the others is a choice nobody makes on purpose.
+
+  The job deliberately carries no folders. Its payload is built when the run
+  starts, by sealing each key under your master passphrase into a bundle, and
+  it is the bundle that reaches the destination. Adding `~/.ssh` to an ordinary
+  backup would copy the keys as they are; this cannot.
+
+- **The Git table fits hundreds of repositories.** One line each rather than
+  two, at 28 pixels a row instead of 52. The folder is what tells two `api`
+  checkouts apart, so it moves to the row's tooltip rather than disappearing —
+  and "Show paths" puts it back under the name for anyone who would rather
+  read than hover.
+
 ## [0.10.0] - 2026-09-10
 
 The first release built for Linux and macOS, and the first one whose setup
