@@ -99,7 +99,11 @@ jobs:
         id: platforms
         run: |
           set -euo pipefail
-          want="${{ github.event.inputs.platforms || 'windows' }}"
+          # A tag push carries no inputs, so this fallback — not the input's
+          # `default:` — is what a release actually gets. Changing only the
+          # default is why v0.10.0 was tagged as an all-platform release and
+          # came out with one Windows archive in it.
+          want="${{ github.event.inputs.platforms || 'all' }}"
           if [ "$want" = "all" ]; then
             targets='[{"os":"windows-latest","target":"x86_64-pc-windows-msvc","binary":"superbackup.exe","archive":"zip"},{"os":"windows-11-arm","target":"aarch64-pc-windows-msvc","binary":"superbackup.exe","archive":"zip"},{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","binary":"superbackup","archive":"tar.gz"},{"os":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","binary":"superbackup","archive":"tar.gz"},{"os":"macos-latest","target":"aarch64-apple-darwin","binary":"superbackup","archive":"tar.gz"},{"os":"macos-latest","target":"x86_64-apple-darwin","binary":"superbackup","archive":"tar.gz"}]'
             test_os='["windows-latest","ubuntu-latest","macos-latest"]'
