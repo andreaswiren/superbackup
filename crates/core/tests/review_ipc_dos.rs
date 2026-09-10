@@ -15,15 +15,45 @@ use superbackup_core::ipc::protocol::{Request, RequestId};
 use superbackup_core::ipc::testing::MockHandler;
 use superbackup_core::ipc::{ClientFrame, Limits, Server, ServerHandle, ServerOptions, Topic};
 
+/// A unique endpoint for one test, so tests can run in parallel.
+///
+/// # Why the Unix side is so terse
+///
+/// A Unix socket path lives in `sun_path`, which holds **104 bytes on macOS**
+/// and 108 on Linux — a limit in the kernel struct, not the filesystem — and
+/// `bind` on a longer path fails with an error that says nothing about length.
+///
+/// The obvious version of this — the pid, the test's name and a full uuid,
+/// under `std::env::temp_dir()` — is about 123 bytes on a macOS runner, where
+/// `$TMPDIR` is a `/var/folders/xy/…/T/` path of roughly fifty characters
+/// before anything of ours is added. Every test in this file failed at
+/// `bind`, all of them at the same line, with an errno that pointed nowhere
+/// near the cause.
+///
+/// So: eight hex digits of uniqueness and a one-character filename. The
+/// private directory is not incidental — `Server::bind` restricts the
+/// socket's *parent* to 0700, which is the control keeping another local user
+/// out of the endpoint, so putting the socket straight into the temporary
+/// folder would make bind try to chmod a directory that is not ours.
+///
+/// The assertion is deliberate: a length failure should say so here, once,
+/// rather than as thirty identical bind errors.
 fn endpoint(tag: &str) -> String {
-    let unique = format!("{}-{}-{}", std::process::id(), tag, uuid::Uuid::new_v4().simple());
+    let unique = &uuid::Uuid::new_v4().simple().to_string()[..8];
     if cfg!(windows) {
-        format!(r"\\.\pipe\superbackup-review-{unique}")
-    } else {
-        let dir = std::env::temp_dir().join(format!("sb-review-ipc-{unique}"));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        dir.join("sb.sock").display().to_string()
+        // The pipe namespace has no length limit worth worrying about, so
+        // Windows keeps the name that says which test it belongs to.
+        return format!(r"\\.\pipe\superbackup-sbr-{}-{tag}-{unique}", std::process::id());
     }
+    let dir = std::env::temp_dir().join(format!("sbr{unique}"));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("s").display().to_string();
+    assert!(
+        path.len() < 100,
+        "the socket path is {} bytes and sun_path holds 104 on macOS: {path}",
+        path.len()
+    );
+    path
 }
 
 struct Harness {

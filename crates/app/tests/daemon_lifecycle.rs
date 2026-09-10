@@ -630,9 +630,20 @@ async fn rotating_the_passphrase_invalidates_the_cache() {
     // back means reading the machine's real credential store, and the tests in
     // this file deliberately do not: that is why the round-trip test against
     // the real keychain carries `#[ignore]`.
-    let after =
-        std::fs::read(daemon::keychain::sidecar_path(&harness.paths)).expect("read the sidecar");
-    assert_ne!(before, after, "the cache from before the rotation is still on disk");
+    //
+    // Two outcomes are correct, and which one happens is not this test's
+    // business. Where a credential store exists the rotation re-caches, and
+    // the bytes differ. Where one does not — a CI runner with no D-Bus session
+    // is the ordinary example, and it is what made this fail on Linux — the
+    // re-cache cannot happen and the cache is simply gone. What must never
+    // happen is the *old* bytes surviving, and that is what is asserted.
+    match std::fs::read(daemon::keychain::sidecar_path(&harness.paths)) {
+        Ok(after) => {
+            assert_ne!(before, after, "the cache from before the rotation is still on disk")
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("the sidecar could not be read: {e}"),
+    }
 
     // And the new passphrase is what actually opens the vault now.
     harness.call(&client, Request::VaultLock {}).await;
