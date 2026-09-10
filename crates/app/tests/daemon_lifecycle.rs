@@ -104,9 +104,56 @@ async fn control_shutdown_answers_before_it_stops() {
 
 /// A second daemon over the same home is refused, and does not displace the
 /// first.
+///
+/// # Why the lock is rewritten before the second daemon starts
+///
+/// Because both "daemons" here are threads of one test binary, and the rule
+/// `is_stale` applies is that *our own* pid in the lock file means we already
+/// hold it — a re-entrant acquire, or a lock left behind by a re-exec — which
+/// is takeable. Two threads of one process are indistinguishable to that rule,
+/// so the second one takes the lock over and starts, correctly by the rule and
+/// uselessly for this test.
+///
+/// On Windows it passed anyway, because the named mutex settles the question
+/// before the file is ever consulted. On Linux and macOS there is no mutex, so
+/// the second daemon started and ran, and `join()` waited for a process that
+/// had no reason to stop: the job burned five hours and forty-nine minutes and
+/// was killed by GitHub's six-hour ceiling. That is why no Linux or macOS
+/// release has ever been built.
+///
+/// So the lock is rewritten to name a pid that is alive and is not us, which
+/// is what a genuine second instance looks like from the file's point of view,
+/// and the refusal is then exercised on every platform rather than on one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_second_instance_is_refused_and_the_first_keeps_running() {
     let mut harness = Harness::start("singleton", |_, _| {}).await;
+
+    // A live process that is not this one.
+    //
+    // A child of our own rather than `init` or the Windows System process:
+    // those certainly exist, but whether `sysinfo` can *see* them depends on
+    // the platform and on privileges, and if it cannot then `holder_is_alive`
+    // says no, the lock looks stale, the second daemon starts, and this test
+    // hangs for six hours again. A child we spawned is one we can always see.
+    //
+    // `executable: None` makes `holder_is_alive` answer "assume it is the
+    // holder" rather than compare paths, which is the behaviour that matters:
+    // the check is deliberately biased towards refusing, because a wrong "it
+    // is dead" costs the user two daemons writing to one repository.
+    let mut holder = long_lived_child();
+    let foreign = superbackup_core::platform::single_instance::LockRecord {
+        pid: holder.id(),
+        nonce: uuid::Uuid::new_v4(),
+        acquired_at: chrono::Utc::now(),
+        executable: None,
+        endpoint: Some("held-by-somebody-else".into()),
+        service_scope: false,
+    };
+    std::fs::write(
+        harness.paths.lock_file(),
+        serde_json::to_vec_pretty(&foreign).expect("serialise the lock record"),
+    )
+    .expect("rewrite the lock");
 
     // Same home, different endpoint — so the *only* thing that can refuse the
     // second instance is the single-instance lock, not the socket.
@@ -124,10 +171,19 @@ async fn a_second_instance_is_refused_and_the_first_keeps_running() {
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
         rt.block_on(daemon::run(paths, daemon::Surface::Headless, control, 0, Some(hooks)))
     });
-    let outcome = tokio::task::spawn_blocking(move || result.join())
-        .await
-        .expect("join task")
-        .expect("the second daemon did not panic");
+
+    // Bounded, always. A daemon that is *not* refused runs until something
+    // stops it, and nothing here would — so without this the failure mode is
+    // not a red test but a job that hangs until the runner is killed hours
+    // later, which is a failure nobody reads as one.
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(60),
+        tokio::task::spawn_blocking(move || result.join()),
+    )
+    .await
+    .expect("the second daemon should have been refused within a minute, not started")
+    .expect("join task")
+    .expect("the second daemon did not panic");
 
     let error = outcome.expect_err("a second instance must be refused");
     assert!(
@@ -140,7 +196,31 @@ async fn a_second_instance_is_refused_and_the_first_keeps_running() {
     client.ping().await.expect("the first instance must survive a rejected second");
 
     drop(client);
+    let _ = holder.kill();
+    let _ = holder.wait();
     harness.shutdown().await.expect("clean shutdown");
+}
+
+/// A process that will outlive this test unless it is killed, so that its pid
+/// can stand in for a second superbackup holding the lock.
+fn long_lived_child() -> std::process::Child {
+    let mut command = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        // `timeout` refuses to run without a console; ping is the portable
+        // way to sleep in cmd.
+        c.args(["/c", "ping", "-n", "600", "127.0.0.1"]);
+        c
+    } else {
+        let mut c = std::process::Command::new("sleep");
+        c.arg("600");
+        c
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn a process to stand in for a second instance")
 }
 
 /// Unlocking runs the backup the lock blocked.

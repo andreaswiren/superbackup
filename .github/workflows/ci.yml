@@ -26,6 +26,15 @@ concurrency:
 jobs:
   test:
     name: test (${{ matrix.os }})
+    # A ceiling, so a hang is a red tick and not six hours of runner time.
+    #
+    # `a_second_instance_is_refused_and_the_first_keeps_running` started a
+    # daemon that was never refused on Linux and macOS and then waited for it
+    # to exit. Nothing would have stopped it, so the job ran until GitHub's own
+    # six-hour ceiling killed it — and a job killed by the platform reports
+    # "cancelled", which reads like somebody pressed a button rather than like
+    # a test that never finished. Twice the honest worst case is plenty.
+    timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -125,6 +134,15 @@ jobs:
 
   msrv:
     name: minimum supported Rust version
+    # A ceiling, so a hang is a red tick and not six hours of runner time.
+    #
+    # `a_second_instance_is_refused_and_the_first_keeps_running` started a
+    # daemon that was never refused on Linux and macOS and then waited for it
+    # to exit. Nothing would have stopped it, so the job ran until GitHub's own
+    # six-hour ceiling killed it — and a job killed by the platform reports
+    # "cancelled", which reads like somebody pressed a button rather than like
+    # a test that never finished. Twice the honest worst case is plenty.
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
