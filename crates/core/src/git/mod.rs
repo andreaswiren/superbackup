@@ -253,7 +253,11 @@ pub struct RemoteCheck {
 }
 
 /// One repository found under a job's sources.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Default` is derived for the sake of tests that care about two or three
+/// fields: a scan produces two dozen, and a test about *ordering* that has to
+/// spell out every one of them is a test nobody will add the next case to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GitRepo {
     pub path: PathBuf,
     /// The folder's own name, which is what the user calls this project.

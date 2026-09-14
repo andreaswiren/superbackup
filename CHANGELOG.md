@@ -18,6 +18,18 @@ Nothing yet.
 
 ### Added
 
+- **The Git table sorts.** By name, alphabetically, to begin with — which is
+  what a list of two hundred folders needs and what it was not doing; it came
+  out in whatever order the scan walked the disk. Every other column heading is
+  a control too: state, branch, changes, last commit and host. Clicking the
+  same one again reverses it.
+
+  A column starts in the direction that makes it useful. Names ascending;
+  changes and last commit descending, because the reason to sort by those is to
+  find the extreme — the repository with the most uncommitted work, or the one
+  nobody has touched — and that should be the first click, not the second. Ties
+  fall back to the name, so a rescan does not shuffle rows that match.
+
 - **One press backs up your keys.** The Credentials page listed the private
   keys it had found, explained that they are sealed before they leave the
   machine, and offered no way to copy them anywhere: the job that does it had
@@ -39,6 +51,42 @@ Nothing yet.
   checkouts apart, so it moves to the row's tooltip rather than disappearing —
   and "Show paths" puts it back under the name for anyone who would rather
   read than hover.
+
+### Fixed
+
+- **Superbackup asked for the master passphrase twice.** The reply that opens
+  the vault performed the action it had been holding back *before* recording
+  that the vault was open, so that action met a gate which still believed it
+  was shut and raised a second prompt on top of the one that had just worked —
+  with the status strip in the corner already reading "Unlocked".
+
+- **A StorJ provider saved without its credentials.** Creating a provider mints
+  a fresh id on the daemon and re-derives the credential handles from it; the
+  window was writing the access key and secret under handles derived from the
+  draft's id, which had just been thrown away. They went into the vault under
+  names nothing would ever look up, and the provider came back with no
+  credentials at all.
+
+- **Save was live on a destination the validator rejected.** Errors are held
+  back until you have tried once, so a fresh form is not already red — but that
+  was done by emptying the validation report, and the Save button read the same
+  emptied report. A destination with no name saved, and the first thing to
+  object was the daemon, as a wall of validator text. The provider editor had
+  the same defect.
+
+- **"Run backups as a background service" told you to restart as an
+  administrator.** Installing a service needs rights the daemon cannot ask for:
+  a UAC prompt needs a desktop and a daemon has not got one. The window has, so
+  it raises the prompt itself — Windows' own elevation, a separate process, and
+  no credential superbackup ever sees. First run raised it already but could
+  not say what happened afterwards, because the call returns when the prompt
+  appears rather than when the install finishes; it now says that, instead of
+  reporting a success it cannot see.
+
+- **"Create a new vault…" accepted the folder the backups go to.** A vault kept
+  inside its own destination is copied into itself by every run and pushed to
+  every device by the sync client. It is refused in both directions now: a
+  folder inside a destination, and a folder that would contain one.
 
 ## [0.10.0] - 2026-09-10
 

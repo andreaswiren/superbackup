@@ -37,6 +37,9 @@ pub struct State {
     pub check_remotes: bool,
     pub at_risk_only: bool,
     pub search: String,
+    /// Which column the table is ordered by, and which way.
+    pub sort: GitSort,
+    pub sort_descending: bool,
     /// Two lines per repository — the name and the folder — rather than one.
     ///
     /// Off by default. A development machine can hold hundreds of
@@ -120,6 +123,39 @@ impl State {
 const CANDIDATE_MARK_W: f32 = 150.0;
 const CANDIDATE_ITEMS_W: f32 = 90.0;
 const CANDIDATE_ACTION_W: f32 = 150.0;
+
+/// What the repository table is ordered by.
+///
+/// Name by default, ascending, because that is the order somebody scanning a
+/// list of two hundred folders for one they can name expects — and because any
+/// default that moves rows around between scans makes a long table impossible
+/// to read twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GitSort {
+    #[default]
+    Name,
+    State,
+    Branch,
+    Changes,
+    /// The last commit's date. Absent sorts as oldest, which puts a repository
+    /// with no commits at all at the end of a newest-first list rather than
+    /// the front of it.
+    Last,
+    Host,
+}
+
+impl GitSort {
+    /// Which way round a column reads best when it is first chosen.
+    ///
+    /// Names ascending; everything else descending, because the reason to sort
+    /// by "changes" or "last commit" is to find the extreme — the repository
+    /// with the most uncommitted work, or the one nobody has touched — and
+    /// making that the first click rather than the second is the whole value
+    /// of the control.
+    fn starts_descending(self) -> bool {
+        !matches!(self, GitSort::Name | GitSort::Branch | GitSort::Host)
+    }
+}
 
 const GIT_COLUMNS: [ColumnSpec; 7] = [
     ColumnSpec::keep("repo", 200.0),
@@ -317,6 +353,7 @@ impl App {
             })
             .cloned()
             .collect();
+        let rows = self.sorted_rows(rows);
 
         if rows.is_empty() {
             let empty = if inventory.repos.is_empty() {
@@ -391,6 +428,56 @@ impl App {
         });
     }
 
+    /// Put the rows in the order the headings say.
+    ///
+    /// Name is the tie-break for every column, so two repositories on the same
+    /// branch or with the same number of changes keep a stable order between
+    /// scans rather than swapping places each time the inventory is rebuilt.
+    fn sorted_rows(&self, mut rows: Vec<GitRepo>) -> Vec<GitRepo> {
+        let sort = self.screens.git.sort;
+        let key = |repo: &GitRepo| repo.name.to_lowercase();
+        rows.sort_by(|a, b| {
+            let ordering = match sort {
+                GitSort::Name => std::cmp::Ordering::Equal,
+                GitSort::State => a.state().cmp(&b.state()),
+                GitSort::Branch => a
+                    .branch
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .cmp(&b.branch.as_deref().unwrap_or_default().to_lowercase()),
+                GitSort::Changes => {
+                    let count = |r: &GitRepo| r.staged + r.unstaged + r.untracked + r.conflicted;
+                    count(a).cmp(&count(b))
+                }
+                GitSort::Last => a.last_commit_at.cmp(&b.last_commit_at),
+                GitSort::Host => a
+                    .primary_remote()
+                    .map(|r| r.forge.label())
+                    .unwrap_or_default()
+                    .cmp(b.primary_remote().map(|r| r.forge.label()).unwrap_or_default()),
+            };
+            let ordering =
+                if self.screens.git.sort_descending { ordering.reverse() } else { ordering };
+            ordering.then_with(|| key(a).cmp(&key(b)))
+        });
+        rows
+    }
+
+    /// Answer a click on a heading.
+    ///
+    /// The same column again reverses it; a different one switches to it in
+    /// whichever direction that column reads best. See
+    /// `GitSort::starts_descending`.
+    fn sort_by(&mut self, column: GitSort) {
+        if self.screens.git.sort == column {
+            self.screens.git.sort_descending = !self.screens.git.sort_descending;
+        } else {
+            self.screens.git.sort = column;
+            self.screens.git.sort_descending = column.starts_descending();
+        }
+    }
+
     fn git_table(&mut self, ui: &mut Ui, rows: &[GitRepo], now: chrono::DateTime<chrono::Utc>) {
         let t = theme::tokens(ui.ctx());
         let shown = viewmodel::fit_columns(
@@ -413,6 +500,12 @@ impl App {
         let mut expand: Option<std::path::PathBuf> = None;
         let busy = self.screens.git.acting;
         let roomy = self.screens.git.roomy;
+        // Collected during the table and acted on after it, like every other
+        // click here: the header closure cannot borrow `self` mutably.
+        let mut sort_click: Option<GitSort> = None;
+        let active_sort = self.screens.git.sort;
+        let descending = self.screens.git.sort_descending;
+        let sorted_for = |column: GitSort| (column == active_sort).then_some(descending);
         let row_height = if roomy { 52.0 } else { size::TABLE_ROW_H_COMPACT };
 
         widgets::table_frame(ui, |ui| {
@@ -452,29 +545,77 @@ impl App {
             builder
                 .header(size::TABLE_HEADER_H, |mut header| {
                     header.col(|ui| {
-                        widgets::table_header(ui, copy::git::COL_REPO, None);
+                        if widgets::sortable_header(
+                            ui,
+                            copy::git::COL_REPO,
+                            sorted_for(GitSort::Name),
+                        )
+                        .clicked()
+                        {
+                            sort_click = Some(GitSort::Name);
+                        }
                     });
                     header.col(|ui| {
-                        widgets::table_header(ui, copy::git::COL_STATE, None);
+                        if widgets::sortable_header(
+                            ui,
+                            copy::git::COL_STATE,
+                            sorted_for(GitSort::State),
+                        )
+                        .clicked()
+                        {
+                            sort_click = Some(GitSort::State);
+                        }
                     });
                     if has("branch") {
                         header.col(|ui| {
-                            widgets::table_header(ui, copy::git::COL_BRANCH, None);
+                            if widgets::sortable_header(
+                                ui,
+                                copy::git::COL_BRANCH,
+                                sorted_for(GitSort::Branch),
+                            )
+                            .clicked()
+                            {
+                                sort_click = Some(GitSort::Branch);
+                            }
                         });
                     }
                     if has("changes") {
                         header.col(|ui| {
-                            widgets::table_header(ui, copy::git::COL_CHANGES, None);
+                            if widgets::sortable_header(
+                                ui,
+                                copy::git::COL_CHANGES,
+                                sorted_for(GitSort::Changes),
+                            )
+                            .clicked()
+                            {
+                                sort_click = Some(GitSort::Changes);
+                            }
                         });
                     }
                     if has("last") {
                         header.col(|ui| {
-                            widgets::table_header(ui, copy::git::COL_LAST, None);
+                            if widgets::sortable_header(
+                                ui,
+                                copy::git::COL_LAST,
+                                sorted_for(GitSort::Last),
+                            )
+                            .clicked()
+                            {
+                                sort_click = Some(GitSort::Last);
+                            }
                         });
                     }
                     if has("host") {
                         header.col(|ui| {
-                            widgets::table_header(ui, copy::git::COL_HOST, None);
+                            if widgets::sortable_header(
+                                ui,
+                                copy::git::COL_HOST,
+                                sorted_for(GitSort::Host),
+                            )
+                            .clicked()
+                            {
+                                sort_click = Some(GitSort::Host);
+                            }
                         });
                     }
                     header.col(|ui| {
@@ -699,6 +840,9 @@ impl App {
         // Scrolling to it helped and still meant losing your place in the
         // list. A dialog appears where you are already looking, and closing it
         // leaves the table exactly as you left it.
+        if let Some(column) = sort_click {
+            self.sort_by(column);
+        }
         if let Some(path) = expand {
             if let Some(repo) = rows.iter().find(|r| r.path == path).cloned() {
                 self.modal = Some(crate::gui::modals::Modal::GitRepo(Box::new(
@@ -1505,5 +1649,115 @@ mod tests {
         assert!(message.contains("repo-0 refused"), "and git's own words: {message}");
         assert!(message.contains("4 more"), "the rest are counted, not listed: {message}");
         assert!(!message.contains("repo-8"), "and not all nine are printed: {message}");
+    }
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::GitSort;
+    use crate::gui::app::App;
+    use superbackup_core::git::GitRepo;
+
+    fn app() -> (App, egui::Context) {
+        let ctx = egui::Context::default();
+        let app = App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(std::sync::Arc::new(
+                superbackup_core::ipc::testing::MockHandler::new(),
+            ))),
+        );
+        (app, ctx)
+    }
+
+    fn repo(name: &str, changes: u32, days_ago: Option<i64>) -> GitRepo {
+        GitRepo {
+            name: name.to_string(),
+            path: std::path::PathBuf::from(name),
+            unstaged: changes,
+            last_commit_at: days_ago.map(|d| chrono::Utc::now() - chrono::Duration::days(d)),
+            ..GitRepo::default()
+        }
+    }
+
+    fn names(rows: &[GitRepo]) -> Vec<&str> {
+        rows.iter().map(|r| r.name.as_str()).collect()
+    }
+
+    /// Alphabetical, and not by whatever order the scan happened to walk the
+    /// disk in — which is the order a list of two hundred folders is hardest
+    /// to read twice.
+    #[test]
+    fn the_default_order_is_by_name() {
+        let (app, _ctx) = app();
+        assert_eq!(app.screens.git.sort, GitSort::Name);
+        assert!(!app.screens.git.sort_descending);
+
+        let sorted = app.sorted_rows(vec![
+            repo("zeta", 0, None),
+            repo("Alpha", 0, None),
+            repo("mid", 0, None),
+        ]);
+        assert_eq!(names(&sorted), ["Alpha", "mid", "zeta"], "and case must not split the list");
+    }
+
+    /// Clicking a heading twice reverses it; clicking a different one moves to
+    /// it in the direction that column reads best.
+    #[test]
+    fn a_second_click_reverses_and_a_different_one_starts_afresh() {
+        let (mut app, _ctx) = app();
+
+        app.sort_by(GitSort::Name);
+        assert!(app.screens.git.sort_descending, "the same column again reverses it");
+
+        // "Most uncommitted work" is the reason to sort by changes, so that is
+        // the first click rather than the second.
+        app.sort_by(GitSort::Changes);
+        assert_eq!(app.screens.git.sort, GitSort::Changes);
+        assert!(app.screens.git.sort_descending);
+    }
+
+    /// Sorting by changes finds the repository with the most work at risk.
+    #[test]
+    fn changes_sorts_by_how_much_is_uncommitted() {
+        let (mut app, _ctx) = app();
+        app.sort_by(GitSort::Changes);
+
+        let sorted = app.sorted_rows(vec![
+            repo("quiet", 0, None),
+            repo("busy", 12, None),
+            repo("some", 3, None),
+        ]);
+        assert_eq!(names(&sorted), ["busy", "some", "quiet"]);
+    }
+
+    /// A repository with no commits at all sorts as the oldest, so it lands at
+    /// the end of a newest-first list rather than the top of it.
+    #[test]
+    fn a_repository_with_no_commits_is_not_the_newest_thing_on_the_page() {
+        let (mut app, _ctx) = app();
+        app.sort_by(GitSort::Last);
+        assert!(app.screens.git.sort_descending, "newest first is the useful default");
+
+        let sorted = app.sorted_rows(vec![
+            repo("never", 0, None),
+            repo("old", 0, Some(90)),
+            repo("recent", 0, Some(1)),
+        ]);
+        assert_eq!(names(&sorted), ["recent", "old", "never"]);
+    }
+
+    /// Two rows that tie on the sorted column keep a stable order, so a
+    /// rescan does not shuffle them.
+    #[test]
+    fn ties_fall_back_to_the_name() {
+        let (mut app, _ctx) = app();
+        app.sort_by(GitSort::Changes);
+
+        let sorted = app.sorted_rows(vec![
+            repo("delta", 5, None),
+            repo("alpha", 5, None),
+            repo("charlie", 5, None),
+        ]);
+        assert_eq!(names(&sorted), ["alpha", "charlie", "delta"]);
     }
 }

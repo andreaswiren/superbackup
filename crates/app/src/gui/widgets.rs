@@ -2514,6 +2514,40 @@ pub fn table_header(ui: &mut Ui, label: &str, sorted: Option<bool>) -> Response 
     response.expect("the horizontal layout always runs")
 }
 
+/// A column heading that can be clicked to sort by it.
+///
+/// `sorted` is `None` when this is not the column in use, `Some(descending)`
+/// when it is — the same convention [`table_header`] already drew an arrow
+/// for; this makes the heading answer to a click as well.
+///
+/// The whole cell is the target, not just the glyphs: a heading is a small
+/// piece of text and asking somebody to hit it exactly is a control that feels
+/// broken even when it works. The interaction is registered *after* the label
+/// is drawn, which is safe here because a heading has no children of its own
+/// to steal a click from — the rule that matters in a row full of buttons.
+pub fn sortable_header(ui: &mut Ui, label: &str, sorted: Option<bool>) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let start = ui.cursor().min;
+    table_header(ui, label, sorted);
+    let cell = Rect::from_min_max(
+        egui::Pos2::new(start.x, ui.min_rect().top()),
+        egui::Pos2::new(ui.cursor().min.x.max(start.x + 8.0), ui.min_rect().bottom()),
+    );
+    let response = ui.interact(cell, ui.id().with(("sort", label)), Sense::click());
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                egui::Pos2::new(cell.left(), cell.bottom() - 1.0),
+                cell.right_bottom(),
+            ),
+            0,
+            t.border_strong,
+        );
+    }
+    response
+}
+
 /// A right-aligned numeric cell in `mono.small` (L9).
 pub fn numeric_cell(ui: &mut Ui, value: &str) {
     let t = theme::tokens(ui.ctx());
