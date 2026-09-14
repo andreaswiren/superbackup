@@ -212,6 +212,20 @@ impl App {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
+        // Not inside a place backups are written.
+        //
+        // This button took whatever folder was picked, and somebody picked the
+        // OneDrive destination the wizard had just made — so a second
+        // installation initialised itself *inside* the first one's backups,
+        // detected OneDrive, and created a second destination folder beside
+        // it. The result is a vault that every run would copy and the sync
+        // client would push to every device on the account, which is the
+        // opposite of where a vault should live.
+        if let Some(blocking) = self.destination_containing(&folder) {
+            self.toasts.danger(blocking, copy::vault::LOCKED_INSIDE_DESTINATION);
+            return;
+        }
+
         let paths = superbackup_core::paths::Paths::rooted_at(&folder, false);
         let exists = superbackup_core::config::is_initialised(&paths);
         if create && exists {
@@ -360,6 +374,22 @@ impl App {
                     Some(crate::gui::passkey::Pending::unlock(paths, entry));
             }
         }
+    }
+
+    /// The destination that `folder` is inside, or that is inside `folder`.
+    ///
+    /// Either way round is wrong: a configuration root under a destination
+    /// gets backed up by the job that writes there, and a destination under a
+    /// configuration root means every run copies the vault it is unlocking
+    /// with. Containment is checked in both directions for that reason.
+    ///
+    /// Only destinations with a path on this filesystem can contain anything;
+    /// a bucket has no folder to be inside.
+    fn destination_containing(&self, folder: &std::path::Path) -> Option<String> {
+        self.data.destinations.iter().find_map(|destination| {
+            let path = destination.kind.local_path()?;
+            (folder.starts_with(path) || path.starts_with(folder)).then(|| destination.name.clone())
+        })
     }
 
     /// The passkey to offer, when this machine has one and can use it.
@@ -595,5 +625,78 @@ mod tests {
         assert_eq!(state.attempts, 0);
         assert!(state.error.is_none());
         assert!(!state.focused, "the next lock must claim focus again");
+    }
+}
+
+#[cfg(test)]
+mod switch_tests {
+    use crate::gui::app::App;
+
+    fn app() -> (App, egui::Context) {
+        let ctx = egui::Context::default();
+        let app = App::new_with_daemon(
+            &ctx,
+            std::sync::Arc::new(crate::gui::daemon::MockDaemon::new(std::sync::Arc::new(
+                superbackup_core::ipc::testing::MockHandler::new(),
+            ))),
+        );
+        (app, ctx)
+    }
+
+    /// A vault must not be created inside the folder its own backups go to.
+    ///
+    /// This happened. "Create a new vault…" took whatever folder was picked,
+    /// somebody picked the OneDrive destination the wizard had just made, and
+    /// a second installation initialised itself inside the first one's
+    /// backups — then detected OneDrive and created a second destination
+    /// folder beside it. Every run would have copied that vault, and the sync
+    /// client would have pushed it to every device on the account.
+    #[test]
+    fn a_folder_inside_a_destination_is_refused() {
+        let (mut app, _ctx) = app();
+        crate::gui::fixtures::seed(&mut app.data);
+
+        let destination = app
+            .data
+            .destinations
+            .iter()
+            .find_map(|d| d.kind.local_path().cloned())
+            .expect("the fixture has a destination on disk");
+
+        // The destination itself, and something under it.
+        assert!(app.destination_containing(&destination).is_some());
+        assert!(app.destination_containing(&destination.join("nested")).is_some());
+    }
+
+    /// And the other direction: a configuration root that *contains* a
+    /// destination means every run copies the vault it unlocked with.
+    #[test]
+    fn a_folder_that_would_swallow_a_destination_is_refused_too() {
+        let (mut app, _ctx) = app();
+        crate::gui::fixtures::seed(&mut app.data);
+
+        let destination = app
+            .data
+            .destinations
+            .iter()
+            .find_map(|d| d.kind.local_path().cloned())
+            .expect("the fixture has a destination on disk");
+        let parent = destination.parent().expect("a destination has a parent");
+
+        assert!(app.destination_containing(parent).is_some());
+    }
+
+    /// Somewhere unrelated is allowed, or the button would refuse everything.
+    #[test]
+    fn a_folder_of_its_own_is_allowed() {
+        let (mut app, _ctx) = app();
+        crate::gui::fixtures::seed(&mut app.data);
+
+        let elsewhere = std::path::Path::new(if cfg!(windows) {
+            r"C:\Users\someone\superbackup-second"
+        } else {
+            "/home/someone/superbackup-second"
+        });
+        assert!(app.destination_containing(elsewhere).is_none());
     }
 }

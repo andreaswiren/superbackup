@@ -483,6 +483,8 @@ pub mod vault {
     pub const LOCKED_NEW_VAULT_HINT: &str =
         "Set up a second, separate installation in a folder of its own. This one is left alone.";
     pub const LOCKED_ABOUT: &str = "About superbackup";
+    /// Refused: the folder is a backup destination, or inside one.
+    pub const LOCKED_INSIDE_DESTINATION: &str = "That folder is where backups are written. A vault kept inside its own backup would be copied by every run and synced to every device on the account — choose a folder outside it.";
     pub const LOCKED_NOT_A_VAULT: &str =
         "That folder holds no superbackup vault, and none was created there.";
     pub const LOCKED_ALREADY_A_VAULT: &str =
