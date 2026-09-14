@@ -401,6 +401,9 @@ fn apply_setup_choices(app: &mut App, state: &Onboarding) {
     if let Some(name) = &applied.job {
         app.toasts.success(copy::onboarding_job_made(name));
     }
+    for note in &applied.notes {
+        app.toasts.info(note.clone());
+    }
     for problem in &applied.problems {
         app.toasts.warning(problem.clone());
     }

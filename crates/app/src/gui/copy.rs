@@ -304,6 +304,10 @@ pub fn locked_service(installed: bool) -> &'static str {
     }
 }
 
+pub fn service_elevating() -> &'static str {
+    "Windows is asking whether superbackup may install the service. Answer the prompt."
+}
+
 pub fn recovery_sheet_saved(path: &str) -> String {
     format!("Recovery sheet saved to {path}")
 }

@@ -53,6 +53,16 @@ pub struct State {
     pub use_session_token: bool,
     pub revealed: bool,
     pub replacing_secret: bool,
+    /// The credentials typed on this screen, held until the daemon says what
+    /// id the provider actually got.
+    ///
+    /// They cannot be written before then. `provider.create` mints a fresh id
+    /// and re-derives the credential handles from it, so anything stored under
+    /// the draft's id lands on handles nothing will ever look up — which is
+    /// exactly what happened: the provider saved, the keys went into the vault
+    /// under an id that had been thrown away, and the connection came out with
+    /// no credentials at all.
+    pending_credentials: Option<(String, String)>,
     pub show_buckets: bool,
     pub impact_open: bool,
     /// As in the destination editor: an untouched form shows no errors.
@@ -153,6 +163,8 @@ impl State {
         }
         self.access_key.clear();
         self.secret_key.clear();
+        // Never carry one provider's keys into the next one's save.
+        self.pending_credentials = None;
         self.session_token.clear();
         self.use_session_token = false;
         self.show_buckets = false;
@@ -210,10 +222,23 @@ impl App {
             }
         }
 
-        let mut report = self.provider_report();
-        if !self.screens.provider_editor.show_errors {
-            report.problems.clear();
-        }
+        let report = self.provider_report();
+        // Two reports, and the difference is the whole point.
+        //
+        // `show_errors` exists so a form nobody has touched is not already red.
+        // It was implemented by emptying the report — and the Save button's
+        // `enabled(report.ok())` and the `if !report.ok() { return }` guard
+        // both read that same emptied report. So Save was live on a draft its
+        // own validator rejected, and the first thing that actually said no
+        // was the daemon, as a wall of validator text.
+        //
+        // `report` stays whole and decides whether Save works. `shown` is what
+        // the fields render, and is empty until the user has tried.
+        let shown = if self.screens.provider_editor.show_errors {
+            report.clone()
+        } else {
+            validation::Report::default()
+        };
         let mut save = false;
         let mut test = false;
         let mut rotate = false;
@@ -292,8 +317,8 @@ impl App {
                 }
             });
 
-            open_admin = self.provider_connection(ui, &report);
-            self.provider_credentials(ui, &report, existing.as_ref());
+            open_admin = self.provider_connection(ui, &shown);
+            self.provider_credentials(ui, &shown, existing.as_ref());
             self.provider_test_panel(ui, existing.as_ref());
 
             ui.add_space(space::H2);
@@ -708,6 +733,38 @@ impl App {
         }
     }
 
+    /// Write the credentials the editor was holding, against the provider the
+    /// daemon actually stored.
+    ///
+    /// Called from the `provider.create` / `provider.update` reply, which is
+    /// the first moment the real id — and therefore the real handles — are
+    /// known. The provider carries its own `secret_refs`, so these are the
+    /// handles it will look under rather than handles derived a second time
+    /// here and hoped to match.
+    pub(crate) fn store_provider_credentials(
+        &mut self,
+        provider: &superbackup_core::model::StorageProvider,
+    ) {
+        let Some((access, secret)) = self.screens.provider_editor.pending_credentials.take() else {
+            return;
+        };
+        let ProviderKind::S3 { credentials, .. } = &provider.kind;
+        let (access_ref, secret_ref) =
+            (credentials.access_key_ref.clone(), credentials.secret_key_ref.clone());
+
+        self.ask(
+            Intent::Fire,
+            Request::VaultSetSecret {
+                secret_ref: access_ref,
+                value: SecretString::from_string(access),
+            },
+        );
+        self.ask(
+            Intent::Fire,
+            Request::VaultSetSecret { secret_ref, value: SecretString::from_string(secret) },
+        );
+    }
+
     fn save_provider(&mut self, existing: bool) {
         let Some(draft) = self.screens.provider_editor.draft.clone() else {
             return;
@@ -719,29 +776,17 @@ impl App {
         } else {
             Request::ProviderCreate { provider: Box::new(draft) }
         };
-        self.ask(Intent::SaveProvider(name), request);
-
-        // The credentials go into the vault separately, under the handles the
-        // model derives, never onto a command line.
+        // Held, not sent. The credentials go into the vault under handles
+        // derived from the provider's id — and on a create the daemon throws
+        // the draft's id away and mints its own, so the only id worth writing
+        // against is the one that comes back. See `pending_credentials`.
         let access = self.screens.provider_editor.access_key.clone();
         let secret = self.screens.provider_editor.secret_key.clone();
-        if !access.trim().is_empty() && !secret.is_empty() {
-            let credentials = S3Credentials::for_provider(&provider_id);
-            self.ask(
-                Intent::Fire,
-                Request::VaultSetSecret {
-                    secret_ref: credentials.access_key_ref.clone(),
-                    value: SecretString::from_string(access),
-                },
-            );
-            self.ask(
-                Intent::Fire,
-                Request::VaultSetSecret {
-                    secret_ref: credentials.secret_key_ref.clone(),
-                    value: SecretString::from_string(secret),
-                },
-            );
-        }
+        self.screens.provider_editor.pending_credentials =
+            (!access.trim().is_empty() && !secret.is_empty()).then_some((access, secret));
+
+        self.ask(Intent::SaveProvider(name), request);
+        let _ = provider_id;
         self.go(Route::Providers);
     }
 }

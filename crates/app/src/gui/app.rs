@@ -334,6 +334,26 @@ impl App {
                 self.modal = None;
                 // The passphrase must not outlive the unlock that used it.
                 self.screens.locked.clear();
+
+                // Record the unlock *before* doing what it unblocked.
+                //
+                // `pump` calls this and then `Data::apply`, which is what
+                // normally moves `snapshot.unlocked`. So everything below ran
+                // while the window still believed the vault was shut: the
+                // remembered action went through `Data::gate`, was told
+                // `NeedsUnlock`, and raised a second passphrase prompt on top
+                // of the one that had just succeeded. The user typed it, the
+                // status reply landed, and they were asked again — with the
+                // status strip in the corner already reading "Unlocked".
+                //
+                // A by-hand unlock grants both tiers, so both are true here.
+                // `Data::apply` sets the same values a moment later from the
+                // same reply, which costs nothing and keeps one writer honest.
+                if let Some(snapshot) = &mut self.data.snapshot {
+                    snapshot.unlocked = true;
+                    snapshot.confirmed = true;
+                }
+
                 self.perform_pending();
                 self.perform_blocked();
                 self.ask(Intent::Status, Request::Status {});
@@ -424,6 +444,10 @@ impl App {
             }
             (Intent::SaveProvider(name), Reply::Provider(reply)) => {
                 self.toasts.success(copy::toast_saved(name));
+                // Before anything else: the access key and secret the editor
+                // was holding, written against the id the daemon assigned
+                // rather than the one the draft was carrying.
+                self.store_provider_credentials(&reply.provider);
                 self.ask(Intent::Providers, Request::ProviderList {});
                 // Created from inside a destination editor: select it there and
                 // go back, so the round trip finishes where it started.
@@ -2361,6 +2385,41 @@ mod tests {
         assert!(!app.screens.locked.busy);
         assert_eq!(app.screens.locked.error, None);
         assert!(app.screens.locked.passphrase.is_empty(), "the passphrase must not linger");
+    }
+
+    /// Unlocking must not ask for the passphrase again.
+    ///
+    /// The window used to perform the remembered action before recording that
+    /// the vault had opened, so the action met a gate that still said locked
+    /// and raised a second prompt on top of the one that had just worked.
+    /// Asserted through the real reply rather than through
+    /// `complete_unlock_for_test`, because that hook sets the flag first — it
+    /// models the order production did not have, which is why nothing caught
+    /// this.
+    #[test]
+    fn a_successful_unlock_does_not_ask_for_the_passphrase_again() {
+        use superbackup_core::ipc::protocol::UnlockedReply;
+
+        let (mut app, _ctx) = app();
+        super::super::fixtures::seed(&mut app.data);
+        if let Some(s) = &mut app.data.snapshot {
+            s.unlocked = false;
+        }
+
+        // Something the user asked for that needs the vault open.
+        let job = app.data.jobs[0].clone();
+        app.request_run(&job);
+        assert!(app.modal_is_unlock(), "a blocked run must ask");
+        assert!(app.pending.is_some(), "and must remember what was blocked");
+
+        app.deliver(&Incoming::Reply(
+            Intent::Unlock,
+            Box::new(Reply::Unlocked(UnlockedReply { unlocked: true, auto_lock_at: None })),
+        ));
+
+        assert!(!app.modal_is_unlock(), "it asked for the passphrase a second time");
+        assert!(app.pending.is_none(), "the remembered action was dropped rather than performed");
+        assert!(app.data.unlocked(), "the window still believes the vault is shut");
     }
 
     /// A refused change asks for the passphrase and then carries on.

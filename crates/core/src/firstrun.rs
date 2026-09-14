@@ -67,6 +67,17 @@ pub struct Applied {
     /// refused elevation prompt for the service must not cost the user their
     /// backup job.
     pub problems: Vec<String>,
+    /// One line per thing that was *started* and whose outcome setup cannot
+    /// see.
+    ///
+    /// There is exactly one of these today, and it is the reason the field
+    /// exists: installing the service hands the job to an elevated process
+    /// Windows starts on our behalf. `ShellExecuteW` returns as soon as the
+    /// prompt is raised, so what comes back is "somebody was asked", not "it
+    /// worked" — and reporting that as success is how a ticked box produced a
+    /// settings page saying no service was installed, with nothing in between
+    /// to explain it.
+    pub notes: Vec<String>,
 }
 
 /// The folder inside OneDrive that this machine's backups live in.
@@ -316,8 +327,19 @@ fn apply_platform(paths: &crate::paths::Paths, choices: &Choices, applied: &mut 
                     // The prompt is the operating system's. Superbackup never
                     // sees the credentials, and a user who declines is left
                     // with a working installation minus the service.
-                    if let Err(e) = platform::service::request_elevated_install() {
-                        applied.problems.push(e.to_string());
+                    match platform::service::request_elevated_install() {
+                        // Raised, not finished. Windows runs the elevated
+                        // install in its own time and tells us nothing, so
+                        // this says what was asked and where the answer will
+                        // show up rather than claiming an outcome.
+                        Ok(()) => applied.notes.push(
+                            "Windows was asked for permission to install the background \
+                             service. If it does not appear, Settings has an Install button \
+                             that asks again."
+                                .to_string(),
+                        ),
+                        // A declined prompt lands here, and reads as itself.
+                        Err(e) => applied.problems.push(e.to_string()),
                     }
                 } else if let Err(e) = platform::service::install(&options) {
                     applied.problems.push(format!("the background service was not installed: {e}"));

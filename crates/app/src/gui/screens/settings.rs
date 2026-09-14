@@ -299,6 +299,7 @@ impl App {
             }
         }
         ui.add_space(space::M);
+        let mut install = false;
         let status = match &self.data.service {
             Some(s) if s.installed && s.running => copy::set::SERVICE_INSTALLED_RUNNING,
             Some(s) if s.installed => copy::set::SERVICE_INSTALLED_STOPPED,
@@ -313,9 +314,12 @@ impl App {
                     self.ask(Intent::Service, Request::ServiceUninstall {});
                 }
             } else if Button::secondary(copy::set::SERVICE_INSTALL).compact().show(ui).clicked() {
-                self.ask(Intent::Service, Request::ServiceInstall {});
+                install = true;
             }
         });
+        if install {
+            self.install_service();
+        }
         ui.add_space(space::S);
         widgets::paragraph_at(
             ui,
@@ -1064,6 +1068,58 @@ impl App {
         }
         ui.add_space(space::XS);
         widgets::paragraph_at(ui, copy::vault::PASSKEY_ADD_BODY, Type::Small, t.text_muted, 560.0);
+    }
+
+    /// Install the background service, asking Windows for the rights if the
+    /// daemon has not got them.
+    ///
+    /// # Why this does not simply send `service.install`
+    ///
+    /// Because the daemon cannot ask. Installing a system service needs
+    /// administrator rights, and the only way to obtain them is the operating
+    /// system's own prompt — which needs a window to sit over. A daemon has no
+    /// desktop, so all it could do was refuse, and it refused with the honest
+    /// but useless instruction to close superbackup and start it again with
+    /// "Run as administrator".
+    ///
+    /// That is a real remedy and a terrible one: it asks somebody to restart
+    /// the program they are in the middle of configuring, and it is the reason
+    /// a wizard tick box that said it would install a service produced a
+    /// settings page saying none was installed.
+    ///
+    /// So when rights are needed and absent, the *window* raises the prompt —
+    /// it has the desktop the daemon lacks. Windows runs the elevation; this
+    /// process never sees a credential, and declining leaves everything as it
+    /// was. The daemon is still asked directly whenever it can do the job
+    /// itself, which is every case where superbackup is already elevated and
+    /// every platform where the service needs no privileges at all.
+    fn install_service(&mut self) {
+        use superbackup_core::platform::service;
+
+        let elevation_needed = self
+            .paths
+            .as_ref()
+            .and_then(|paths| service::ServiceOptions::preferred_current(paths).ok())
+            .map(|options| options.requires_elevation())
+            .unwrap_or(false);
+
+        if !elevation_needed || service::is_elevated() {
+            self.ask(Intent::Service, Request::ServiceInstall {});
+            return;
+        }
+
+        match service::request_elevated_install() {
+            Ok(()) => {
+                // The prompt is up; it is answered by a person, and the
+                // elevated process does the work in its own time. Say what is
+                // happening and then re-ask, rather than reporting a success
+                // that has not happened yet.
+                self.toasts.info(copy::service_elevating());
+                self.ask(Intent::Service, Request::ServiceStatus {});
+            }
+            // A declined prompt lands here too, and reads as what it is.
+            Err(e) => self.toasts.danger(copy::set::SERVICE_INSTALL, e.to_string()),
+        }
     }
 
     fn settings_security(&mut self, ui: &mut Ui) {

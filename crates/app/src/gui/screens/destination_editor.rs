@@ -313,14 +313,27 @@ impl App {
         let slug = self.data.machine_slug().to_string();
         self.screens.destination_editor.load(existing.as_ref(), &slug);
 
-        let mut report = self.destination_report();
-        if !self.screens.destination_editor.show_errors {
-            report.problems.clear();
-        }
+        let report = self.destination_report();
+        // Two reports, and the difference is the whole point.
+        //
+        // `show_errors` exists so a form nobody has touched is not already red.
+        // It was implemented by emptying the report — and the Save button's
+        // `enabled(report.ok())` and the `if !report.ok() { return }` guard
+        // both read that same emptied report. So Save was live on a draft its
+        // own validator rejected, and the first thing that actually said no
+        // was the daemon, as a wall of validator text.
+        //
+        // `report` stays whole and decides whether Save works. `shown` is what
+        // the fields render, and is empty until the user has tried.
+        let shown = if self.screens.destination_editor.show_errors {
+            report.clone()
+        } else {
+            validation::Report::default()
+        };
         let creating = existing.is_none();
 
         widgets::scroll_area(ui, "destination-editor", |ui| {
-            self.destination_common(ui, &report, creating);
+            self.destination_common(ui, &shown, creating);
 
             let kind_index = self
                 .screens
@@ -331,9 +344,9 @@ impl App {
                 .unwrap_or(0);
 
             match kind_index {
-                0 | 1 => self.destination_local(ui, &report, kind_index == 1),
-                2 => self.destination_s3(ui, &report),
-                _ => self.destination_mirror(ui, &report),
+                0 | 1 => self.destination_local(ui, &shown, kind_index == 1),
+                2 => self.destination_s3(ui, &shown),
+                _ => self.destination_mirror(ui, &shown),
             }
 
             // A mirror has no encryption panel and no retention section: both
@@ -341,7 +354,7 @@ impl App {
             // applies to a plain copy.
             let is_repository = kind_index != 3;
             if is_repository {
-                self.replication_panel(ui, &report);
+                self.replication_panel(ui, &shown);
             }
 
             let is_replica = self
