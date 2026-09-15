@@ -953,6 +953,135 @@ async fn a_mirror_is_not_asked_whether_it_holds_a_repository() {
     assert_eq!(probe.detail, None, "nothing to warn about");
 }
 
+/// A copy-to destination can be *added*, not only made out of one that
+/// already exists.
+///
+/// A replica is the same kopia repository as the destination it copies from:
+/// it opens with that repository's passphrase and encryption settings, and the
+/// configuration is refused while it carries either. The editor knows that and
+/// sends neither — but a replica is still a repository, and creating one
+/// minted a passphrase for exactly that reason, stored it, pointed at it, and
+/// then failed validation with a sentence explaining that this destination
+/// "cannot have its own". Every attempt, from a clean form, with nothing the
+/// user could change to get past it.
+///
+/// `update_destination` had the rule; `create_destination` never did, which is
+/// why the same destination could be produced by editing an existing one and
+/// never by adding a new one.
+///
+/// Both drafts are sent: the one the editor sends, and one that arrived with
+/// the fields filled in anyway — the CLI, a restored file, a future screen
+/// that forgets. The daemon owns this rule, not the form.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_replica_destination_can_be_created_and_is_given_no_key_of_its_own() {
+    let mut ids = None;
+    let harness = Harness::start("replica-create", |config, home| {
+        let source = repository("OneDrive", home.join("onedrive-repo"));
+        ids = Some(source.id);
+        config.destinations.push(source);
+    })
+    .await;
+    let source_id = ids.expect("an id");
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    // The provider the bucket belongs to, exactly as the S3 case reaches this
+    // path in the field.
+    let Reply::Provider(provider) = harness
+        .call(
+            &client,
+            Request::ProviderCreate {
+                provider: Box::new(StorageProvider {
+                    id: uuid::Uuid::new_v4(),
+                    name: "StorJ".into(),
+                    kind: ProviderKind::S3 {
+                        endpoint: "https://gateway.storjshare.io".into(),
+                        region: "eu-1".into(),
+                        credentials: S3Credentials::for_provider(&uuid::Uuid::new_v4()),
+                        tls: true,
+                        path_style: false,
+                        flavour: superbackup_core::model::S3Flavour::Storj,
+                        admin_url: None,
+                    },
+                    notes: String::new(),
+                    created_at: chrono::Utc::now(),
+                    last_verified_at: None,
+                }),
+            },
+        )
+        .await
+    else {
+        panic!("expected a provider reply")
+    };
+
+    let draft_id = uuid::Uuid::new_v4();
+    let draft = superbackup_core::model::Destination {
+        shared: false,
+        id: draft_id,
+        name: "StorJ".into(),
+        kind: superbackup_core::model::DestinationKind::S3 {
+            provider_id: provider.provider.id,
+            bucket: "backups".into(),
+            prefix: "superbackup/awpc34/".into(),
+            credential_override: None,
+        },
+        // As the editor sends it: it clears both the moment a source is
+        // chosen. Nothing here asks for a key — the daemon minted one anyway,
+        // because the kind is a repository.
+        encryption: None,
+        passphrase_ref: None,
+        retention: Default::default(),
+        enabled: true,
+        auto_discovered: false,
+        bandwidth: None,
+        replicate_from: Some(source_id),
+        created_at: chrono::Utc::now(),
+        last_verified_at: None,
+    };
+
+    let Reply::Destination(created) =
+        harness.call(&client, Request::DestinationCreate { destination: Box::new(draft) }).await
+    else {
+        panic!("expected a destination reply")
+    };
+    let created = *created.destination;
+
+    assert_eq!(created.replicate_from, Some(source_id), "it is still a copy of the source");
+    assert_eq!(created.passphrase_ref, None, "a replica opens with the source's passphrase");
+    assert!(created.encryption.is_none(), "and with the source's encryption settings");
+
+    // And it is actually in the saved configuration, which means the whole
+    // config passed validation on the way to disk — `save_mut` refuses on any
+    // error, so a create that returns at all is a config that validates.
+    let Reply::Destinations(list) = harness.call(&client, Request::DestinationList {}).await else {
+        panic!("expected a destination list")
+    };
+    assert!(
+        list.destinations.iter().any(|d| d.id == created.id && d.replicate_from == Some(source_id)),
+        "the replica was saved"
+    );
+
+    // And a draft that arrived carrying both anyway is stripped rather than
+    // refused, because the rule belongs to the daemon and not to whichever
+    // client happened to build the request.
+    let insistent_id = uuid::Uuid::new_v4();
+    let insistent = superbackup_core::model::Destination {
+        id: insistent_id,
+        name: "StorJ second copy".into(),
+        encryption: Some(superbackup_core::model::EncryptionSettings::default()),
+        passphrase_ref: Some(SecretRef::new("repo-passphrase", &insistent_id)),
+        ..created.clone()
+    };
+    let Reply::Destination(second) = harness
+        .call(&client, Request::DestinationCreate { destination: Box::new(insistent) })
+        .await
+    else {
+        panic!("expected a destination reply")
+    };
+    assert_eq!(second.destination.passphrase_ref, None, "the handle it asked for was dropped");
+    assert!(second.destination.encryption.is_none(), "and so were the settings");
+}
+
 /// A wrong secret key is reported as a credential failure — never as a missing
 /// repository, and never as an unreachable endpoint.
 ///

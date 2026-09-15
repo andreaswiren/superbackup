@@ -1505,6 +1505,24 @@ impl Handler for DaemonHandler {
         let mut created = *destination;
         created.id = Uuid::new_v4();
         created.created_at = Utc::now();
+        // A replica has no key of its own, and must not be given one.
+        //
+        // It is a copy of another repository: it opens with that repository's
+        // passphrase and its encryption settings, and the configuration is
+        // invalid while it carries either. But a replica *is* a repository, so
+        // the test below was true for one and a passphrase was minted, stored
+        // and pointed at — and the save then failed validation, every time,
+        // with a message about a destination that "cannot have its own".
+        //
+        // `update_destination` has reasoned this out for a while and does the
+        // same thing when an existing destination becomes a replica. Creating
+        // one never did, so a copy-to destination could be made by editing a
+        // destination that already existed and never added as a new one.
+        if created.replicate_from.is_some() {
+            created.passphrase_ref = None;
+            created.encryption = None;
+        }
+
         // The passphrase, and only then the handle that names it.
         //
         // This used to mint the handle on its own, with a comment explaining
@@ -1519,7 +1537,10 @@ impl Handler for DaemonHandler {
         //
         // So the secret is generated and stored first, and the handle is
         // written only once it points at something real.
-        if created.kind.is_repository() && created.passphrase_ref.is_none() {
+        if created.replicate_from.is_none()
+            && created.kind.is_repository()
+            && created.passphrase_ref.is_none()
+        {
             let source = created
                 .encryption
                 .as_ref()

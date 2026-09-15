@@ -54,6 +54,17 @@ Nothing yet.
 
 ### Fixed
 
+- **A copy-to destination could not be added.** A replica is the same kopia
+  repository as the destination it copies from: it opens with that
+  repository's passphrase and encryption settings, and the configuration is
+  refused while it carries either. The editor knew that and sent neither — but
+  a replica is still a repository, and the daemon minted a passphrase for
+  exactly that reason, stored it, pointed at it, and then failed validation
+  with a sentence explaining that this destination "cannot have its own".
+  Every attempt, from a clean form, with nothing to change to get past it. The
+  same destination could be produced by editing one that already existed,
+  because that path had the rule; adding a new one never did.
+
 - **Superbackup asked for the master passphrase twice.** The reply that opens
   the vault performed the action it had been holding back *before* recording
   that the vault was open, so that action met a gate which still believed it
