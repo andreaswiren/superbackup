@@ -21,11 +21,20 @@ const BIN: &str = env!("CARGO_BIN_EXE_superbackup");
 const DOCUMENTED: [i32; 6] = [0, 1, 2, 3, 4, 5];
 
 fn superbackup(args: &[&str]) -> Output {
+    let root = scratch();
     Command::new(BIN)
         .args(args)
         // A private root, so a test never reads or writes the developer's own
         // configuration.
-        .env("SUPERBACKUP_HOME", scratch())
+        .env("SUPERBACKUP_HOME", &root)
+        // And a private state folder, which is a different thing: the state
+        // folder holds what belongs to the *person* rather than to any one
+        // installation, and the one fact in it is which installation they last
+        // opened. Without this, running the test suite recorded a temporary
+        // root as the developer's own installation — and the next launch,
+        // finding the folder deleted, fell back to the per-user default and
+        // asked for a passphrase belonging to somewhere else entirely.
+        .env("SUPERBACKUP_STATE_DIR", root.join("state"))
         .env("NO_COLOR", "1")
         .output()
         .unwrap_or_else(|e| panic!("running `{BIN} {}`: {e}", args.join(" ")))

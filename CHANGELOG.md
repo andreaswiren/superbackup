@@ -18,6 +18,15 @@ Nothing yet.
 
 ### Fixed
 
+- **The pointer to your installation could be overwritten by a test.** The
+  integration suite runs the real executable against a temporary root, and that
+  root was being recorded as the installation to reopen — a folder deleted
+  seconds later. The next launch found no vault there, fell back to the
+  per-user default, and asked for a passphrase belonging to somewhere else:
+  the exact fault the pointer exists to prevent, caused by the pointer. A root
+  under the system temporary directory is never recorded now, whatever asks,
+  and the suite keeps its own state folder as well.
+
 - **Three locked files threw away a backup of a hundred and ten thousand.** A
   folder somebody is working in always has a few files another program holds
   open — an editor's lock file, a build's temporary output, a game engine's

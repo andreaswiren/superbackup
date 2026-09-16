@@ -377,6 +377,9 @@ pub fn remembered_root() -> Option<PathBuf> {
 /// error — but a write that fails once the directory exists is, because that
 /// is a disk saying something the caller should hear.
 pub fn remember_root_in(dir: &Path, root: &Path) -> Result<()> {
+    if is_temporary(root) {
+        return Ok(());
+    }
     if std::fs::create_dir_all(dir).is_err() {
         return Ok(());
     }
@@ -385,6 +388,35 @@ pub fn remember_root_in(dir: &Path, root: &Path) -> Result<()> {
     let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
     write_atomic(&path, root.to_string_lossy().trim().as_bytes())?;
     harden_file(&path)
+}
+
+/// Is this root somewhere that exists only for the length of one process?
+///
+/// A configuration root under the system temporary directory is never a thing
+/// to reopen at the next login: temp is cleaned, and an installation somebody
+/// wants back is not kept there. Recording one is worse than recording
+/// nothing, because it displaces the pointer to a real installation.
+///
+/// This is not hypothetical. The integration tests run the real executable
+/// with `--home <a temp directory>`, so running the test suite overwrote the
+/// pointer with a folder that was deleted seconds later — and the next launch,
+/// finding no vault there, fell back to the per-user default and asked for a
+/// passphrase belonging to a different installation. Which is the exact fault
+/// the pointer exists to prevent, reintroduced by the pointer. The suite sets
+/// `SUPERBACKUP_STATE_DIR` now as well, but a rule that holds only while every
+/// caller remembers an environment variable is not a rule.
+fn is_temporary(root: &Path) -> bool {
+    let temp = std::env::temp_dir();
+    let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    let temp = std::path::absolute(&temp).unwrap_or(temp);
+    // Case-insensitively where the filesystem is, because `…\Local\Temp` and
+    // `…\local\temp` are one directory there.
+    if cfg!(windows) {
+        let (root, temp) = (root.to_string_lossy(), temp.to_string_lossy());
+        root.to_ascii_lowercase().starts_with(&temp.to_ascii_lowercase())
+    } else {
+        root.starts_with(&temp)
+    }
 }
 
 /// As [`remembered_root`], against a named directory.
@@ -538,11 +570,19 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     /// A scratch directory that cleans up after itself.
+    ///
+    /// Under `target/`, deliberately not under the system temporary directory:
+    /// a root there is refused by `remember_root_in`, which is the behaviour
+    /// most of these tests are *not* exercising.
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sb-paths-{name}-{}", std::process::id()));
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/paths-tests")
+            .join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch");
-        dir
+        // Normalised, because what gets recorded is normalised, and a test
+        // comparing the two should compare paths rather than spellings.
+        std::path::absolute(&dir).unwrap_or(dir)
     }
 
     /// Give `root` a vault file, so it counts as an installation.
@@ -599,6 +639,40 @@ mod tests {
         std::fs::create_dir_all(&root).expect("empty folder");
         assert_eq!(super::remembered_root_in(&state), None);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A root in the temporary directory is never recorded.
+    ///
+    /// The integration tests run the real executable with `--home <a temp
+    /// directory>`, so running the suite overwrote the developer's own pointer
+    /// with a folder deleted seconds later — and the next launch, finding no
+    /// vault there, fell back to the per-user default and asked for the
+    /// passphrase of a different installation. Which is the exact fault the
+    /// pointer exists to prevent, reintroduced by the pointer.
+    #[test]
+    fn a_root_in_the_temporary_directory_is_never_recorded() {
+        let dir = scratch("temp-root");
+        let state = dir.join("state");
+        let good = dir.join("real-installation");
+        install_at(&good);
+        super::remember_root_in(&state, &good).expect("record the real one");
+
+        // The shape a test harness produces: a root under the system
+        // temporary directory, with a real vault in it.
+        let transient =
+            std::env::temp_dir().join(format!("sb-harness-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&transient);
+        install_at(&transient);
+        super::remember_root_in(&state, &transient).expect("silently ignored");
+
+        assert_eq!(
+            super::remembered_root_in(&state).as_deref(),
+            Some(good.as_path()),
+            "the real installation must still be the one recorded"
+        );
+
+        let _ = std::fs::remove_dir_all(&transient);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
