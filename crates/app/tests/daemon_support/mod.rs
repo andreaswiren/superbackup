@@ -451,6 +451,7 @@ pub fn job(name: &str, source: PathBuf, destinations: Vec<Uuid>) -> Job {
         destination_ids: destinations,
         schedule: superbackup_core::model::Schedule::Manual,
         exclusions: Default::default(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,

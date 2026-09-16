@@ -1134,6 +1134,7 @@ mod tests {
             destination_ids: destinations,
             schedule: Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 0 }] },
             exclusions: Default::default(),
+            retry: Default::default(),
             bandwidth: None,
             retention: None,
             enabled: true,

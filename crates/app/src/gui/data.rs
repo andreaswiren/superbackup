@@ -831,6 +831,7 @@ mod tests {
             destination_ids: dests,
             schedule: Default::default(),
             exclusions: Default::default(),
+            retry: Default::default(),
             bandwidth: None,
             retention: None,
             enabled: true,

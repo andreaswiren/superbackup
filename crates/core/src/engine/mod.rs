@@ -61,6 +61,7 @@ pub mod executor;
 pub mod hooks;
 pub mod mirror;
 pub mod protected;
+pub mod reattempt;
 pub mod retry;
 pub mod runner;
 pub mod schedule;

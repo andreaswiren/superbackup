@@ -183,6 +183,7 @@ pub fn jobs() -> Vec<Job> {
         destination_ids: vec![],
         schedule: Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 0 }] },
         exclusions: ExclusionSet::default(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,

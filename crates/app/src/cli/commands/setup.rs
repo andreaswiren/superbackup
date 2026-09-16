@@ -297,6 +297,7 @@ fn offer_first_job(ctx: &mut Ctx, daemon: &Daemon) -> CliResult<()> {
         schedule: parsed,
         // The template that is the reason this program exists.
         exclusions: superbackup_core::model::ExclusionSet::developer_defaults(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,

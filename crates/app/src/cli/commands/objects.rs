@@ -250,6 +250,7 @@ fn job_add(ctx: &mut Ctx, daemon: &Daemon, args: JobAddArgs) -> CliResult<Outcom
         destination_ids: chosen.iter().map(|d| d.id).collect(),
         schedule,
         exclusions,
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: !args.disabled,

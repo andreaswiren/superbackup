@@ -1490,6 +1490,9 @@ pub struct Job {
     pub schedule: Schedule,
     #[serde(default)]
     pub exclusions: ExclusionSet,
+    /// Run the job again, later, when a run did not get everything.
+    #[serde(default)]
+    pub retry: RetrySettings,
     /// Per-job override of the global bandwidth ceiling.
     #[serde(default)]
     pub bandwidth: Option<BandwidthSettings>,
@@ -1527,6 +1530,41 @@ pub struct Source {
 impl Source {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Source { path: path.into(), follow_symlinks: false, one_filesystem: false }
+    }
+}
+
+/// Coming back for the files a run could not read.
+///
+/// Distinct from the retry policy inside a run, which re-sends one request
+/// seconds after it failed. This one is about the run as a whole and about a
+/// miss that seconds do not fix: a file another program holds open is still
+/// held open five seconds later, and is very often free half an hour later,
+/// once the build finished or the editor was closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetrySettings {
+    /// Try again after a run that left files unread or a destination failed.
+    pub enabled: bool,
+    /// Minutes to wait. Floored at one by the scheduler: a zero-minute retry
+    /// is a job that starts again the instant it finishes.
+    pub after_minutes: u32,
+    /// Extra attempts before waiting for the ordinary schedule instead.
+    ///
+    /// `0` means "keep trying until the next scheduled run", which is its own
+    /// bound. A limit matters because some files are never readable — a lock
+    /// file that lives as long as its application, a pagefile, a socket — and
+    /// "retry until the files are backed up" would otherwise mean a full scan
+    /// of the source tree every half hour for ever.
+    pub max_attempts: u32,
+}
+
+impl Default for RetrySettings {
+    fn default() -> Self {
+        // Half an hour, four times: about two hours of patience, which covers
+        // a build finishing or an editor being closed over lunch, and stops
+        // well short of scanning a fifteen-gigabyte tree all night for a lock
+        // file that will still be there in the morning.
+        RetrySettings { enabled: true, after_minutes: 30, max_attempts: 4 }
     }
 }
 
@@ -1977,6 +2015,7 @@ mod tests {
             destination_ids: vec![],
             schedule: Schedule::Manual,
             exclusions: ExclusionSet::default(),
+            retry: RetrySettings::default(),
             bandwidth: None,
             retention: None,
             enabled: true,

@@ -365,6 +365,7 @@ pub fn test_job(name: &str) -> Job {
         destination_ids: Vec::new(),
         schedule: Schedule::Manual,
         exclusions: ExclusionSet::default(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,

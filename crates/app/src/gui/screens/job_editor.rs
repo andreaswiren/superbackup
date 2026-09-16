@@ -84,6 +84,7 @@ impl State {
         }
         if draft.destination_ids != original.destination_ids
             || draft.continue_on_destination_error != original.continue_on_destination_error
+            || draft.retry != original.retry
         {
             out.push(1);
         }
@@ -116,6 +117,7 @@ fn same_job(a: &Job, b: &Job) -> bool {
         && a.timeout_minutes == b.timeout_minutes
         && same_hooks(&a.hooks, &b.hooks)
         && a.continue_on_destination_error == b.continue_on_destination_error
+        && a.retry == b.retry
         && a.tags == b.tags
         && a.retention.is_some() == b.retention.is_some()
         && a.bandwidth.is_some() == b.bandwidth.is_some()
@@ -976,6 +978,57 @@ impl App {
         }
         ui.add_space(space::S);
         widgets::paragraph_at(ui, copy::job::TIMEOUT_BODY, Type::Small, t.text_muted, 560.0);
+
+        // Coming back for what a run could not read. On the schedule tab
+        // because that is what it changes: when this job next runs.
+        ui.add_space(space::XL);
+        widgets::form_group(ui, copy::job::RETRY_GROUP, None);
+        if let Some(draft) = &mut self.screens.job_editor.draft {
+            let mut on = draft.retry.enabled;
+            if widgets::toggle(ui, &mut on, copy::job::RETRY_ON, Some(copy::job::RETRY_BODY), true)
+                .clicked()
+            {
+                draft.retry.enabled = on;
+            }
+            if draft.retry.enabled {
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    ui.add_space(24.0);
+                    widgets::text(ui, copy::job::RETRY_EVERY, Type::Body, t.text_secondary);
+                    ui.add_space(space::M);
+                    widgets::number(
+                        ui,
+                        &mut draft.retry.after_minutes,
+                        1..=1440,
+                        copy::job::RETRY_EVERY_UNIT,
+                        true,
+                        copy::job::RETRY_EVERY,
+                    );
+                });
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    ui.add_space(24.0);
+                    widgets::text(ui, copy::job::RETRY_ATTEMPTS, Type::Body, t.text_secondary);
+                    ui.add_space(space::M);
+                    widgets::number(
+                        ui,
+                        &mut draft.retry.max_attempts,
+                        0..=100,
+                        copy::job::RETRY_ATTEMPTS_UNIT,
+                        true,
+                        copy::job::RETRY_ATTEMPTS,
+                    );
+                });
+                ui.add_space(space::S);
+                widgets::paragraph_at(
+                    ui,
+                    copy::job::RETRY_ATTEMPTS_BODY,
+                    Type::Small,
+                    t.text_muted,
+                    560.0,
+                );
+            }
+        }
 
         if cron_help {
             self.open_modal(Modal::CronHelp);

@@ -16,6 +16,20 @@ Nothing yet.
 
 ## [0.11.1] - 2026-09-16
 
+### Added
+
+- **A job comes back for the files a run could not read.** Leaving an
+  unreadable file out is what gets the snapshot made at all, and it leaves the
+  snapshot genuinely missing that file. Retrying five seconds later never helps
+  — the editor is still open — and half an hour later it usually does, because
+  the build finished or the editor was closed. So a run that left files unread,
+  or that had a destination fail, schedules another attempt on a timer: half an
+  hour, four times, by default, and per job on the Schedule tab. The attempts
+  are bounded because some files are never readable, and "retry until the files
+  are backed up" would otherwise mean a full scan of a fifteen-gigabyte tree
+  every half hour, all night, for a lock file that will still be there in the
+  morning.
+
 ### Fixed
 
 - **A copy destination read as configured while nothing copied to it.** The

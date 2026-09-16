@@ -85,6 +85,7 @@ fn job(name: &str, destination_ids: Vec<Uuid>) -> Job {
         destination_ids,
         schedule: Schedule::Manual,
         exclusions: ExclusionSet::default(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,

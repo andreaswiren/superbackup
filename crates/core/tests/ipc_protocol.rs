@@ -58,6 +58,7 @@ fn job() -> Job {
         destination_ids: vec![],
         schedule: Schedule::Daily { times: vec![] },
         exclusions: ExclusionSet::default(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,

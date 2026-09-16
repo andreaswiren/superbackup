@@ -58,13 +58,14 @@
 
 use crate::engine::cancel::{CancelReason, CancelToken};
 use crate::engine::clock::Clock;
+use crate::engine::reattempt;
 use crate::engine::runner::{destination_is_usable, RunRequest, Runner};
 use crate::engine::schedule::Zone;
 use crate::engine::watcher::{JobWatcher, WatchTrigger};
 use crate::engine::{EngineEvent, Environment};
 use crate::error::{Error, Result};
 use crate::model::{Config, Destination, Job, Schedule, Settings};
-use crate::state::{Event, PersistedState, RunStatus, Severity, Trigger};
+use crate::state::{Event, JobRun, PersistedState, RunStatus, Severity, Trigger};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -355,10 +356,22 @@ pub struct Scheduler {
     known_schedules: HashMap<Uuid, Schedule>,
     /// Jobs whose one-shot catch-up has already been considered.
     caught_up: HashSet<Uuid>,
+    /// Extra attempts made since this job last came back with everything.
+    ///
+    /// Cleared by a clean run, and by the ordinary schedule coming round, so a
+    /// job that is merely busy on Tuesdays does not arrive at Wednesday having
+    /// spent its attempts.
+    reattempts: HashMap<Uuid, u32>,
     /// Live filesystem watchers, keyed by job.
     watchers: HashMap<Uuid, JobWatcher>,
 
-    completions: tokio::sync::mpsc::UnboundedSender<Uuid>,
+    /// A finished run, on its way back to the loop.
+    ///
+    /// The job id alone used to be enough, because the only thing done with a
+    /// completion was to free the slot. Deciding whether to come back for the
+    /// files this run could not read needs the run itself — which destination
+    /// failed, and how many files were left out of each snapshot.
+    completions: tokio::sync::mpsc::UnboundedSender<Box<JobRun>>,
 
     /// The platform wake alarm, armed for the next scheduled run when
     /// `wake_for_backups` is on. See [`crate::platform::wake`].
@@ -411,6 +424,7 @@ impl Scheduler {
             awake: None,
             known_schedules: HashMap::new(),
             caught_up: HashSet::new(),
+            reattempts: HashMap::new(),
             watchers: HashMap::new(),
             completions,
         };
@@ -422,7 +436,7 @@ impl Scheduler {
     async fn run(
         mut self,
         mut commands: tokio::sync::mpsc::UnboundedReceiver<Command>,
-        mut completions: tokio::sync::mpsc::UnboundedReceiver<Uuid>,
+        mut completions: tokio::sync::mpsc::UnboundedReceiver<Box<JobRun>>,
         command_sender: tokio::sync::mpsc::UnboundedSender<Command>,
     ) {
         self.resync(&command_sender).await;
@@ -442,8 +456,9 @@ impl Scheduler {
                         break;
                     }
                 }
-                Some(job_id) = completions.recv() => {
-                    self.active.remove(&job_id);
+                Some(run) = completions.recv() => {
+                    self.active.remove(&run.job_id);
+                    self.consider_reattempt(&run, self.clock.now_utc());
                 }
                 _ = self.clock.sleep_until(deadline) => {
                     self.enqueue_due(self.clock.now_utc());
@@ -590,6 +605,55 @@ impl Scheduler {
             }
             self.known_schedules.insert(job.id, job.schedule.clone());
         }
+    }
+
+    /// Come back for what this run could not read.
+    ///
+    /// A folder somebody is working in always has a few files another program
+    /// holds open, and those are skipped so the snapshot gets made at all —
+    /// which leaves the snapshot genuinely missing them. Five seconds later the
+    /// editor is still open; half an hour later it very often is not. See
+    /// [`crate::engine::reattempt`].
+    fn consider_reattempt(&mut self, run: &JobRun, now: DateTime<Utc>) {
+        let Some(job) = self.config.job(&run.job_id) else { return };
+        let attempts = self.reattempts.get(&run.job_id).copied().unwrap_or(0);
+
+        let Some(delay) = reattempt::delay_after(&job.retry, run, attempts) else {
+            // Either there was nothing missing, or there is nothing more to be
+            // done about it. Both mean the count starts again: the next run to
+            // fall short gets the full allowance rather than the remains of
+            // this one's.
+            self.reattempts.remove(&run.job_id);
+            return;
+        };
+
+        let at = now + delay;
+        // Never later than the job was already going to run. A retry is meant
+        // to bring the next attempt *forward*.
+        if self.next_fire.get(&run.job_id).is_some_and(|already| *already <= at) {
+            self.reattempts.remove(&run.job_id);
+            return;
+        }
+
+        self.reattempts.insert(run.job_id, attempts + 1);
+        self.next_fire.insert(run.job_id, at);
+        let missing: Vec<String> = reattempt::shortfalls(run).iter().map(|s| s.summary()).collect();
+        let event = Event::new(
+            Severity::Info,
+            "job.reattempt_scheduled",
+            format!(
+                "{} will run again in {} minutes: {}.",
+                job.name,
+                delay.num_minutes().max(1),
+                missing.join("; ")
+            ),
+        )
+        .with_job(job.id)
+        .with_field("attempt", (attempts + 1).to_string());
+        let _ = self.events.send(EngineEvent::Log(Box::new(event)));
+        let _ = self
+            .events
+            .send(EngineEvent::NextRunChanged { job_id: run.job_id, next_run: Some(at) });
     }
 
     /// The instant the loop should next wake.
@@ -766,12 +830,11 @@ impl Scheduler {
         let runner = self.runner.clone();
         let completions = self.completions.clone();
         tokio::spawn(async move {
-            let job_id = request.job.id;
-            let _ = runner.execute(request).await;
+            let run = runner.execute(request).await;
             // Freeing the slot is the last thing that happens, and it happens
             // on every path including a panic-free early return, because the
             // runner never returns an error.
-            let _ = completions.send(job_id);
+            let _ = completions.send(Box::new(run));
         });
     }
 
@@ -825,6 +888,7 @@ mod tests {
             destination_ids: vec![Uuid::new_v4()],
             schedule: Schedule::Manual,
             exclusions: Default::default(),
+            retry: Default::default(),
             bandwidth: None,
             retention: None,
             enabled,

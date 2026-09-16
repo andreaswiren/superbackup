@@ -948,6 +948,14 @@ pub mod job {
     pub const CONDITIONS_OVERRIDING: &str = "Overriding the global setting";
     pub const CONDITIONS_RESET: &str = "Reset";
     pub const TIMEOUT: &str = "Stop the run after";
+    pub const RETRY_GROUP: &str = "When a run does not get everything";
+    pub const RETRY_ON: &str = "Run again later for the files that were missed";
+    pub const RETRY_BODY: &str = "A folder you are working in always has files another program holds open — an editor's lock file, a build's temporary output. Those are left out so the snapshot gets made at all, which means the snapshot is missing them. Trying again five seconds later never helps; half an hour later it usually does.";
+    pub const RETRY_EVERY: &str = "Wait";
+    pub const RETRY_EVERY_UNIT: &str = "minutes";
+    pub const RETRY_ATTEMPTS: &str = "Give up after";
+    pub const RETRY_ATTEMPTS_UNIT: &str = "extra attempts";
+    pub const RETRY_ATTEMPTS_BODY: &str = "Some files are never readable — a lock file that lives as long as its application, a pagefile, a socket — so the attempts stop and the job waits for its ordinary schedule. Set it to 0 to keep trying until the next scheduled run.";
     pub const TIMEOUT_UNIT: &str = "minutes";
     pub const TIMEOUT_BODY: &str = "A run stopped by its timeout is recorded as failed, because something took longer than it should have.";
 

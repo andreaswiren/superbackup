@@ -89,6 +89,7 @@ fn job(name: &str, sources: Vec<PathBuf>, destinations: Vec<Uuid>) -> Job {
         destination_ids: destinations,
         schedule: Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 30 }] },
         exclusions: ExclusionSet::developer_defaults(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,

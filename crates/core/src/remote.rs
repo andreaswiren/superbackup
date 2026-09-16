@@ -1100,6 +1100,7 @@ mod tests {
             destination_ids: Vec::new(),
             schedule: crate::model::Schedule::Manual,
             exclusions: Default::default(),
+            retry: Default::default(),
             bandwidth: None,
             retention: None,
             enabled: true,

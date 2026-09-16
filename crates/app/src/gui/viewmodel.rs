@@ -1622,6 +1622,7 @@ mod tests {
             destination_ids: vec![Uuid::new_v4()],
             schedule: Schedule::Daily { times: vec![t(2, 0)] },
             exclusions: Default::default(),
+            retry: Default::default(),
             bandwidth: None,
             retention: None,
             enabled: true,

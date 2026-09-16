@@ -206,6 +206,7 @@ pub(crate) fn blank_job() -> Job {
         destination_ids: Vec::new(),
         schedule: Schedule::Daily { times: vec![TimeOfDay { hour: 2, minute: 0 }] },
         exclusions: ExclusionSet::default(),
+        retry: Default::default(),
         bandwidth: None,
         retention: None,
         enabled: true,
