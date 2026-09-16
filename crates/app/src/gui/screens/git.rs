@@ -1074,7 +1074,12 @@ impl App {
                     commit: true,
                     message: format!("Start tracking {}", candidate.name),
                     create_remote: false,
+                    publish_only: false,
                     remote_name: candidate.name.clone(),
+                    client: "gh".to_string(),
+                    host: None,
+                    clients: Vec::new(),
+                    push: false,
                     private: true,
                     busy: false,
                     error: None,
@@ -1124,6 +1129,35 @@ impl App {
                     Request::GitSetExternal { path: repo.path.display().to_string(), external },
                 );
             }
+            GitDetailAction::Publish => {
+                // Which clients are here decides what the dialog can offer, so
+                // it is asked for before the dialog rather than guessed inside
+                // it. The answer is a directory lookup, not a network call.
+                self.ask(Intent::GitClients, Request::GitClients {});
+                self.modal = Some(crate::gui::modals::Modal::GitInit(Box::new(
+                    crate::gui::modals::GitInitState {
+                        installing_gh: false,
+                        path: repo.path.clone(),
+                        name: repo.name.clone(),
+                        // Already a repository: there is nothing to initialise
+                        // and nothing to make a first commit of. The dialog
+                        // uses this to show only the publishing half.
+                        branch: repo.branch.clone().unwrap_or_else(|| "main".to_string()),
+                        commit: false,
+                        message: String::new(),
+                        create_remote: true,
+                        publish_only: true,
+                        remote_name: repo.name.clone(),
+                        client: "gh".to_string(),
+                        host: None,
+                        clients: Vec::new(),
+                        push: false,
+                        private: true,
+                        busy: false,
+                        error: None,
+                    },
+                )));
+            }
         }
     }
 }
@@ -1134,6 +1168,8 @@ pub enum GitDetailAction {
     OpenUrl(String),
     SetExternal(bool),
     ReadDocument(String),
+    /// Make a repository on a forge and point this folder at it.
+    Publish,
 }
 
 /// Which part of a repository is on screen.
@@ -1262,6 +1298,19 @@ fn overview(
     ui.add_space(space::S);
     if repo.remotes.is_empty() {
         widgets::paragraph(ui, copy::git::NO_REMOTES, Type::Small, t.warning.tint_text);
+        // And the way out of that state, next to the sentence that describes
+        // it. A repository with no remote is one disk failure from gone, and
+        // the only thing superbackup had to say about it was that it was so.
+        ui.add_space(space::M);
+        if Button::primary(copy::git::PUBLISH)
+            .icon(Icon::Cloud)
+            .compact()
+            .show(ui)
+            .on_hover_text(copy::git::PUBLISH_HINT)
+            .clicked()
+        {
+            action = Some(GitDetailAction::Publish);
+        }
     }
     for remote in &repo.remotes {
         widgets::card(ui, |ui| {

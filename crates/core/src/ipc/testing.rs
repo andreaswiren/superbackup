@@ -1196,6 +1196,11 @@ impl Handler for MockHandler {
         Ok(Self::git_did("remote", &path))
     }
 
+    async fn git_clients(&self, _ctx: &RequestContext) -> Result<GitClientsReply> {
+        let _guard = self.enter("git.clients").await?;
+        Ok(GitClientsReply { clients: Vec::new() })
+    }
+
     async fn git_create_remote(
         &self,
         _ctx: &RequestContext,
@@ -1205,6 +1210,8 @@ impl Handler for MockHandler {
         private: bool,
         _description: Option<String>,
         _credential: Option<String>,
+        _client: Option<String>,
+        _host: Option<String>,
     ) -> Result<GitCreatedReply> {
         let _guard = self.enter("git.create_remote").await?;
         let full_name = match &owner {

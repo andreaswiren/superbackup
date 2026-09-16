@@ -2013,6 +2013,25 @@ impl Handler for DaemonHandler {
         self.record_git(&outcome);
         Ok(GitActionReply { outcome })
     }
+    async fn git_clients(&self, _ctx: &RequestContext) -> Result<GitClientsReply> {
+        use superbackup_core::git::forge::Client;
+        Ok(GitClientsReply {
+            clients: Client::ALL
+                .into_iter()
+                .map(|client| {
+                    let path = client.locate();
+                    superbackup_core::ipc::protocol::GitClientInfo {
+                        client: client.program().to_string(),
+                        title: client.title().to_string(),
+                        forge: client.forge().label().to_string(),
+                        installed: path.is_some(),
+                        path: path.map(|p| p.display().to_string()),
+                        how_to_get: client.how_to_get().to_string(),
+                    }
+                })
+                .collect(),
+        })
+    }
 
     async fn git_create_remote(
         &self,
@@ -2023,25 +2042,40 @@ impl Handler for DaemonHandler {
         private: bool,
         description: Option<String>,
         credential: Option<String>,
+        client: Option<String>,
+        host: Option<String>,
     ) -> Result<GitCreatedReply> {
+        use superbackup_core::git::forge::Client;
+
         self.require_unlocked().await?;
         let target = self.git_target(&path).await?;
         let repo = superbackup_core::git::forge::NewRepo { name, owner, description, private };
         repo.validate()?;
 
-        let created = match credential {
-            // The GitHub CLI: superbackup holds no token, and the user revokes
-            // it where they granted it.
-            None => superbackup_core::git::forge::create_with_gh(&repo).await?,
-            Some(_) => {
-                return Err(Error::Validation(
-                    "creating a repository with a stored token is not wired up in this build. \
-                     Sign in with the GitHub CLI (`gh auth login`) and superbackup will borrow \
-                     that, which is better anyway: it never holds a token of yours."
-                        .into(),
-                ))
+        if credential.is_some() {
+            return Err(Error::Validation(
+                "creating a repository with a stored token is not wired up in this build. Sign                  in with the forge's own client instead - `gh auth login`, `tea login add` or                  `glab auth login` - and superbackup will borrow that, which is better anyway:                  it never holds a token of yours."
+                    .into(),
+            ));
+        }
+
+        // Named, or `gh`, which is what every caller before this meant.
+        let client = match client.as_deref() {
+            None | Some("") | Some("gh") => Client::Gh,
+            Some("tea") => Client::Tea,
+            Some("glab") => Client::Glab,
+            Some(other) => {
+                return Err(Error::Validation(format!(
+                    "{other:?} is not a forge client superbackup knows. Use `gh` for GitHub,                      `tea` for Gitea or Forgejo, or `glab` for GitLab."
+                )))
             }
         };
+        let created = superbackup_core::git::forge::create_with_client(
+            client,
+            &repo,
+            host.as_deref().filter(|h| !h.trim().is_empty()),
+        )
+        .await?;
 
         // Point the local repository at it, but push nothing: creating an empty
         // repository is reversible in one click and pushing a tree that turned

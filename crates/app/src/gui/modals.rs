@@ -526,6 +526,25 @@ pub struct GitInitState {
     /// creating something on a forge is neither.
     pub create_remote: bool,
     pub remote_name: String,
+    /// Which forge client creates it: `gh`, `tea` or `glab`.
+    ///
+    /// The client rather than the forge, because it is the client that has to
+    /// be installed and signed in — "GitLab" is not actionable when `glab` is
+    /// missing, and "the GitLab CLI is not installed" is.
+    pub client: String,
+    /// The server, for a self-hosted forge. `None` is the public one.
+    pub host: Option<String>,
+    /// What `git.clients` said is on this machine, once it has answered.
+    pub clients: Vec<superbackup_core::ipc::protocol::GitClientInfo>,
+    /// The folder is already a repository, so there is nothing to initialise
+    /// and this dialog is only about giving it somewhere to live.
+    pub publish_only: bool,
+    /// Push the current branch once the repository exists.
+    ///
+    /// Off by default, and deliberately a second decision. Creating an empty
+    /// repository is reversible in one click; pushing a tree that turns out to
+    /// hold a `.env` is not.
+    pub push: bool,
     /// Private, and it stays the default.
     pub private: bool,
     pub busy: bool,
@@ -2234,37 +2253,43 @@ fn show_git_init(
                 widgets::text(ui, state.path.display().to_string(), Type::MonoSmall, t.text_muted);
                 ui.add_space(space::L);
 
-                widgets::Field::new()
-                    .label(copy::git::INIT_BRANCH)
-                    .width(220.0)
-                    .show(ui, &mut state.branch);
-
-                ui.add_space(space::L);
-                widgets::checkbox(
-                    ui,
-                    &mut state.commit,
-                    copy::git::INIT_COMMIT,
-                    Some(copy::git::INIT_COMMIT_HINT),
-                    true,
-                );
-                if state.commit {
-                    ui.add_space(space::S);
+                // A folder that is already a repository has nothing to
+                // initialise and nothing to make a first commit of, so the
+                // whole first half of this dialog is about something that has
+                // already happened.
+                if !state.publish_only {
                     widgets::Field::new()
-                        .label(copy::git::INIT_MESSAGE)
-                        .width(440.0)
-                        .show(ui, &mut state.message);
-                }
+                        .label(copy::git::INIT_BRANCH)
+                        .width(220.0)
+                        .show(ui, &mut state.branch);
 
-                ui.add_space(space::XL);
-                widgets::divider(ui);
-                ui.add_space(space::L);
-                widgets::checkbox(
-                    ui,
-                    &mut state.create_remote,
-                    copy::git::INIT_CREATE,
-                    Some(copy::git::INIT_CREATE_HINT),
-                    true,
-                );
+                    ui.add_space(space::L);
+                    widgets::checkbox(
+                        ui,
+                        &mut state.commit,
+                        copy::git::INIT_COMMIT,
+                        Some(copy::git::INIT_COMMIT_HINT),
+                        true,
+                    );
+                    if state.commit {
+                        ui.add_space(space::S);
+                        widgets::Field::new()
+                            .label(copy::git::INIT_MESSAGE)
+                            .width(440.0)
+                            .show(ui, &mut state.message);
+                    }
+
+                    ui.add_space(space::XL);
+                    widgets::divider(ui);
+                    ui.add_space(space::L);
+                    widgets::checkbox(
+                        ui,
+                        &mut state.create_remote,
+                        copy::git::INIT_CREATE,
+                        Some(copy::git::INIT_CREATE_HINT),
+                        true,
+                    );
+                }
                 if state.create_remote {
                     ui.add_space(space::S);
                     widgets::Field::new()
@@ -2288,8 +2313,88 @@ fn show_git_init(
                     {
                         state.private = private;
                     }
+                    ui.add_space(space::XL);
+                    // Which client, not which forge. It is the client that has
+                    // to be installed and signed in, and "GitLab" is not
+                    // something a person can act on when `glab` is missing.
+                    widgets::text(ui, copy::git::PUBLISH_CLIENT, Type::H3, t.text_primary);
+                    ui.add_space(space::XS);
+                    widgets::paragraph(
+                        ui,
+                        copy::git::PUBLISH_CLIENT_BODY,
+                        Type::Small,
+                        t.text_muted,
+                    );
+                    ui.add_space(space::S);
+                    if state.clients.is_empty() {
+                        widgets::text(ui, copy::state::LOADING, Type::Small, t.text_muted);
+                    } else {
+                        let labels: Vec<String> = state
+                            .clients
+                            .iter()
+                            .map(|c| {
+                                if c.installed {
+                                    c.forge.clone()
+                                } else {
+                                    format!("{} — not installed", c.forge)
+                                }
+                            })
+                            .collect();
+                        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                        let mut index = state
+                            .clients
+                            .iter()
+                            .position(|c| c.client == state.client)
+                            .unwrap_or(0);
+                        let before = index;
+                        widgets::segmented(ui, &mut index, &refs);
+                        if index != before {
+                            if let Some(chosen) = state.clients.get(index) {
+                                state.client = chosen.client.clone();
+                            }
+                        }
+                        if let Some(chosen) = state.clients.get(index) {
+                            if !chosen.installed {
+                                ui.add_space(space::S);
+                                widgets::paragraph(
+                                    ui,
+                                    copy::git::publish_client_missing(
+                                        &chosen.title,
+                                        &chosen.how_to_get,
+                                    ),
+                                    Type::Small,
+                                    t.warning.tint_text,
+                                );
+                            }
+                        }
+                    }
+
                     ui.add_space(space::M);
-                    widgets::paragraph(ui, copy::git::INIT_NO_PUSH, Type::Small, t.text_muted);
+                    let mut host = state.host.clone().unwrap_or_default();
+                    widgets::Field::new()
+                        .label(copy::git::PUBLISH_HOST)
+                        .placeholder(copy::git::PUBLISH_HOST_HINT)
+                        .width(440.0)
+                        .show(ui, &mut host);
+                    state.host = Some(host).filter(|h| !h.trim().is_empty());
+
+                    ui.add_space(space::L);
+                    let mut push = state.push;
+                    if widgets::checkbox(
+                        ui,
+                        &mut push,
+                        copy::git::PUBLISH_PUSH,
+                        Some(copy::git::PUBLISH_PUSH_BODY),
+                        true,
+                    )
+                    .clicked()
+                    {
+                        state.push = push;
+                    }
+                    if !state.push {
+                        ui.add_space(space::M);
+                        widgets::paragraph(ui, copy::git::INIT_NO_PUSH, Type::Small, t.text_muted);
+                    }
                 }
 
                 if let Some(error) = &state.error {
@@ -2326,9 +2431,17 @@ fn show_git_init(
                 }
             });
             m.footer(|ui| {
-                let ready = !state.branch.trim().is_empty()
-                    && (!state.commit || !state.message.trim().is_empty())
-                    && (!state.create_remote || !state.remote_name.trim().is_empty());
+                let ready = (state.publish_only || !state.branch.trim().is_empty())
+                    && (state.publish_only || !state.commit || !state.message.trim().is_empty())
+                    && (!state.create_remote || !state.remote_name.trim().is_empty())
+                    // A client that is not installed cannot create anything,
+                    // and letting the button run so the daemon can say so is a
+                    // worse way to find out.
+                    && state
+                        .clients
+                        .iter()
+                        .find(|c| c.client == state.client)
+                        .is_none_or(|c| c.installed);
                 if Button::primary(copy::git::INIT_CONFIRM)
                     .enabled(ready && !state.busy)
                     .show(ui)
@@ -2353,6 +2466,26 @@ fn show_git_init(
     if go {
         state.busy = true;
         state.error = None;
+        // Already a repository: there is nothing to initialise, so this goes
+        // straight to the step that gives it somewhere to live. Running `git
+        // init` over a repository is not destructive, but it is a lie about
+        // what the button did and it would reset the branch name.
+        if state.publish_only {
+            app.ask(
+                Intent::GitCreateRemote,
+                Request::GitCreateRemote {
+                    path: state.path.display().to_string(),
+                    name: state.remote_name.trim().to_string(),
+                    owner: None,
+                    private: state.private,
+                    description: None,
+                    credential: None,
+                    client: Some(state.client.clone()),
+                    host: state.host.clone(),
+                },
+            );
+            return Some(Modal::GitInit(state));
+        }
         app.ask(
             Intent::GitInit(Box::new((*state).clone())),
             Request::GitInit {

@@ -461,10 +461,416 @@ pub async fn create_with_gh(repo: &NewRepo) -> crate::error::Result<CreatedRepo>
     })
 }
 
-fn locate_gh() -> Option<std::path::PathBuf> {
-    let exe = if cfg!(windows) { "gh.exe" } else { "gh" };
+// ---------------------------------------------------------------------------
+// The forges' own command-line clients
+// ---------------------------------------------------------------------------
+
+/// A forge's official command-line client.
+///
+/// # Why borrow a client rather than hold a token
+///
+/// Each of these already holds a credential the user set up, scoped however
+/// they chose, refreshed by the client and revocable by them in one place.
+/// Borrowing it means superbackup never asks for, stores, or is capable of
+/// leaking a token — which is a better security property than any amount of
+/// care taken with one we held. It also means "log in" is a thing the user
+/// does once, in the tool whose documentation they will find when it goes
+/// wrong.
+///
+/// Only *creating* a repository goes through a client. Committing and pushing
+/// are plain `git` against a plain remote, because they are the same operation
+/// on every forge and adding a client to them would buy nothing and break the
+/// day the client is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Client {
+    /// `gh`, for github.com and GitHub Enterprise.
+    Gh,
+    /// `tea`, for Gitea and Forgejo.
+    Tea,
+    /// `glab`, for gitlab.com and self-hosted GitLab.
+    Glab,
+}
+
+impl Client {
+    pub const ALL: [Client; 3] = [Client::Gh, Client::Tea, Client::Glab];
+
+    /// The executable's name, without a platform suffix.
+    pub fn program(self) -> &'static str {
+        match self {
+            Client::Gh => "gh",
+            Client::Tea => "tea",
+            Client::Glab => "glab",
+        }
+    }
+
+    /// What to call it in a sentence.
+    pub fn title(self) -> &'static str {
+        match self {
+            Client::Gh => "the GitHub CLI",
+            Client::Tea => "the Gitea CLI",
+            Client::Glab => "the GitLab CLI",
+        }
+    }
+
+    /// The forges this client speaks to.
+    pub fn forge(self) -> Forge {
+        match self {
+            Client::Gh => Forge::GitHub,
+            Client::Tea => Forge::Gitea,
+            Client::Glab => Forge::GitLab,
+        }
+    }
+
+    /// How to install it, and how to sign in, for the message shown when it is
+    /// missing. Both halves matter: an installed client that has never been
+    /// signed in fails in a way that reads like a bug.
+    pub fn how_to_get(self) -> &'static str {
+        match self {
+            Client::Gh => {
+                "Install it from https://cli.github.com and sign in with `gh auth login`."
+            }
+            Client::Tea => {
+                "Install it from https://gitea.com/gitea/tea and add your server with `tea login add`."
+            }
+            Client::Glab => {
+                "Install it from https://gitlab.com/gitlab-org/cli and sign in with `glab auth login`."
+            }
+        }
+    }
+
+    /// Where this client is, if it is anywhere.
+    pub fn locate(self) -> Option<std::path::PathBuf> {
+        locate(self.program())
+    }
+
+    pub fn installed(self) -> bool {
+        self.locate().is_some()
+    }
+
+    /// The client for a forge, when one exists.
+    pub fn for_forge(forge: Forge) -> Option<Client> {
+        Client::ALL.into_iter().find(|c| c.forge() == forge)
+    }
+}
+
+/// Which clients this machine has, in the order they should be offered.
+pub fn clients_available() -> Vec<Client> {
+    Client::ALL.into_iter().filter(|c| c.installed()).collect()
+}
+
+fn locate(program: &str) -> Option<std::path::PathBuf> {
+    let exe = if cfg!(windows) { format!("{program}.exe") } else { program.to_string() };
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|dir| dir.join(exe)).find(|c| c.is_file())
+    std::env::split_paths(&path).map(|dir| dir.join(&exe)).find(|c| c.is_file())
+}
+
+/// The arguments that create a repository, per client.
+///
+/// Separated from running them so the exact command line is testable without
+/// any of these tools installed — which matters, because a wrong flag here
+/// creates a **public** repository out of a request for a private one, and
+/// that is not a mistake a test suite should have to discover on a real forge.
+pub fn create_args(client: Client, repo: &NewRepo) -> Result<Vec<String>> {
+    repo.validate()?;
+    let description = repo.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
+
+    let args = match client {
+        Client::Gh => return gh_create_args(repo),
+        // `tea repo create --name x --private --owner y`. `tea` takes the name
+        // and the owner separately; it has no `owner/name` form.
+        Client::Tea => {
+            let mut args = vec!["repo".to_string(), "create".to_string()];
+            args.push("--name".into());
+            args.push(repo.name.clone());
+            if let Some(owner) = &repo.owner {
+                args.push("--owner".into());
+                args.push(owner.clone());
+            }
+            if let Some(description) = description {
+                args.push("--description".into());
+                args.push(description.to_string());
+            }
+            // `tea` defaults to public, and says so nowhere in the help text a
+            // person reads on the way past. Always explicit.
+            if repo.private {
+                args.push("--private".into());
+            }
+            args
+        }
+        // `glab repo create owner/name --private`. Visibility is one of three
+        // mutually exclusive switches and there is no "default private".
+        Client::Glab => {
+            let mut args = vec!["repo".to_string(), "create".to_string(), repo.full_name()];
+            args.push(if repo.private { "--private".into() } else { "--public".into() });
+            if let Some(description) = description {
+                args.push("--description".into());
+                args.push(description.to_string());
+            }
+            args
+        }
+    };
+    Ok(args)
+}
+
+/// Create a repository with a forge's own client.
+///
+/// Nothing is pushed. Creating an empty repository is reversible in one click;
+/// pushing a tree that turned out to hold a `.env` is not. See the module
+/// documentation.
+pub async fn create_with_client(
+    client: Client,
+    repo: &NewRepo,
+    host: Option<&str>,
+) -> crate::error::Result<CreatedRepo> {
+    use crate::error::Error;
+
+    if client == Client::Gh && host.is_none() {
+        return create_with_gh(repo).await;
+    }
+
+    let args = create_args(client, repo)?;
+    let program = client.locate().ok_or_else(|| {
+        Error::Validation(format!(
+            "{} is not installed, or is not on this account's PATH. {}",
+            client.title(),
+            client.how_to_get()
+        ))
+    })?;
+
+    let mut command = tokio::process::Command::new(program);
+    command.args(&args);
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    // Every one of these will happily open a browser and wait for a login. In
+    // a tray application that is an application that has stopped responding.
+    command.env("GH_PROMPT_DISABLED", "1");
+    command.env("GH_NO_UPDATE_NOTIFIER", "1");
+    command.env("GLAB_CHECK_UPDATE", "false");
+    command.env("NO_COLOR", "1");
+    // Which server, for the clients that talk to more than one.
+    if let Some(host) = host {
+        match client {
+            Client::Gh => {
+                command.env("GH_HOST", host);
+            }
+            Client::Glab => {
+                command.env("GITLAB_HOST", host);
+            }
+            // `tea` selects a server by the login name it was added under
+            // rather than by a host, so it is passed as a flag instead.
+            Client::Tea => {
+                command.arg("--login");
+                command.arg(host);
+            }
+        }
+    }
+    crate::kopia::harden_child(&mut command);
+
+    let output = tokio::time::timeout(std::time::Duration::from_secs(60), command.output())
+        .await
+        .map_err(|_| Error::Config(format!("{} did not answer within a minute", client.title())))?
+        .map_err(|e| Error::io(format!("running {}", client.title()), e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !output.status.success() {
+        let reason = stderr
+            .lines()
+            .chain(stdout.lines())
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("it failed without saying why");
+        return Err(Error::Config(format!("{}: {reason}", client.title())));
+    }
+
+    let web_url = first_url(&stdout).or_else(|| first_url(&stderr)).ok_or_else(|| {
+        Error::Config(format!(
+            "{} reported success but did not say where the repository is, so superbackup \
+             cannot point this folder at it. Check the forge, then use \"Add remote\".",
+            client.title()
+        ))
+    })?;
+
+    Ok(CreatedRepo {
+        clone_url: clone_url_from(&web_url),
+        full_name: full_name_from(&web_url),
+        web_url,
+        private: repo.private,
+        via: client.title().into(),
+    })
+}
+
+/// The first `https://` URL in some output.
+fn first_url(text: &str) -> Option<String> {
+    text.lines()
+        .flat_map(|line| line.split_whitespace())
+        .map(|word| word.trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == '.'))
+        .find(|word| word.starts_with("https://") && word.len() > "https://".len())
+        .map(str::to_string)
+}
+
+/// `https://host/owner/name` → `owner/name`.
+fn full_name_from(web_url: &str) -> String {
+    let without_scheme = web_url.trim_end_matches('/').trim_start_matches("https://");
+    let mut parts = without_scheme.splitn(2, '/');
+    let _host = parts.next();
+    parts.next().unwrap_or_default().trim_end_matches(".git").to_string()
+}
+
+/// The SSH URL for a web URL.
+///
+/// SSH rather than HTTPS, because a push has to authenticate and superbackup
+/// has no credential helper of its own: an HTTPS remote would prompt for a
+/// password superbackup cannot supply, from a process with no terminal. The
+/// user's SSH key is the thing that already works.
+fn clone_url_from(web_url: &str) -> String {
+    let without_scheme = web_url.trim_end_matches('/').trim_start_matches("https://");
+    match without_scheme.split_once('/') {
+        Some((host, path)) => format!("git@{host}:{}.git", path.trim_end_matches(".git")),
+        None => web_url.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod client_tests {
+    use super::*;
+
+    fn repo(private: bool) -> NewRepo {
+        NewRepo {
+            name: "tetrisweb".into(),
+            owner: Some("indi81".into()),
+            description: Some("  A game  ".into()),
+            private,
+        }
+    }
+
+    /// Private must be asked for explicitly on every client.
+    ///
+    /// `tea` and `glab` both default to public, and a wrong flag here turns a
+    /// request for a private repository into a public one containing whatever
+    /// the folder held. That is not a mistake to discover on a real forge, so
+    /// the command line is asserted rather than the outcome.
+    #[test]
+    fn visibility_is_always_explicit() {
+        for client in Client::ALL {
+            let args = create_args(client, &repo(true)).expect("private");
+            assert!(
+                args.iter().any(|a| a == "--private"),
+                "{client:?} must ask for private explicitly: {args:?}"
+            );
+            assert!(
+                !args.iter().any(|a| a == "--public"),
+                "{client:?} must not also say public: {args:?}"
+            );
+        }
+        for client in [Client::Gh, Client::Glab] {
+            let args = create_args(client, &repo(false)).expect("public");
+            assert!(args.iter().any(|a| a == "--public"), "{client:?}: {args:?}");
+        }
+    }
+
+    /// Each client is given the name in the shape it expects.
+    #[test]
+    fn the_name_is_spelled_the_way_each_client_wants_it() {
+        let gh = create_args(Client::Gh, &repo(true)).expect("gh");
+        assert!(gh.contains(&"indi81/tetrisweb".to_string()), "{gh:?}");
+
+        // `tea` has no `owner/name` form: separate flags, or it creates the
+        // repository under the wrong account.
+        let tea = create_args(Client::Tea, &repo(true)).expect("tea");
+        assert!(tea.windows(2).any(|w| w == ["--name", "tetrisweb"]), "{tea:?}");
+        assert!(tea.windows(2).any(|w| w == ["--owner", "indi81"]), "{tea:?}");
+        assert!(!tea.contains(&"indi81/tetrisweb".to_string()), "{tea:?}");
+
+        let glab = create_args(Client::Glab, &repo(true)).expect("glab");
+        assert!(glab.contains(&"indi81/tetrisweb".to_string()), "{glab:?}");
+    }
+
+    /// A description of nothing but spaces is not sent at all.
+    #[test]
+    fn a_blank_description_is_left_out() {
+        let mut blank = repo(true);
+        blank.description = Some("   ".into());
+        for client in Client::ALL {
+            let args = create_args(client, &blank).expect("args");
+            assert!(
+                !args.iter().any(|a| a == "--description"),
+                "{client:?} sent an empty description: {args:?}"
+            );
+        }
+        // And one with content is trimmed rather than passed with its padding.
+        let args = create_args(Client::Tea, &repo(true)).expect("args");
+        assert!(args.contains(&"A game".to_string()), "{args:?}");
+    }
+
+    /// Nothing here pushes. Creating is reversible; pushing is not.
+    #[test]
+    fn creating_never_pushes() {
+        for client in Client::ALL {
+            let args = create_args(client, &repo(true)).expect("args");
+            for forbidden in ["--push", "--source", "--remote"] {
+                assert!(
+                    !args.iter().any(|a| a == forbidden),
+                    "{client:?} must not {forbidden}: {args:?}"
+                );
+            }
+        }
+    }
+
+    /// The remote written into the folder is one a push can authenticate.
+    #[test]
+    fn the_remote_is_ssh_because_a_push_has_to_sign_in() {
+        assert_eq!(
+            clone_url_from("https://codeberg.org/indi81/tetrisweb"),
+            "git@codeberg.org:indi81/tetrisweb.git"
+        );
+        assert_eq!(
+            clone_url_from("https://gitlab.example.com/team/sub/thing.git"),
+            "git@gitlab.example.com:team/sub/thing.git"
+        );
+        assert_eq!(full_name_from("https://codeberg.org/indi81/tetrisweb"), "indi81/tetrisweb");
+        assert_eq!(full_name_from("https://gitlab.example.com/team/sub/thing"), "team/sub/thing");
+    }
+
+    /// The URL is found wherever in the output the client printed it.
+    #[test]
+    fn the_url_is_read_out_of_whatever_the_client_printed() {
+        assert_eq!(
+            first_url("Repository created: https://codeberg.org/indi81/tetrisweb\n").as_deref(),
+            Some("https://codeberg.org/indi81/tetrisweb")
+        );
+        assert_eq!(
+            first_url("* created \"https://gitlab.com/a/b\", now clone it").as_deref(),
+            Some("https://gitlab.com/a/b")
+        );
+        assert_eq!(first_url("nothing useful here"), None);
+        // A bare scheme is not a URL, and pointing a folder at it would be
+        // worse than admitting the output could not be read.
+        assert_eq!(first_url("https://"), None);
+    }
+
+    /// Every client says how to get it, including how to sign in.
+    ///
+    /// An installed client that has never been signed in fails in a way that
+    /// reads like a bug in superbackup, so the message covers both halves.
+    #[test]
+    fn a_missing_client_says_how_to_install_and_how_to_sign_in() {
+        for client in Client::ALL {
+            let how = client.how_to_get();
+            assert!(how.contains("http"), "{client:?}: {how}");
+            assert!(
+                how.contains("login") || how.contains("sign in"),
+                "{client:?} must mention signing in: {how}"
+            );
+            assert_eq!(Client::for_forge(client.forge()), Some(client));
+        }
+    }
+}
+
+fn locate_gh() -> Option<std::path::PathBuf> {
+    Client::Gh.locate()
 }
 
 /// Azure DevOps needs a project, and its API path is not `owner/repo`.

@@ -225,7 +225,10 @@ fn sample_requests() -> Vec<Request> {
             private: true,
             description: None,
             credential: None,
+            client: None,
+            host: None,
         },
+        Request::GitClients {},
         Request::DestinationTest { destination: "drive".into() },
         Request::DestinationClearRepository {
             destination: "drive".into(),

@@ -1867,6 +1867,17 @@ pub mod git {
     pub const NO_BRANCHES: &str = "No branches yet — nothing has been committed here.";
     pub const ONE_WORKTREE: &str = "One working tree, which is the usual arrangement.";
     pub const NO_REMOTES: &str = "No remote, so everything here exists only on this disk.";
+    pub const PUBLISH: &str = "Create a remote repository…";
+    pub const PUBLISH_HINT: &str = "Make an empty repository on a git host and point this folder at it. Nothing is pushed until you say so.";
+    pub const PUBLISH_CLIENT: &str = "Create it on";
+    pub const PUBLISH_CLIENT_BODY: &str = "Superbackup borrows the forge's own command-line client, so it never holds a token of yours: the client already has a credential you set up, and you revoke it where you granted it.";
+    pub const PUBLISH_HOST: &str = "Server";
+    pub const PUBLISH_HOST_HINT: &str = "For a self-hosted forge. A host name for gh and glab; the login name you added with `tea login add` for tea. Leave empty for the public one.";
+    pub const PUBLISH_PUSH: &str = "Push this branch once it exists";
+    pub const PUBLISH_PUSH_BODY: &str = "Off by default. Creating an empty repository is reversible in one click; pushing a tree that turns out to hold a .env is not. Look at what is in the folder first.";
+    pub fn publish_client_missing(title: &str, how: &str) -> String {
+        format!("{title} is not installed. {how}")
+    }
     pub const OPEN_REMOTE: &str = "Open on the web";
     pub const AUTH: &str = "Signs in with";
     pub const AUTH_NOTE: &str =

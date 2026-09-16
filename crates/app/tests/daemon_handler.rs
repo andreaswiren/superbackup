@@ -377,6 +377,9 @@ async fn every_command_answers_or_refuses_cleanly() {
     );
     // Reads only: a PATH walk, safe to run for real.
     run!("git.gh_plan", Request::GitGhPlan {});
+    // Reads a directory listing and nothing else, so it answers the same on a
+    // machine with every client and on one with none.
+    run!("git.clients", Request::GitClients {});
     // Deliberately *not* run: it would install software on the machine
     // running the tests. Marked as covered with the reason written down,
     // which is the honest way to exempt something from a coverage assertion.
@@ -443,6 +446,8 @@ async fn every_command_answers_or_refuses_cleanly() {
             private: true,
             description: None,
             credential: None,
+            client: None,
+            host: None,
         }
     );
     run!(

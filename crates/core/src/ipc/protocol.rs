@@ -1032,6 +1032,27 @@ pub struct StoppedReply {
     pub stopped: Vec<Uuid>,
 }
 
+/// One forge client, and whether it is here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitClientInfo {
+    /// `gh`, `tea` or `glab`.
+    pub client: String,
+    /// What to call it in a sentence.
+    pub title: String,
+    /// The forge it speaks to.
+    pub forge: String,
+    pub installed: bool,
+    /// Where it is, when it is anywhere.
+    pub path: Option<String>,
+    /// How to install it and how to sign in, for when it is not.
+    pub how_to_get: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitClientsReply {
+    pub clients: Vec<GitClientInfo>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DestinationsReply {
     pub destinations: Vec<Destination>,
@@ -1537,6 +1558,8 @@ replies! {
         "Work was accepted; follow it with subscribe or status."
     "stopped" Stopped(StoppedReply)
         "The runs that were asked to stop."
+    "git_clients" GitClients(GitClientsReply)
+        "Which forge command-line clients this machine has."
     "destinations" Destinations(DestinationsReply)
         "A list of destinations."
     "destination" Destination(DestinationReply)
@@ -2259,14 +2282,16 @@ protocol! {
 
         "git.create_remote" GitCreateRemote => git_create_remote -> GitCreated(GitCreatedReply)
             flags [mutating, needs_unlock, elevated]
-            doc "Create a repository on a git host and point a local repository at it. Uses the GitHub CLI when it is signed in, which means superbackup never holds a GitHub token; otherwise it uses a token from the vault for GitLab, Gitea or Forgejo. NEW REPOSITORIES ARE PRIVATE unless `private` is explicitly false. Nothing is pushed: creating an empty repository is reversible in one click and pushing a tree that turned out to contain a .env is not."
+            doc "Create a repository on a git host and point a local repository at it. Uses the forge's own command-line client - `gh`, `tea` or `glab` - which means superbackup never holds a token: the client already has a credential the user set up and can revoke in one place. NEW REPOSITORIES ARE PRIVATE unless `private` is explicitly false. Nothing is pushed: creating an empty repository is reversible in one click and pushing a tree that turned out to contain a .env is not."
             params {
                 path: String = "The local repository, inside a configured job source.",
                 name: String = "The repository name on the host.",
                 owner: Option<String> = "The user or organisation. Omit for your own account.",
                 private: bool = "Private. Pass false deliberately to make it public.",
                 description: Option<String> = "An optional one-line description.",
-                credential: Option<String> = "Which stored credential to use, from `cred.list`. Omit to use the GitHub CLI.",
+                credential: Option<String> = "Which stored credential to use, from `cred.list`. Omit to use the forge's client.",
+                client: Option<String> = "Which client creates it: `gh` for GitHub, `tea` for Gitea or Forgejo, `glab` for GitLab. Omit for `gh`.",
+                host: Option<String> = "The server, for a self-hosted forge: a host name for `gh` and `glab`, or the login name for `tea`. Omit for the public one.",
             }
 
         "cred.generate" CredentialGenerate => credential_generate -> GeneratedKey(GeneratedKeyReply)
@@ -2290,6 +2315,11 @@ protocol! {
             params {
                 path: String = "The private key's path, as `cred.list` reported it.",
             }
+
+        "git.clients" GitClients => git_clients -> GitClients(GitClientsReply)
+            flags []
+            doc "Which forge command-line clients this machine has, and what each one could create a repository on. Reads only: asking installs nothing and signs in to nothing."
+            params {}
 
         "git.gh_plan" GitGhPlan => git_gh_plan -> GhPlan(GhPlanReply)
             flags []

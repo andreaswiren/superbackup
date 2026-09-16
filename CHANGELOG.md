@@ -18,6 +18,17 @@ Nothing yet.
 
 ### Added
 
+- **A repository with no remote can be given one from the button next to the
+  sentence that says it has none.** "No remote, so everything here exists only
+  on this disk" was the whole of what superbackup had to say about a folder one
+  disk failure from gone. Creating one is now offered there, on Gitea and
+  Forgejo through `tea` and on GitLab through `glab` as well as GitHub through
+  `gh` — the forge's own client, because it already holds a credential the user
+  set up and can revoke in one place, so superbackup never holds a token.
+  Committing and pushing stay plain `git`. Pushing is a second decision, off by
+  default: creating an empty repository is reversible in one click and pushing
+  a tree that turns out to hold a `.env` is not.
+
 - **A job comes back for the files a run could not read.** Leaving an
   unreadable file out is what gets the snapshot made at all, and it leaves the
   snapshot genuinely missing that file. Retrying five seconds later never helps

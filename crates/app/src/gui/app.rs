@@ -623,6 +623,8 @@ impl App {
                             private: state.private,
                             description: None,
                             credential: None,
+                            client: Some(state.client.to_string()),
+                            host: state.host.clone(),
                         },
                     );
                     return;
@@ -631,14 +633,39 @@ impl App {
                 self.toasts.success(reply.outcome.detail.clone());
                 self.scan_git();
             }
+            (Intent::GitClients, Reply::GitClients(reply)) => {
+                if let Some(Modal::GitInit(open)) = &mut self.modal {
+                    open.clients = reply.clients.clone();
+                    // Land on one that is actually here, rather than on `gh`
+                    // and a message saying it is missing.
+                    if let Some(first) = reply.clients.iter().find(|c| c.installed) {
+                        if !reply.clients.iter().any(|c| c.client == open.client && c.installed) {
+                            open.client = first.client.clone();
+                        }
+                    }
+                }
+            }
             (Intent::GitCreateRemote, Reply::GitCreated(created)) => {
+                let push = matches!(&self.modal, Some(Modal::GitInit(open)) if open.push);
+                let path = match &self.modal {
+                    Some(Modal::GitInit(open)) => Some(open.path.display().to_string()),
+                    _ => None,
+                };
                 self.modal = None;
                 self.toasts.success(copy::git_created(
                     &created.full_name,
                     created.private,
                     created.remote_added,
                 ));
-                self.scan_git();
+                // The push, if it was asked for, and only now: the remote has
+                // to exist and be pointed at before anything can be sent to it.
+                match (push, path) {
+                    (true, Some(path)) => {
+                        self.screens.git.acting = true;
+                        self.ask(Intent::GitAction, Request::GitPush { path });
+                    }
+                    _ => self.scan_git(),
+                }
             }
             (Intent::AgentStatus, Reply::AgentStatus(reply)) => {
                 self.screens.credentials.agent = Some(reply.status.clone());

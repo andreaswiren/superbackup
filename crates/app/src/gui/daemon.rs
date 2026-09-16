@@ -99,6 +99,8 @@ pub enum Intent {
     GitInit(Box<crate::gui::modals::GitInitState>),
     /// A repository being created on a host, after a successful init.
     GitCreateRemote,
+    /// Which forge clients this machine has, asked before the publish dialog.
+    GitClients,
     /// Which agent is running and what it holds.
     AgentStatus,
     /// A key being loaded into the agent.
