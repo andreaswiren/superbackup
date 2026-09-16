@@ -969,6 +969,8 @@ pub mod job {
     }
     pub const EXCL_GITIGNORE: &str = "Use .gitignore files found in the folders";
     pub const EXCL_GITIGNORE_BODY: &str = "Honours each repository's own ignore rules. Slower on very large trees, because every directory is checked.";
+    pub const EXCL_UNREADABLE: &str = "Leave out files that cannot be read";
+    pub const EXCL_UNREADABLE_BODY: &str = "A folder you are working in always has a few: an editor's lock file, a build's temporary output, a game engine's Temp folder. Without this, one such file stops the whole backup and nothing is kept. With it, they are left out and the run says how many.";
     pub const EXCL_CACHEDIR: &str = "Skip folders tagged with CACHEDIR.TAG";
     pub const EXCL_CACHEDIR_BODY: &str =
         "A standard marker that tools use to say a folder holds only regenerable cache.";

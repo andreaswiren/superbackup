@@ -60,6 +60,16 @@ pub enum KopiaFailure {
     StorageUnreachable,
     /// Another process holds the repository, or an upgrade is in progress.
     Locked,
+    /// Source files could not be read, and kopia treated that as fatal.
+    ///
+    /// Not [`KopiaFailure::Locked`], which was where this landed: the sharing
+    /// violation Windows reports for a file another program holds open says
+    /// "the process cannot access the file", and so does the one it reports
+    /// for a locked repository. One phrase, two entirely different situations
+    /// — and the wrong one of them was shown, under a hint telling the user to
+    /// wait for a backup that was not running and try again, which it never
+    /// would have helped.
+    SourceUnreadable,
     /// The target volume ran out of space.
     DiskFull,
     /// The OS refused access to a source file or the repository directory.
@@ -97,6 +107,9 @@ impl KopiaFailure {
             KopiaFailure::StorageUnreachable => "The storage provider could not be reached.",
             KopiaFailure::Locked => {
                 "The repository is in use by another process and cannot be modified right now."
+            }
+            KopiaFailure::SourceUnreadable => {
+                "Some files could not be read, so no snapshot was created."
             }
             KopiaFailure::DiskFull => "The destination ran out of free space.",
             KopiaFailure::PermissionDenied => {
@@ -142,6 +155,9 @@ impl KopiaFailure {
             KopiaFailure::Locked => {
                 Some("Wait for the other backup or maintenance run to finish, then try again.")
             }
+            KopiaFailure::SourceUnreadable => Some(
+                "The files are open in another program — an editor's lock file, a build's temporary output. Turn on \"Leave out files that cannot be read\" for this job and they will be skipped and counted instead of stopping the backup, or exclude the folder they are in.",
+            ),
             KopiaFailure::DiskFull => {
                 Some("Free space at the destination, or run maintenance to drop unreferenced data.")
             }
@@ -177,6 +193,9 @@ impl KopiaFailure {
     /// uses this to decide between a retry and a hard stop: retrying a wrong
     /// passphrase forever just burns the user's battery.
     pub fn is_transient(&self) -> bool {
+        // Deliberately not `SourceUnreadable`: the editor's lock file is there
+        // for as long as the editor is open, so a retry in ninety seconds
+        // fails the same way. The next scheduled run is the better bet.
         matches!(
             self,
             KopiaFailure::StorageUnreachable | KopiaFailure::Locked | KopiaFailure::Timeout
@@ -224,6 +243,15 @@ const PATTERNS: &[(&str, KopiaFailure)] = &[
     ("not enough space on the disk", KopiaFailure::DiskFull),
     ("insufficient disk space", KopiaFailure::DiskFull),
     ("disk quota exceeded", KopiaFailure::DiskFull),
+    // Source files, before the sharing-violation patterns below.
+    //
+    // kopia says this once at the end, having already listed each file it
+    // could not open — and each of *those* lines carries the operating
+    // system's sharing-violation wording, which is the same wording a locked
+    // repository produces. Matching the summary first is what tells the two
+    // apart: it only ever appears for a source walk.
+    ("fatal error(s) while snapshotting", KopiaFailure::SourceUnreadable),
+    ("error when processing", KopiaFailure::SourceUnreadable),
     // Sharing violations look like permission errors but mean "locked".
     ("being used by another process", KopiaFailure::Locked),
     ("the process cannot access the file", KopiaFailure::Locked),
@@ -396,6 +424,7 @@ mod tests {
             KopiaFailure::BucketNotFound,
             KopiaFailure::StorageUnreachable,
             KopiaFailure::Locked,
+            KopiaFailure::SourceUnreadable,
             KopiaFailure::DiskFull,
             KopiaFailure::PermissionDenied,
             KopiaFailure::Cancelled,
@@ -405,6 +434,42 @@ mod tests {
         ] {
             assert!(!f.message().is_empty(), "{f:?} has no message");
         }
+    }
+
+    /// A file another program holds open is not a locked repository.
+    ///
+    /// Both produce Windows' sharing-violation wording, so the summary line
+    /// kopia prints at the end of a source walk is what tells them apart. This
+    /// is real output from a workspace backup that failed on three Unity
+    /// files: 110,052 processed, 15 GB read, nothing kept, and a message
+    /// telling the user to wait for a backup that was not running.
+    #[test]
+    fn locked_source_files_are_not_a_locked_repository() {
+        let snapshotting = concat!(
+            r#"! Error when processing "brumbrum2/Temp/UnityLockfile": unable to open file: "#,
+            r"unable to open local file: open C:\Users\Andreas\workspace\brumbrum2\Temp\",
+            r"UnityLockfile: The process cannot access the file because it is being used by ",
+            "another process.\n",
+            r"Found 3 fatal error(s) while snapshotting Andreas@awpc34:C:\Users\Andreas\work.",
+        );
+        assert_eq!(
+            classify(snapshotting),
+            KopiaFailure::SourceUnreadable,
+            "the sharing violation is about the source, not the repository"
+        );
+        // And the remedy has to be one that could work. "Wait and try again"
+        // cannot: the lock file is there for as long as the editor is.
+        assert!(!KopiaFailure::SourceUnreadable.is_transient());
+        let hint = KopiaFailure::SourceUnreadable.hint().expect("a hint");
+        assert!(hint.contains("cannot be read"), "{hint}");
+
+        // The repository case still classifies as it did.
+        let repository = concat!(
+            "error opening repository: unable to acquire lock: the process cannot access the ",
+            "file because it is being used by another process",
+        );
+        assert_eq!(classify(repository), KopiaFailure::Locked);
+        assert!(KopiaFailure::Locked.is_transient());
     }
 
     #[test]

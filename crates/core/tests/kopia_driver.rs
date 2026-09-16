@@ -849,6 +849,7 @@ async fn applying_a_policy_clears_stale_ignores_in_a_separate_pass() {
         use_gitignore: true,
         max_file_size_mb: Some(2048),
         respect_cachedir_tag: true,
+        skip_unreadable_files: true,
     };
     let retention = RetentionPolicy {
         keep_latest: 7,

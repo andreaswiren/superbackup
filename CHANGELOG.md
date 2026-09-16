@@ -18,6 +18,25 @@ Nothing yet.
 
 ### Fixed
 
+- **Three locked files threw away a backup of a hundred and ten thousand.** A
+  folder somebody is working in always has a few files another program holds
+  open — an editor's lock file, a build's temporary output, a game engine's
+  `Temp/UnityLockfile`. kopia treats a file it cannot open as fatal, so a
+  workspace backup read fifteen gigabytes, processed 110,052 files, and kept
+  nothing: "Found 3 fatal error(s) while snapshotting". The same outcome on
+  every retry for as long as the editor stayed open. Unreadable files are now
+  left out and counted, which is what "Leave out files that cannot be read" on
+  a job controls; turn it off for a source where an unreadable file means the
+  backup is not trustworthy.
+
+- **And it was reported as a locked repository.** Windows says "the process
+  cannot access the file because it is being used by another process" for a
+  file another program holds open *and* for a repository another process is
+  using. One phrase, two entirely different situations, and superbackup showed
+  the wrong one — under a hint telling the user to wait for a backup that was
+  not running and try again, which would never have helped. The two are told
+  apart now, and the source case says which files and what to do about them.
+
 - **The master passphrase stopped working.** It had not: the window was asking
   about a different installation. Superbackup opened the per-user default
   whenever it was started without `--home`, so a person with two installations

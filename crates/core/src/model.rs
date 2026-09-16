@@ -1532,7 +1532,7 @@ impl Source {
 
 /// Ignore rules. `presets` expand into concrete globs at run time so that the
 /// stored config stays readable and the preset list can grow between releases.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExclusionSet {
     pub presets: Vec<ExclusionPreset>,
@@ -1544,6 +1544,35 @@ pub struct ExclusionSet {
     pub max_file_size_mb: Option<u64>,
     /// Skip directories tagged with `CACHEDIR.TAG`.
     pub respect_cachedir_tag: bool,
+    /// Leave out a file that cannot be read, instead of failing the backup.
+    ///
+    /// On by default, and the default is the whole point. A development folder
+    /// being backed up is a folder somebody is *working in*: an editor holds
+    /// its lock file open, a build writes to a temporary file, a game engine
+    /// keeps `Temp/UnityLockfile` open with sharing denied. kopia treats a file
+    /// it cannot open as fatal, so three such files out of a hundred and ten
+    /// thousand produced "Found 3 fatal error(s) while snapshotting" and no
+    /// snapshot at all — fifteen gigabytes read, nothing kept, and the same
+    /// outcome on every retry for as long as the editor stayed open.
+    ///
+    /// A snapshot of 110,049 files is worth incomparably more than no snapshot,
+    /// so the unreadable ones are left out and counted, and the run says how
+    /// many and which. Turn it off for a source where a file that cannot be
+    /// read means the backup is not trustworthy — a database directory, say.
+    pub skip_unreadable_files: bool,
+}
+
+impl Default for ExclusionSet {
+    fn default() -> Self {
+        ExclusionSet {
+            presets: Vec::new(),
+            patterns: Vec::new(),
+            use_gitignore: false,
+            max_file_size_mb: None,
+            respect_cachedir_tag: false,
+            skip_unreadable_files: true,
+        }
+    }
 }
 
 impl ExclusionSet {
@@ -1564,10 +1593,8 @@ impl ExclusionSet {
                 OsJunk,
                 LogsAndTemp,
             ],
-            patterns: Vec::new(),
-            use_gitignore: false,
-            max_file_size_mb: None,
             respect_cachedir_tag: true,
+            ..ExclusionSet::default()
         }
     }
 

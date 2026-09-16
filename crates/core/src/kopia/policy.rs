@@ -176,6 +176,12 @@ impl KopiaDriver {
         };
 
         cmd.flag("ignore-cache-dirs", bool_enum(exclusions.respect_cachedir_tag));
+        // A file kopia cannot open is fatal to the whole snapshot unless this
+        // says otherwise, and a folder somebody is working in always has a few
+        // — an editor's lock file, a build's temporary output, a game engine's
+        // `Temp/UnityLockfile` opened with sharing denied. See
+        // [`ExclusionSet::skip_unreadable_files`].
+        cmd.flag("ignore-file-errors", bool_enum(exclusions.skip_unreadable_files));
         cmd.flag("one-file-system", bool_enum(source.one_filesystem));
 
         self.run(cmd, ctx).await?;

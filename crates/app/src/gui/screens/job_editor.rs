@@ -148,6 +148,7 @@ fn same_exclusions(a: &ExclusionSet, b: &ExclusionSet) -> bool {
         && a.use_gitignore == b.use_gitignore
         && a.max_file_size_mb == b.max_file_size_mb
         && a.respect_cachedir_tag == b.respect_cachedir_tag
+        && a.skip_unreadable_files == b.skip_unreadable_files
 }
 
 impl App {
@@ -1125,6 +1126,19 @@ impl App {
             .clicked()
             {
                 draft.exclusions.use_gitignore = gitignore;
+            }
+            ui.add_space(space::L);
+            let mut unreadable = draft.exclusions.skip_unreadable_files;
+            if widgets::toggle(
+                ui,
+                &mut unreadable,
+                copy::job::EXCL_UNREADABLE,
+                Some(copy::job::EXCL_UNREADABLE_BODY),
+                true,
+            )
+            .clicked()
+            {
+                draft.exclusions.skip_unreadable_files = unreadable;
             }
             ui.add_space(space::L);
             let mut cachedir = draft.exclusions.respect_cachedir_tag;
