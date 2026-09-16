@@ -51,6 +51,13 @@ Nothing yet.
   it says". It runs hidden now and writes down what it did; the window reads
   that and says it properly.
 
+- **The service could be installed when it could not possibly run.** It starts
+  a daemon against the machine-wide root, and a daemon opens a vault before it
+  does anything else — so with no vault there it would have started, found
+  nothing to unlock, and stopped, leaving a service in the Service Control
+  Manager that looks like a superbackup fault rather than a step nobody has
+  taken. The question is asked before the service exists rather than after.
+
 
 ## [0.11.0] - 2026-09-11
 
