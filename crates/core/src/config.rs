@@ -300,7 +300,27 @@ fn validate_destinations(config: &Config, report: &mut ValidationReport) {
             );
         }
         if config.jobs_using(&destination.id).is_empty() {
-            report.warn(format!("destinations[{name}]"), "no job writes to this destination");
+            // Sharper for a copy, because a copy *looks* configured.
+            //
+            // The editor shows the switch on, names the destination it copies
+            // from, and warns about the shared encryption key — a description
+            // of a relationship that is real in this file and that nothing
+            // performs. `sync-to` runs during a job, from the repository that
+            // job wrote, so a copy no job includes is never written to. An
+            // offsite copy sat empty for days reading as set up.
+            let message = match destination.replicate_from {
+                Some(source) => {
+                    let source = config
+                        .destination(&source)
+                        .map(|d| d.name.clone())
+                        .unwrap_or_else(|| "its source".to_string());
+                    format!(
+                        "no job includes this destination, so nothing is ever copied here —                          the copy is made while a job runs, from the repository that job                          wrote to {source:?}"
+                    )
+                }
+                None => "no job writes to this destination".to_string(),
+            };
+            report.warn(format!("destinations[{name}]"), message);
         }
     }
 }

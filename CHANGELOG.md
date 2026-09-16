@@ -16,6 +16,19 @@ Nothing yet.
 
 ## [0.11.1] - 2026-09-16
 
+### Fixed
+
+- **A copy destination read as configured while nothing copied to it.** The
+  destination screen showed "Copied from another destination", named the
+  source, and warned about the shared encryption key — a description of a
+  relationship that is real in the configuration and that nothing performs.
+  `sync-to` runs during a *job*, from the repository that job wrote, so a copy
+  no job includes is never written to. An offsite copy can sit empty for days
+  looking set up, which is the most dangerous state a backup destination can
+  be in. It is now said in all three places it was missing from: on the
+  destination, on the job whose run would have made the copy, and in the
+  configuration warnings — each with a button that adds it to the job.
+
 ### Added
 
 - **Superbackup can see its own releases.** The update module knew how to ask

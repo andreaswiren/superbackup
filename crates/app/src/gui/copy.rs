@@ -1302,6 +1302,29 @@ pub mod chain {
     pub const SHARED_KEY_BODY: &str =
         "A copy is the same repository in a second place, not a second repository. It is opened with the source's passphrase, and it has no separate key of its own. Keep that one passphrase safe and both copies stay readable; lose it and neither can be restored.";
 
+    /// A copy nothing performs.
+    ///
+    /// The switch being on, the source being named, and the warning about the
+    /// shared key all describe a relationship that is real in the
+    /// configuration and does not happen: `sync-to` runs during a *job*, from
+    /// the repository that job wrote, so a copy destination no job includes is
+    /// never written to. The screen said "Copied from another destination" and
+    /// meant it, and an offsite copy sat empty for days looking configured.
+    pub const NOT_IN_A_JOB: &str = "Nothing copies to this destination yet";
+    pub fn not_in_a_job_body(source: &str) -> String {
+        format!(
+            "The copy is made while a job runs, from the repository that job wrote to {source}. No job includes this destination, so nothing has been copied here and nothing will be until one does."
+        )
+    }
+    /// The button, when exactly one job backs up the source.
+    pub fn add_to_job(job: &str) -> String {
+        format!("Add to \"{job}\"")
+    }
+    /// When several jobs back up the source, or none do.
+    pub const NOT_IN_A_JOB_NO_SOURCE_JOB: &str =
+        "No job backs up the destination this one copies from either, so there is nothing to copy. Add both to a job.";
+    pub const OPEN_JOBS: &str = "Open Jobs";
+
     /// Shown in place of the encryption panel.
     pub const ENCRYPTION_INHERITED: &str = "Encryption is inherited from the source";
     pub const ENCRYPTION_INHERITED_BODY: &str =
@@ -1909,6 +1932,20 @@ pub mod job_detail {
     pub const DESTINATIONS: &str = "Writes to";
     pub const NO_DESTINATIONS: &str = "No destinations, so this job has nowhere to write.";
     pub const MISSING_DEST: &str = "This destination no longer exists.";
+    /// A destination in this job that is a copy of another one in it.
+    pub fn copy_of(source: &str) -> String {
+        format!("Copy of {source}")
+    }
+    /// A copy that points at this job and is not in it.
+    pub fn copy_not_running(name: &str) -> String {
+        format!("\"{name}\" is set up as a copy, and this job does not make it")
+    }
+    pub fn copy_not_running_body(name: &str, source: &str) -> String {
+        format!(
+            "{name:?} copies from {source:?}, which this job writes to — but the copy is made during a job's run, and {name:?} is not one of this job's destinations. Nothing has been copied there."
+        )
+    }
+    pub const ADD_COPY: &str = "Add it to this job";
     pub const RUNS: &str = "Recent runs";
     pub const COL_WHEN: &str = "Started";
     pub const COL_RESULT: &str = "Result";

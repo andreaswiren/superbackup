@@ -1222,6 +1222,7 @@ impl App {
         // One opt-in, not a pair of alternatives. "From the job's folders" is
         // what a destination does; it does not need to be chosen.
         let mut choose: Option<Option<Uuid>> = None;
+        let mut add_to_job: Option<Uuid> = None;
         let mut is_copy = current.is_some();
         if widgets::toggle(
             ui,
@@ -1273,6 +1274,24 @@ impl App {
                 Some(copy::chain::SHARED_KEY_BODY),
                 |_| {},
             );
+
+            // And whether anything actually performs this copy.
+            //
+            // `sync-to` runs during a *job*, from the repository that job just
+            // wrote. A copy destination no job includes is therefore never
+            // written to — while this panel says "Copied from another
+            // destination", names the source, and warns about the shared key,
+            // all of which describe a relationship that is real in the
+            // configuration and never happens. An offsite copy sat empty
+            // looking configured, which is the most dangerous state a backup
+            // destination can be in.
+            if let Some(action) = self.copy_never_runs(ui, current) {
+                add_to_job = Some(action);
+            }
+        }
+
+        if let Some(job_id) = add_to_job {
+            self.add_destination_to_job(job_id, self_id);
         }
 
         if let Some(value) = choose {
@@ -1291,6 +1310,77 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Say so when no job performs this copy, and offer to fix it.
+    ///
+    /// Returns the job to add this destination to, when the user asks for it.
+    /// Nothing is drawn while the destination is unsaved: a draft cannot be in
+    /// a job yet, and warning about it would be warning about the next step of
+    /// the thing being done.
+    fn copy_never_runs(&self, ui: &mut Ui, source_id: Option<Uuid>) -> Option<Uuid> {
+        let destination_id = self.screens.destination_editor.draft.as_ref()?.id;
+        self.data.destination(&destination_id)?;
+        if !self.data.jobs_using(&destination_id).is_empty() {
+            return None;
+        }
+
+        let source = source_id.and_then(|id| self.data.destination(&id));
+        let source_name = source.map(|d| d.name.clone()).unwrap_or_default();
+        // The jobs that write to the source are the ones this copy could ride
+        // along with; any other job has nothing for it to copy.
+        let candidates: Vec<(Uuid, String)> = match source_id {
+            Some(id) => {
+                self.data.jobs_using(&id).into_iter().map(|j| (j.id, j.name.clone())).collect()
+            }
+            None => Vec::new(),
+        };
+
+        let mut chosen = None;
+        ui.add_space(space::M);
+        widgets::banner(
+            ui,
+            widgets::BannerKind::Danger,
+            copy::chain::NOT_IN_A_JOB,
+            Some(&copy::chain::not_in_a_job_body(&source_name)),
+            |ui| match candidates.as_slice() {
+                [] => {
+                    widgets::text(
+                        ui,
+                        copy::chain::NOT_IN_A_JOB_NO_SOURCE_JOB,
+                        Type::Small,
+                        theme::tokens(ui.ctx()).text_secondary,
+                    );
+                }
+                jobs => {
+                    for (id, name) in jobs {
+                        if Button::primary(&copy::chain::add_to_job(name))
+                            .compact()
+                            .show(ui)
+                            .clicked()
+                        {
+                            chosen = Some(*id);
+                        }
+                    }
+                }
+            },
+        );
+        chosen
+    }
+
+    /// Put this destination into a job, keeping everything else about it.
+    ///
+    /// Sent as a job update rather than handled locally because the job is the
+    /// daemon's object: the editor is looking at a destination, and the change
+    /// that makes the copy happen belongs to something else on screen.
+    fn add_destination_to_job(&mut self, job_id: Uuid, destination_id: Uuid) {
+        let Some(mut job) = self.data.job(&job_id).cloned() else { return };
+        if job.destination_ids.contains(&destination_id) {
+            return;
+        }
+        job.destination_ids.push(destination_id);
+        let name = job.name.clone();
+        self.ask(Intent::SaveJob(name), Request::JobUpdate { job: Box::new(job) });
     }
 
     /// Does `candidate` already draw, directly or through a chain, from

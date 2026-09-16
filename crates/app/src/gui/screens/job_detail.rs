@@ -14,10 +14,13 @@ use chrono::{DateTime, Utc};
 use egui::{Align, Layout, Sense, Ui, Vec2};
 use uuid::Uuid;
 
+use superbackup_core::ipc::protocol::Request;
+use superbackup_core::model::Job;
 use superbackup_core::state::{JobRun, RunStatus};
 
 use crate::gui::app::App;
 use crate::gui::copy;
+use crate::gui::daemon::Intent;
 use crate::gui::data::Action;
 use crate::gui::format;
 use crate::gui::icons::Icon;
@@ -523,6 +526,23 @@ impl App {
                         let location =
                             crate::gui::viewmodel::destination_location_full(destination, provider);
                         widgets::kv(ui, &destination.name, &location, true);
+                        // A second destination that is a *copy* is not a second
+                        // place the folders are read into — it is the first
+                        // one's repository, written again somewhere else. The
+                        // list showed both the same way, so which of them was
+                        // the offsite copy, and what it depended on, was not
+                        // visible from the job at all.
+                        if let Some(source) =
+                            destination.replicate_from.and_then(|s| self.data.destination(&s))
+                        {
+                            widgets::kv_with(ui, "", |ui| {
+                                widgets::neutral_badge(
+                                    ui,
+                                    &copy::job_detail::copy_of(&source.name),
+                                    Some(Icon::Copy),
+                                );
+                            });
+                        }
                     }
                     // A dangling id is the state that makes a job fail with
                     // nothing to point at, so it is shown rather than skipped.
@@ -531,7 +551,66 @@ impl App {
                     }
                 }
             }
+
+            self.copies_this_job_never_makes(ui, job);
         });
+    }
+
+    /// Copy destinations that feed from this job and are not in it.
+    ///
+    /// A copy is made by `sync-to` during a job's run, from the repository that
+    /// job wrote. So a copy destination pointed at one of this job's
+    /// destinations, but absent from the job itself, is never written to —
+    /// while its own editor shows the switch on, names the source, and warns
+    /// about the shared encryption key. Everything says "configured"; nothing
+    /// copies. That is the most dangerous state an offsite copy can be in, and
+    /// the job it should have been part of was the one place it was invisible.
+    fn copies_this_job_never_makes(&mut self, ui: &mut Ui, job: &Job) {
+        let orphans: Vec<(Uuid, String, String)> = self
+            .data
+            .destinations
+            .iter()
+            .filter(|d| !job.destination_ids.contains(&d.id))
+            .filter_map(|d| {
+                let source_id = d.replicate_from?;
+                if !job.destination_ids.contains(&source_id) {
+                    return None;
+                }
+                // Already covered by whichever job does include it.
+                if !self.data.jobs_using(&d.id).is_empty() {
+                    return None;
+                }
+                let source = self.data.destination(&source_id)?;
+                Some((d.id, d.name.clone(), source.name.clone()))
+            })
+            .collect();
+        if orphans.is_empty() {
+            return;
+        }
+
+        let mut add: Option<Uuid> = None;
+        ui.add_space(space::L);
+        for (id, name, source) in &orphans {
+            widgets::banner(
+                ui,
+                widgets::BannerKind::Danger,
+                &copy::job_detail::copy_not_running(name),
+                Some(&copy::job_detail::copy_not_running_body(name, source)),
+                |ui| {
+                    if Button::primary(copy::job_detail::ADD_COPY).compact().show(ui).clicked() {
+                        add = Some(*id);
+                    }
+                },
+            );
+            ui.add_space(space::S);
+        }
+
+        if let Some(destination_id) = add {
+            let mut updated = job.clone();
+            updated.destination_ids.push(destination_id);
+            let name = updated.name.clone();
+            self.ask(Intent::SaveJob(name), Request::JobUpdate { job: Box::new(updated) });
+        }
     }
 
     /// The live panel, while this job is running.
