@@ -16,7 +16,36 @@ Nothing yet.
 
 ## [0.11.1] - 2026-09-16
 
+### Added
+
+- **Superbackup can see its own releases.** The update module knew how to ask
+  GitHub what the newest version was and how to verify an archive against the
+  published `SHA256SUMS`; what it could not do was install one. It can now:
+  the incoming binary is written beside the current one and run with
+  `--version` *before* anything moves, so a build that will not start is found
+  while the working one is still in place; the outgoing executable is renamed
+  aside rather than deleted, which is both the rollback and the only reason
+  replacing a running program works on Windows at all; and a failure to move
+  the new one in puts the old one back. A copy installed by apt, dnf, Homebrew
+  or as a macOS bundle is never overwritten — it is told how to update the way
+  it was installed. Two of the six published targets were also missing from
+  the asset table, so Windows on ARM was offered the emulated x64 build with a
+  native one on the same release page, and ARM Linux was told nothing existed
+  for it.
+
 ### Fixed
+
+- **A job gave no sign that it had a second destination.** A copy-to
+  destination is filled from another destination in the same job rather than
+  from the sources, and the job row drew both as the same grey glyph — so a job
+  with a copy looked exactly like a job without one. Copies now carry a mark
+  and say what they are a copy of.
+
+- **A destination no job includes looked like an ordinary row.** It showed a
+  neutral "0 jobs" pill, which reads as a fact about the past rather than a
+  problem in the present: nothing is ever written to such a destination, and a
+  copy-to destination added on purpose can sit there for days receiving
+  nothing. It is a warning now, and says what to do about it.
 
 - **The pointer to your installation could be overwritten by a test.** The
   integration suite runs the real executable against a temporary root, and that

@@ -313,12 +313,30 @@ impl App {
                         if has("used_by") {
                             row.col(|ui| {
                                 let jobs = self.data.jobs_using(&destination.id);
-                                let response =
-                                    widgets::count_pill(ui, &copy::dest_used_by(jobs.len()));
-                                if !jobs.is_empty() {
+                                if jobs.is_empty() {
+                                    // Not a neutral count. Nothing is ever written to a
+                                    // destination no job includes, and the grey pill this
+                                    // used to be read as a fact about the past rather than
+                                    // a problem in the present.
+                                    let source = destination
+                                        .replicate_from
+                                        .and_then(|id| self.data.destination(&id))
+                                        .map(|d| d.name.clone());
+                                    widgets::badge(
+                                        ui,
+                                        t.warning,
+                                        Some(Icon::AlertTriangle),
+                                        copy::state::NO_JOBS,
+                                    )
+                                    .on_hover_text(copy::dest_unused(source.as_deref()));
+                                } else {
                                     let names: Vec<&str> =
                                         jobs.iter().map(|j| j.name.as_str()).collect();
-                                    response.on_hover_text(names.join("\n"));
+                                    widgets::count_pill(ui, &copy::dest_used_by(jobs.len()))
+                                        .on_hover_text(names.join(
+                                            "
+",
+                                        ));
                                 }
                             });
                         }

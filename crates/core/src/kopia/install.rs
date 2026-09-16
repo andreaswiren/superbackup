@@ -95,7 +95,7 @@ const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// The `User-Agent` GitHub requires; requests without one are rejected outright.
-fn user_agent() -> String {
+pub fn user_agent() -> String {
     format!("superbackup/{} (+https://github.com/andreaswiren/superbackup)", crate::VERSION)
 }
 
@@ -575,6 +575,34 @@ pub struct InstallOutcome {
 // The installer
 // ---------------------------------------------------------------------------
 
+/// An HTTP client that will only ever talk to the hosts it is given.
+///
+/// Shared by the kopia installer and by superbackup's own updater, which fetch
+/// from the same place under the same rules. One copy, because the redirect
+/// policy is the security boundary: a redirect that leaves the allowed hosts is
+/// refused by the policy itself, so no request is ever issued to the foreign
+/// host — not even a connection that would leak the fact that this machine is
+/// updating.
+pub fn release_client(allowed_hosts: Vec<String>) -> InstallResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(user_agent())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            match attempt.url().host_str() {
+                Some(h) if host_allowed(h, &allowed_hosts) => {
+                    if attempt.previous().len() > 8 {
+                        attempt.error("too many redirects")
+                    } else {
+                        attempt.follow()
+                    }
+                }
+                _ => attempt.stop(),
+            }
+        }))
+        .build()
+        .map_err(|e| InstallError::Network(e.to_string()))
+}
+
 /// Downloads, verifies and installs the managed kopia binary.
 #[derive(Debug, Clone)]
 pub struct KopiaInstaller {
@@ -614,27 +642,7 @@ impl KopiaInstaller {
             .map(|p| p.to_path_buf())
             .ok_or_else(|| InstallError::Io("the kopia install path has no parent".into()))?;
 
-        let allowed = allowed_hosts.clone();
-        let client = reqwest::Client::builder()
-            .user_agent(user_agent())
-            .connect_timeout(CONNECT_TIMEOUT)
-            // A redirect that leaves GitHub is refused by the policy itself, so
-            // no request is ever issued to the foreign host — not even a
-            // connection that would leak the fact that this machine is updating.
-            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-                match attempt.url().host_str() {
-                    Some(h) if host_allowed(h, &allowed) => {
-                        if attempt.previous().len() > 8 {
-                            attempt.error("too many redirects")
-                        } else {
-                            attempt.follow()
-                        }
-                    }
-                    _ => attempt.stop(),
-                }
-            }))
-            .build()
-            .map_err(|e| InstallError::Network(e.to_string()))?;
+        let client = release_client(allowed_hosts.clone())?;
 
         Ok(KopiaInstaller {
             client,
@@ -1224,14 +1232,35 @@ pub fn extract_kopia(
     kind: ArchiveKind,
     asset_name: &str,
 ) -> InstallResult<Vec<u8>> {
+    extract_executable(archive, kind, executable_member_name(), asset_name)
+}
+
+/// Pull one named executable out of a release archive.
+///
+/// Matched on the file name rather than the full path, because every release
+/// archive here wraps its payload in a directory named for the version and the
+/// target, and pinning that directory would make the extractor depend on how
+/// the archive was assembled. Every member is still put through
+/// [`safe_member_name`], which is what refuses `..`, absolute paths and drive
+/// prefixes — so a hostile archive cannot reach outside wherever the caller
+/// writes, whatever it names its entries.
+///
+/// Shared with superbackup's own updater: one extractor, one set of rules
+/// about what an archive is allowed to contain.
+pub fn extract_executable(
+    archive: &[u8],
+    kind: ArchiveKind,
+    member: &str,
+    asset_name: &str,
+) -> InstallResult<Vec<u8>> {
     let found = match kind {
-        ArchiveKind::Zip => extract_from_zip(archive)?,
-        ArchiveKind::TarGz => extract_from_targz(archive)?,
+        ArchiveKind::Zip => extract_from_zip(archive, member)?,
+        ArchiveKind::TarGz => extract_from_targz(archive, member)?,
     };
     found.ok_or_else(|| InstallError::ExecutableNotFound { asset: asset_name.to_string() })
 }
 
-fn extract_from_zip(archive: &[u8]) -> InstallResult<Option<Vec<u8>>> {
+fn extract_from_zip(archive: &[u8], member: &str) -> InstallResult<Option<Vec<u8>>> {
     let cursor = std::io::Cursor::new(archive);
     let mut zip = zip::ZipArchive::new(cursor)
         .map_err(|e| InstallError::Api(format!("the download is not a valid zip archive: {e}")))?;
@@ -1246,14 +1275,14 @@ fn extract_from_zip(archive: &[u8]) -> InstallResult<Option<Vec<u8>>> {
             continue;
         }
         let name = safe_member_name(&raw)?;
-        if result.is_none() && name.eq_ignore_ascii_case(executable_member_name()) {
+        if result.is_none() && name.eq_ignore_ascii_case(member) {
             result = Some(read_capped(&mut entry, MAX_BINARY_BYTES)?);
         }
     }
     Ok(result)
 }
 
-fn extract_from_targz(archive: &[u8]) -> InstallResult<Option<Vec<u8>>> {
+fn extract_from_targz(archive: &[u8], member: &str) -> InstallResult<Option<Vec<u8>>> {
     let decoder = flate2::read::GzDecoder::new(std::io::Cursor::new(archive));
     let mut tar = tar::Archive::new(decoder);
     let entries = tar
@@ -1273,7 +1302,7 @@ fn extract_from_targz(archive: &[u8]) -> InstallResult<Option<Vec<u8>>> {
             continue;
         }
         let name = safe_member_name(&raw)?;
-        if result.is_none() && name == executable_member_name() {
+        if result.is_none() && name == member {
             result = Some(read_capped(&mut entry, MAX_BINARY_BYTES)?);
         }
     }

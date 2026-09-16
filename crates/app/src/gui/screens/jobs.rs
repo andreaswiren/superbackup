@@ -573,13 +573,36 @@ impl App {
             ui.spacing_mut().item_spacing.x = space::XS;
             let shown = job.destination_ids.iter().take(3);
             for id in shown {
-                let (icon, name) = match self.data.destination(id) {
-                    Some(d) => (Icon::for_destination_kind(&d.kind), d.name.clone()),
-                    None => (Icon::HardDrive, copy::state::UNKNOWN.to_string()),
+                // A copy-to destination is not doing the same work as the
+                // rest: it is filled from another destination in this same
+                // job rather than from the sources. The row showed both as
+                // the same grey glyph, so a job with a second destination
+                // looked exactly like a job with one — "there is no way of
+                // seeing on a job if it has a secondary destination".
+                let (icon, name, copy_of) = match self.data.destination(id) {
+                    Some(d) => {
+                        let source = d
+                            .replicate_from
+                            .and_then(|s| self.data.destination(&s))
+                            .map(|s| s.name.clone());
+                        (Icon::for_destination_kind(&d.kind), d.name.clone(), source)
+                    }
+                    None => (Icon::HardDrive, copy::state::UNKNOWN.to_string(), None),
                 };
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
                 icon.paint(ui.painter(), rect, t.text_secondary);
-                response.on_hover_text(name);
+                match &copy_of {
+                    Some(source) => {
+                        // Small and to the right, so it reads as "and a copy
+                        // of that one" rather than as a second destination.
+                        let (badge, _) = ui.allocate_exact_size(Vec2::splat(11.0), Sense::hover());
+                        Icon::Copy.paint(ui.painter(), badge, t.text_muted);
+                        response.on_hover_text(copy::job_dest_copy_of(&name, source));
+                    }
+                    None => {
+                        response.on_hover_text(name);
+                    }
+                }
             }
             if job.destination_ids.len() > 3 {
                 widgets::text(

@@ -30,6 +30,7 @@
 //! job names, no telemetry of any kind. It is an unauthenticated GET of a
 //! public releases list.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -498,30 +499,53 @@ pub struct AssetChoice {
 /// The archive naming the release workflow produces:
 /// `superbackup-<version>-<target-triple>.<zip|tar.gz>`.
 pub fn target_triple() -> &'static str {
+    // Exactly the six targets `.github/workflows/release.yml` builds. Two were
+    // missing here: `aarch64-pc-windows-msvc`, which the workflow has built
+    // since the six-target release — so Windows on ARM was being offered the
+    // emulated x64 archive when a native one was sitting on the same release
+    // page — and `aarch64-unknown-linux-gnu`, which was not listed at all, so
+    // an ARM Linux machine was told no build existed for it.
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("windows", "x86_64") => "x86_64-pc-windows-msvc",
-        // Windows on ARM emulates x64; a native build is not published.
-        ("windows", "aarch64") => "x86_64-pc-windows-msvc",
+        ("windows", "aarch64") => "aarch64-pc-windows-msvc",
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
         ("macos", "aarch64") => "aarch64-apple-darwin",
         ("macos", "x86_64") => "x86_64-apple-darwin",
         _ => "",
     }
 }
 
+/// The triple to fall back to when the release has no native build.
+///
+/// Only one case exists and it is Windows on ARM, which runs x64 under
+/// emulation correctly. Offering nothing at all to a machine that could run the
+/// update is worse than offering a slower binary, and
+/// [`AssetChoice::emulated`] is how the interface says which happened.
+fn fallback_triple() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "aarch64") => "x86_64-pc-windows-msvc",
+        _ => "",
+    }
+}
+
 /// Pick the archive for this machine out of a release's asset list.
 pub fn select_asset(assets: &[(String, String)], version: &str) -> Option<AssetChoice> {
-    let triple = target_triple();
-    if triple.is_empty() {
-        return None;
-    }
     let ext = if cfg!(windows) { "zip" } else { "tar.gz" };
-    let wanted = format!("superbackup-{version}-{triple}.{ext}");
-    assets.iter().find(|(name, _)| name == &wanted).map(|(name, url)| AssetChoice {
-        file_name: name.clone(),
-        url: url.clone(),
-        emulated: cfg!(windows) && std::env::consts::ARCH == "aarch64",
-    })
+    let find = |triple: &str, emulated: bool| -> Option<AssetChoice> {
+        if triple.is_empty() {
+            return None;
+        }
+        let wanted = format!("superbackup-{version}-{triple}.{ext}");
+        assets.iter().find(|(name, _)| name == &wanted).map(|(name, url)| AssetChoice {
+            file_name: name.clone(),
+            url: url.clone(),
+            emulated,
+        })
+    };
+    // Native first, always. The fallback exists for a release that has no build
+    // for this architecture, not as a preference.
+    find(target_triple(), false).or_else(|| find(fallback_triple(), true))
 }
 
 /// Parse a `sha256sum`-style manifest into `(file name, lowercase hex digest)`.
@@ -630,5 +654,461 @@ not-a-digest  ignored.zip
             select_asset(&assets, "0.2.0").is_none(),
             "a release without a build for this machine must not install some other machine's"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Which copy of superbackup is this?
+// ---------------------------------------------------------------------------
+
+/// How this copy got onto the machine, and therefore how it may be replaced.
+///
+/// A binary under `/usr/bin` belongs to dpkg or rpm, one under `/opt/homebrew`
+/// belongs to Homebrew, and one inside a `.app` in `/Applications` is replaced
+/// by dragging a new bundle in. Overwriting any of those leaves the package
+/// manager's database describing a file that is no longer what it says, and the
+/// next upgrade through the proper channel silently puts the old version back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Installation {
+    /// A binary in a folder superbackup can write to: the portable archive, a
+    /// build tree, a per-user install. In-place replacement is both possible
+    /// and correct here.
+    SelfContained { exe: PathBuf, dir: PathBuf },
+    /// Installed by something that keeps a record of it.
+    PackageManaged { exe: PathBuf, manager: PackageManager },
+    /// Writable only by an administrator.
+    ///
+    /// Separate from `PackageManaged` because the remedy differs: this one
+    /// *could* be replaced, by a process with the rights.
+    NeedsElevation { exe: PathBuf, dir: PathBuf },
+}
+
+/// Who owns the file, when it is not us.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageManager {
+    SystemPackage,
+    Homebrew,
+    MacAppBundle,
+}
+
+impl PackageManager {
+    /// What to tell somebody who pressed "Install".
+    pub fn how_to_update(self) -> &'static str {
+        match self {
+            PackageManager::SystemPackage => {
+                "This copy was installed by your system's package manager. Update it with `apt upgrade superbackup` or `dnf upgrade superbackup`, so the package database keeps describing what is actually on disk."
+            }
+            PackageManager::Homebrew => {
+                "This copy was installed by Homebrew. Update it with `brew upgrade superbackup`."
+            }
+            PackageManager::MacAppBundle => {
+                "This copy is an application bundle in /Applications. Download the new disk image and replace the bundle, which is what macOS expects and what keeps its signature intact."
+            }
+        }
+    }
+}
+
+impl Installation {
+    /// Classify the running executable.
+    pub fn current() -> Result<Installation> {
+        let exe = std::env::current_exe()
+            .map_err(|e| Error::io("determining this program's own path", e))?;
+        Ok(Installation::of(&exe))
+    }
+
+    /// As [`Installation::current`], for a named path. Separate so the
+    /// classification can be tested against paths that do not exist here.
+    pub fn of(exe: &Path) -> Installation {
+        let exe = std::path::absolute(exe).unwrap_or_else(|_| exe.to_path_buf());
+        if let Some(manager) = package_manager_for(&exe.to_string_lossy().replace('\\', "/")) {
+            return Installation::PackageManaged { exe, manager };
+        }
+        let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| exe.clone());
+        if writable(&dir) {
+            Installation::SelfContained { exe, dir }
+        } else {
+            Installation::NeedsElevation { exe, dir }
+        }
+    }
+
+    pub fn exe(&self) -> &Path {
+        match self {
+            Installation::SelfContained { exe, .. }
+            | Installation::PackageManaged { exe, .. }
+            | Installation::NeedsElevation { exe, .. } => exe,
+        }
+    }
+
+    pub fn is_self_contained(&self) -> bool {
+        matches!(self, Installation::SelfContained { .. })
+    }
+
+    /// Why an in-place update is refused, when it is. `None` means it is not.
+    pub fn why_not(&self) -> Option<String> {
+        match self {
+            Installation::SelfContained { .. } => None,
+            Installation::PackageManaged { manager, .. } => Some(manager.how_to_update().into()),
+            Installation::NeedsElevation { dir, .. } => Some(format!(
+                "superbackup is installed in {}, which needs administrator rights to change. Download the installer for the new version, or move superbackup somewhere you own.",
+                dir.display()
+            )),
+        }
+    }
+}
+
+/// Match the paths that belong to somebody else.
+///
+/// Forward slashes only — the caller normalises, so one set of patterns covers
+/// every platform. Prefixes are whole path components, so `/usr/bin/` matches
+/// and a home directory called `usrbin` does not.
+fn package_manager_for(path: &str) -> Option<PackageManager> {
+    const SYSTEM: &[&str] = &["/usr/bin/", "/usr/local/bin/", "/usr/sbin/", "/bin/", "/snap/"];
+    const BREW: &[&str] = &["/opt/homebrew/", "/usr/local/cellar/", "/home/linuxbrew/"];
+
+    let lower = path.to_ascii_lowercase();
+    if lower.starts_with("/applications/") && lower.contains(".app/contents/") {
+        return Some(PackageManager::MacAppBundle);
+    }
+    // Before the system list: Homebrew's Linux prefix is under `/home` and its
+    // Intel-macOS one under `/usr/local`.
+    if BREW.iter().any(|p| lower.starts_with(p)) {
+        return Some(PackageManager::Homebrew);
+    }
+    if SYSTEM.iter().any(|p| lower.starts_with(p)) {
+        return Some(PackageManager::SystemPackage);
+    }
+    None
+}
+
+/// Can this process create a file in `dir`?
+///
+/// Tried rather than inferred. Windows has no permission bit that answers it:
+/// `%PROGRAMFILES%` is writable by an elevated process and not by this one, and
+/// the only reliable test is to attempt it. Anything going wrong counts as
+/// "no", which errs towards offering the installer rather than towards a
+/// half-finished update.
+fn writable(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let probe = dir.join(format!(".superbackup-write-probe-{}", std::process::id()));
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The swap
+// ---------------------------------------------------------------------------
+
+/// The suffix given to the outgoing executable.
+///
+/// It is kept, not deleted. On Windows it *cannot* be deleted while the process
+/// is running, and the rename is the only reason replacing a running executable
+/// works there at all: an open image file may be renamed, just not removed. On
+/// every platform it is also the rollback.
+pub const OUTGOING_SUFFIX: &str = ".superbackup-old";
+
+/// What a completed swap did, so the caller can say it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Applied {
+    /// Where the new executable now is — the same path as the old one.
+    pub installed: PathBuf,
+    /// The renamed previous executable, kept for rollback.
+    pub previous: PathBuf,
+    pub version: String,
+}
+
+/// Put a verified executable in place of the running one.
+///
+/// The caller is responsible for rules 1, 2 and 4 in the section above: no job
+/// running, the bytes already verified against `SHA256SUMS`, and a person
+/// having asked. This function is rule 3 — and it is written so that every
+/// failure leaves a working superbackup on disk:
+///
+/// * the incoming bytes are written beside the target and probed with
+///   `--version` *before* anything is moved, so a build that will not start is
+///   discovered while the old one is still in place;
+/// * the outgoing executable is renamed rather than deleted;
+/// * if the incoming file cannot then be moved into place, the outgoing one is
+///   put back before the error is returned.
+///
+/// The one thing it does not do is restart anything. Deciding when to stop a
+/// process that may be holding vault keys belongs to the caller.
+pub fn apply(target: &Path, incoming: &[u8], expected_version: &str) -> Result<Applied> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| Error::Config("the executable path has no parent directory".into()))?;
+
+    // Beside the target, never in the temporary directory: the final move must
+    // be a rename within one filesystem, and `%TEMP%` is routinely on another
+    // volume from `%PROGRAMFILES%` or a portable install on a USB disk.
+    let staged = dir.join(format!("superbackup-incoming-{}{}", std::process::id(), exe_suffix()));
+    let _ = std::fs::remove_file(&staged);
+    std::fs::write(&staged, incoming)
+        .map_err(|e| Error::io(format!("writing {}", staged.display()), e))?;
+    make_executable(&staged)?;
+
+    // Does it run at all? A truncated download that still matched its checksum
+    // is not possible, but a build for the wrong architecture, a missing system
+    // library, or a binary a security product has quarantined all are — and all
+    // of them are better discovered now than after the old one is gone.
+    if let Err(e) = probe_version(&staged, expected_version) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
+
+    let previous = previous_path(target);
+    let _ = std::fs::remove_file(&previous);
+    std::fs::rename(target, &previous).map_err(|e| {
+        let _ = std::fs::remove_file(&staged);
+        Error::io(format!("moving the current executable aside to {}", previous.display()), e)
+    })?;
+
+    if let Err(e) = std::fs::rename(&staged, target) {
+        // Put it back. Leaving no executable at all where superbackup is
+        // expected is the one outcome worse than not updating.
+        let _ = std::fs::rename(&previous, target);
+        let _ = std::fs::remove_file(&staged);
+        return Err(Error::io(format!("installing {}", target.display()), e));
+    }
+
+    Ok(Applied { installed: target.to_path_buf(), previous, version: expected_version.to_string() })
+}
+
+/// Where `apply` leaves the executable it replaced.
+pub fn previous_path(target: &Path) -> PathBuf {
+    let mut name = target.as_os_str().to_os_string();
+    name.push(OUTGOING_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// Remove an executable left behind by a previous update.
+///
+/// Called at startup rather than at the end of the update: on Windows the old
+/// image is still mapped while the process that was running it lives, so the
+/// only moment it can actually be deleted is from the *next* process. Failure
+/// is ignored — a stale file beside the executable is untidy, not harmful, and
+/// the next start tries again.
+pub fn clean_previous(target: &Path) {
+    let previous = previous_path(target);
+    if previous.exists() {
+        let _ = std::fs::remove_file(&previous);
+    }
+}
+
+/// Roll back to the executable `apply` moved aside.
+///
+/// For the person whose new version starts but does not work. Nothing calls it
+/// automatically: a build that runs cannot be judged by this code.
+pub fn roll_back(target: &Path) -> Result<()> {
+    let previous = previous_path(target);
+    if !previous.is_file() {
+        return Err(Error::Config(format!(
+            "there is no previous version to go back to at {}",
+            previous.display()
+        )));
+    }
+    let aside = rollback_scratch(target)?;
+    let _ = std::fs::rename(target, &aside);
+    std::fs::rename(&previous, target)
+        .map_err(|e| Error::io(format!("restoring {}", target.display()), e))?;
+    let _ = std::fs::remove_file(&aside);
+    Ok(())
+}
+
+fn rollback_scratch(target: &Path) -> Result<PathBuf> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| Error::Config("the executable path has no parent directory".into()))?;
+    Ok(dir.join(format!("superbackup-rollback-{}{}", std::process::id(), exe_suffix())))
+}
+
+fn exe_suffix() -> &'static str {
+    if cfg!(windows) {
+        ".exe"
+    } else {
+        ""
+    }
+}
+
+/// Make a freshly written file executable where that is a thing.
+fn make_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .map_err(|e| Error::io(format!("reading {}", path.display()), e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms)
+            .map_err(|e| Error::io(format!("making {} executable", path.display()), e))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+/// Run the staged binary with `--version` and check it says what it should.
+///
+/// `--version` is the safest thing to ask a new build: it opens no vault,
+/// starts no daemon, binds no socket, and reads no configuration, so a version
+/// that would misbehave against this machine's data cannot do so while being
+/// asked its name.
+fn probe_version(staged: &Path, expected: &str) -> Result<()> {
+    let mut command = std::process::Command::new(staged);
+    command.arg("--version");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // No console window for a probe the user did not ask to watch.
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command
+        .output()
+        .map_err(|e| Error::io(format!("running the new {} to check it", staged.display()), e))?;
+    if !output.status.success() {
+        return Err(Error::Config(format!(
+            "the downloaded superbackup did not start ({}), so it was not installed and the \
+             current version is untouched",
+            output.status
+        )));
+    }
+    let said = String::from_utf8_lossy(&output.stdout);
+    if !said.contains(expected) {
+        return Err(Error::Config(format!(
+            "the downloaded superbackup reports a different version from the one that was \
+             downloaded (expected {expected}, it says {}), so it was not installed",
+            said.trim().lines().next().unwrap_or("nothing").trim()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/update-tests")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::path::absolute(&dir).unwrap_or(dir)
+    }
+
+    /// A copy somebody else installed is never overwritten in place.
+    #[test]
+    fn a_package_managed_copy_is_left_to_its_package_manager() {
+        for (path, manager) in [
+            ("/usr/bin/superbackup", PackageManager::SystemPackage),
+            ("/usr/local/bin/superbackup", PackageManager::SystemPackage),
+            ("/snap/superbackup/current/bin/superbackup", PackageManager::SystemPackage),
+            ("/opt/homebrew/bin/superbackup", PackageManager::Homebrew),
+            ("/home/linuxbrew/.linuxbrew/bin/superbackup", PackageManager::Homebrew),
+            (
+                "/Applications/superbackup.app/Contents/MacOS/superbackup",
+                PackageManager::MacAppBundle,
+            ),
+        ] {
+            assert_eq!(package_manager_for(path), Some(manager), "{path}");
+            assert!(!manager.how_to_update().is_empty());
+        }
+    }
+
+    /// A path that merely resembles one of those is ours.
+    #[test]
+    fn a_path_that_only_resembles_a_package_path_is_still_ours() {
+        for path in [
+            "/home/me/usrbin/superbackup",
+            "/home/me/.local/share/superbackup/superbackup",
+            "C:/Users/Andreas/workspace/superbackup/dist/superbackup.exe",
+            // Not under /Applications, so not the bundle case.
+            "/Users/andreas/Downloads/superbackup.app/Contents/MacOS/superbackup",
+        ] {
+            assert_eq!(package_manager_for(path), None, "{path}");
+        }
+    }
+
+    /// Every refusal says what to do instead.
+    #[test]
+    fn a_refusal_always_says_what_to_do_instead() {
+        let managed = Installation::PackageManaged {
+            exe: PathBuf::from("/usr/bin/superbackup"),
+            manager: PackageManager::SystemPackage,
+        };
+        assert!(managed.why_not().expect("a reason").contains("apt upgrade"));
+        assert!(!managed.is_self_contained());
+
+        let elevated = Installation::NeedsElevation {
+            exe: PathBuf::from("C:/Program Files/superbackup/superbackup.exe"),
+            dir: PathBuf::from("C:/Program Files/superbackup"),
+        };
+        assert!(elevated.why_not().expect("a reason").contains("Program Files"));
+
+        let ours = Installation::SelfContained {
+            exe: PathBuf::from("/home/me/superbackup"),
+            dir: PathBuf::from("/home/me"),
+        };
+        assert_eq!(ours.why_not(), None);
+    }
+
+    /// A build that will not start never displaces the one that does.
+    ///
+    /// This is the failure the whole ordering exists for: the probe runs while
+    /// the current executable is still exactly where it was, so a bad download
+    /// costs a temporary file and nothing else.
+    #[test]
+    fn an_incoming_binary_that_does_not_run_leaves_the_old_one_in_place() {
+        let dir = scratch("bad-incoming");
+        let target = dir.join(format!("superbackup{}", exe_suffix()));
+        std::fs::write(&target, b"the working one").expect("write the current executable");
+
+        let err = apply(&target, b"not an executable at all", "9.9.9").unwrap_err();
+        let said = err.to_string();
+        assert!(
+            said.contains("did not start") || said.contains("running the new"),
+            "the reason must name the probe: {said}"
+        );
+
+        assert_eq!(
+            std::fs::read(&target).expect("the current executable must still be there"),
+            b"the working one",
+            "a failed update must not touch the executable that works"
+        );
+        assert!(
+            !previous_path(&target).exists(),
+            "nothing was moved aside, because nothing was replaced"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The previous executable is kept, and cleaning it up is idempotent.
+    #[test]
+    fn the_outgoing_executable_is_kept_and_cleaned_up_later() {
+        let dir = scratch("cleanup");
+        let target = dir.join("superbackup");
+        let previous = previous_path(&target);
+        std::fs::write(&target, b"current").expect("current");
+        std::fs::write(&previous, b"previous").expect("previous");
+
+        // Rolling back puts the kept one back where it belongs.
+        roll_back(&target).expect("roll back");
+        assert_eq!(std::fs::read(&target).expect("target"), b"previous");
+
+        // And with nothing to go back to, it says so rather than doing damage.
+        let err = roll_back(&target).unwrap_err().to_string();
+        assert!(err.contains("no previous version"), "{err}");
+        assert_eq!(std::fs::read(&target).expect("target"), b"previous");
+
+        // Cleaning up is safe whether or not there is anything to clean.
+        clean_previous(&target);
+        clean_previous(&target);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

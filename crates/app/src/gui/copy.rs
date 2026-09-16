@@ -63,6 +63,8 @@ pub mod action {
 }
 
 pub mod state {
+    /// A destination no job includes. Not "0 jobs": nothing is written here.
+    pub const NO_JOBS: &str = "No job writes here";
     pub const NEVER: &str = "Never";
     pub const NONE: &str = "— none —";
     pub const UNKNOWN: &str = "Unknown";
@@ -1209,8 +1211,27 @@ pub mod dest {
     pub const DELETE_COPY_PREFIX: &str = "Copy the prefix";
 }
 
+/// A destination in a job that is filled by copying another one in the same job.
+pub fn job_dest_copy_of(name: &str, source: &str) -> String {
+    format!("{name} — a copy of {source}, made during this job's run")
+}
 pub fn dest_used_by(count: usize) -> String {
     format::plural(count, "job", "jobs")
+}
+/// Why "0 jobs" beside a destination matters.
+///
+/// A destination no job includes is not idle, it is unreachable by anything:
+/// nothing is ever written there and no backup exists in it. As a neutral count
+/// that read as a fact about the past rather than a problem in the present —
+/// and a copy-to destination added on purpose sat at zero for days, receiving
+/// nothing, with the interface showing the same grey pill as every other row.
+pub fn dest_unused(replica_of: Option<&str>) -> String {
+    match replica_of {
+        Some(source) => format!(
+            "No job includes this destination, so nothing is ever copied here. Add it to the job that backs up {source} — a copy is made during that job's run, from the repository it writes."
+        ),
+        None => "No job includes this destination, so nothing is ever written here. Add it to a job, or delete it.".to_string(),
+    }
 }
 pub fn dest_folder_free(free: u64, total: u64) -> String {
     format!("{} free of {}", format::bytes(free), format::bytes(total))
