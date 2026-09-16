@@ -104,16 +104,20 @@ impl App {
             if let Some(paths) = &self.paths {
                 widgets::text(ui, copy::vault::LOCKED_VAULT_PATH, Type::Small, t.text_secondary);
                 ui.add_space(space::XXS);
-                widgets::elided(
-                    ui,
-                    &paths.config_dir.display().to_string(),
-                    Type::MonoSmall,
-                    t.text_muted,
-                    400.0,
-                    // From the left: two installations differ at the end of
-                    // the path, not the beginning.
-                    true,
-                );
+                // The installation's own folder, not the `config` inside it.
+                //
+                // Every installation's configuration directory ends
+                // `\config`, and this was elided from the left — so two
+                // installations rendered as
+                // `…\AppData\Roaming\superbackup\superbackup\config` and
+                // `…\Superbackup\awpc34-1fb8906e\config`, alike in the part
+                // that was kept and different only in the part that was cut.
+                // A person with two of them then types the passphrase of one
+                // into the other and is told it is wrong, which it is.
+                let shown = paths.root().unwrap_or_else(|| paths.config_dir.clone());
+                if widgets::path_link(ui, &shown, Type::MonoSmall, 400.0).clicked() {
+                    let _ = open::that_detached(&shown);
+                }
                 ui.add_space(space::L);
             }
 

@@ -12,7 +12,41 @@ rather than mangling it.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The master passphrase stopped working.** It had not: the window was asking
+  about a different installation. Superbackup opened the per-user default
+  whenever it was started without `--home`, so a person with two installations
+  — which is one accidental "Create a new vault…" away — got whichever one the
+  shortcut happened to name. The two are identical from the outside: same icon,
+  same window, same "Locked" screen, and the passphrase of one is simply wrong
+  for the other. It now reopens the installation it was last pointed at, and
+  falls back to the default only when that one is gone. The pointer is one line
+  in `~/.superbackup`, outside every installation, because a pointer kept
+  inside one of them is invisible from the other — `SUPERBACKUP_STATE_DIR`
+  moves it.
+
+- **The vault path could not tell two installations apart.** It was elided from
+  the left, and every installation's configuration folder ends `\config`, so
+  `…\AppData\Roaming\superbackup\superbackup\config` and
+  `…\Superbackupwpc34-1fb8906e\config` rendered alike in the part that was
+  kept and differed only in the part that was cut. It now shows the
+  installation's own folder, elided from the middle, in full on hover, and
+  opens it when clicked.
+
+- **Installing the background service did nothing.** Accepting the
+  administrator prompt started a second copy of superbackup with the rights to
+  install a service — which then asked the *running daemon* to install it. The
+  daemon has no such rights and refused, correctly. The prompt was raised,
+  approved, and spent on a round trip to a refusal. The elevated copy now does
+  the work itself.
+
+- **The failure flashed past unreadably.** The elevated copy is a console
+  program, so whatever it said was on screen for about a second and then closed
+  with the process: "a short windows popup that we have no way of seeing what
+  it says". It runs hidden now and writes down what it did; the window reads
+  that and says it properly.
+
 
 ## [0.11.0] - 2026-09-11
 

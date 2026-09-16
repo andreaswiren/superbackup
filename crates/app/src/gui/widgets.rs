@@ -2986,6 +2986,41 @@ pub fn link(ui: &mut Ui, label: &str) -> Response {
     response
 }
 
+/// A file path that opens the folder when clicked.
+///
+/// Shown elided to `width` and in full on hover, which is the part that
+/// matters: a path narrow enough to fit a column is a path with something cut
+/// out of it, and the piece that was cut is routinely the piece that
+/// identifies it. Two installations of superbackup both end `\config`, so
+/// eliding either end can leave two different folders looking identical.
+///
+/// Middle elision for that reason — the ends of a path are the drive and the
+/// leaf, and both are worth keeping.
+pub fn path_link(ui: &mut Ui, path: &std::path::Path, ty: Type, width: f32) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let full = path.display().to_string();
+    let width = width.min(ui.available_width().max(40.0));
+    let shown = elide_to_width(ui, &full, ty, width, false);
+    let g = galley(ui, shown, ty, t.text_link);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, g.size().y), Sense::click());
+    if ui.is_rect_visible(rect) {
+        ui.painter().galley(rect.min, g.clone(), t.text_link);
+        if response.hovered() {
+            let line = rect.left_bottom().y;
+            ui.painter().line_segment(
+                [Pos2::new(rect.left(), line), Pos2::new(rect.left() + g.size().x, line)],
+                Stroke::new(1.0_f32, t.text_link),
+            );
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.has_focus() {
+            focus_ring(ui, rect, CornerRadius::same(2));
+        }
+    }
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Link, true, &full));
+    response.on_hover_text(full)
+}
+
 /// The `⋯` overflow menu button, with its items supplied by the caller.
 pub fn overflow_menu<R>(
     ui: &mut Ui,

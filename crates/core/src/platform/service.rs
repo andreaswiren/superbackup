@@ -450,12 +450,90 @@ pub fn install(options: &ServiceOptions) -> Result<()> {
 ///
 /// Returns as soon as the prompt has been raised. It does not wait: the user
 /// may take a while to decide, and the caller is a window that has to keep
-/// drawing. Whether the service actually appeared is answered by asking for
-/// its status afterwards, which is the same question the interface asks anyway.
+/// drawing. What the elevated copy did is read back from
+/// [`read_install_report`], which it writes before it exits; whether the
+/// service actually appeared is answered by asking for its status, which is
+/// the same question the interface asks anyway.
 pub fn request_elevated_install() -> Result<()> {
     let executable = std::env::current_exe()
         .map_err(|e| Error::Service(format!("superbackup cannot find its own path: {e}")))?;
+    // Any previous attempt's note goes first, so that whatever is read back is
+    // about this prompt and not about one from last week.
+    clear_install_report();
     platform_impl::request_elevated_install(&executable)
+}
+
+/// What an elevated `service install` did, left where the process that raised
+/// the prompt can read it.
+///
+/// The elevated install runs in a process of its own — that is what elevation
+/// *is* on Windows — and that process owns a console window which appears for
+/// as long as the install takes and then closes. Whatever it said about why
+/// the install failed was on screen for about a second, unreadable, and then
+/// gone: "we accept the UAC prompt, then a short windows popup that we have no
+/// way of seeing what it says".
+///
+/// So it writes its outcome down instead, and the window that asked reads it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstallReport {
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub installed: bool,
+    /// One sentence, for a person. Not a log line.
+    pub message: String,
+}
+
+/// Where [`InstallReport`] is left.
+///
+/// In the person's own state folder, with the pointer to their last-opened
+/// installation — not in `%PROGRAMDATA%`. A machine-wide folder would survive
+/// the one case this does not (an administrator prompt approved with *another*
+/// account, whose profile is then where the report lands), but everything
+/// superbackup knows about a person belongs to that person, and one
+/// degradation in an uncommon case is a smaller price than a machine-wide
+/// folder holding per-user facts that two accounts would overwrite for each
+/// other.
+///
+/// When the report is missing — that case, or an install from months ago — the
+/// window falls back to what it can always do: ask whether the service is
+/// there, and say so.
+///
+/// It holds no secret: a boolean and a sentence about a service.
+pub fn install_report_path() -> Result<PathBuf> {
+    crate::paths::state_dir()
+        .map(|dir| dir.join("last-service-install.json"))
+        .ok_or_else(|| Error::Service("this account has no home directory".into()))
+}
+
+/// Record what an elevated install did. Never fails a working install.
+pub fn write_install_report(installed: bool, message: impl Into<String>) {
+    let report = InstallReport { at: chrono::Utc::now(), installed, message: message.into() };
+    let Ok(path) = install_report_path() else { return };
+    let Some(dir) = path.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(&report) {
+        let _ = crate::paths::write_atomic(&path, &json);
+    }
+}
+
+/// The last recorded install outcome, if there is one.
+///
+/// Every failure reads as "nothing was recorded": a missing file, one written
+/// by a version that spelled the fields differently, one left behind by an
+/// install months ago. The caller decides whether it is recent enough to be
+/// about the prompt it just raised — which is why the timestamp is in there.
+pub fn read_install_report() -> Option<InstallReport> {
+    let path = install_report_path().ok()?;
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Throw away any previous report, so the next one read is this attempt's.
+pub fn clear_install_report() {
+    if let Ok(path) = install_report_path() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Remove the service. Stops it first where the platform requires it.
@@ -609,7 +687,7 @@ mod platform_impl {
     pub fn request_elevated_install(executable: &Path) -> Result<()> {
         use windows::core::PCWSTR;
         use windows::Win32::UI::Shell::ShellExecuteW;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
         let verb = crate::platform::win32::wide("runas");
         let file = crate::platform::win32::wide(executable);
@@ -625,7 +703,14 @@ mod platform_impl {
                 PCWSTR(file.as_ptr()),
                 PCWSTR(args.as_ptr()),
                 PCWSTR::null(),
-                SW_SHOWNORMAL,
+                // Hidden, because there is nothing to look at. The elevated
+                // copy is a console program, so this is a console window that
+                // opens, prints one line and closes with the process — a
+                // message on screen for about a second, which is worse than no
+                // message at all, because it tells the person something was
+                // said and not what. It writes an `InstallReport` instead, and
+                // the window that raised the prompt reads that.
+                SW_HIDE,
             )
         };
 

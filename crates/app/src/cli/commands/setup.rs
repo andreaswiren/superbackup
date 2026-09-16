@@ -415,12 +415,25 @@ fn service_install(ctx: &mut Ctx, args: ServiceInstallArgs) -> CliResult<Outcome
             "the running instance takes no scope parameter on `service.install`",
         ));
     }
-    if !platform::service::is_elevated() {
-        ctx.ui.warn(
-            "installing a service needs administrator rights. If this fails, run it from an \
-             elevated terminal.",
-        );
+    // Elevated: install it here, rather than asking the daemon to.
+    //
+    // This process usually *is* the administrator prompt — the window raises
+    // one against `superbackup service install`, Windows starts a second copy
+    // with the rights, and this is that copy. Handing the work to the running
+    // daemon gives it to a process that has not got those rights, and the
+    // daemon refuses, correctly, with "installing the background service needs
+    // administrator rights". The prompt was raised, approved, and spent on a
+    // round trip to a refusal.
+    //
+    // That is what "we accept the UAC prompt and nothing happens" was: the one
+    // process on the machine able to do the work asking one that could not.
+    if platform::service::is_elevated() {
+        return service_install_here(ctx);
     }
+    ctx.ui.warn(
+        "installing a service needs administrator rights. If this fails, run it from an \
+         elevated terminal.",
+    );
     let daemon = Daemon::connect(ctx, Start::Never)?;
     let service = reply!(daemon, Request::ServiceInstall {}, Service)?;
     if service.installed {
@@ -435,6 +448,42 @@ fn service_install(ctx: &mut Ctx, args: ServiceInstallArgs) -> CliResult<Outcome
         Outcome::data(service)
     } else {
         Outcome::negative(service)
+    }
+}
+
+/// Install the service in this process, and write down what happened.
+///
+/// The report is for the window that raised the prompt: this process has a
+/// console of its own that opens, prints, and closes with the process, which
+/// is a message on screen for about a second. See
+/// [`platform::service::InstallReport`].
+fn service_install_here(ctx: &mut Ctx) -> CliResult<Outcome> {
+    use platform::service;
+
+    let options = service::ServiceOptions::current(&ctx.paths).map_err(CliError::from)?;
+    if let Err(e) = service::install(&options) {
+        service::write_install_report(false, e.to_string());
+        return Err(CliError::from(e));
+    }
+
+    // Started here rather than left to the next boot: an installed service
+    // that is not running looks identical to a broken one.
+    let start = service::start(&options.name, options.scope);
+    let status = service::status(&options.name, options.scope).map_err(CliError::from)?;
+    let message = match (&start, status.installed) {
+        (Ok(()), _) => "The background service is installed and running.".to_string(),
+        (Err(e), true) => format!(
+            "The background service was installed but did not start: {e}. It will start at the              next boot."
+        ),
+        (Err(e), false) => format!("The background service was not installed: {e}"),
+    };
+    service::write_install_report(status.installed, &message);
+
+    ctx.ui.line(&message);
+    if status.installed {
+        Outcome::data(status)
+    } else {
+        Outcome::negative(status)
     }
 }
 

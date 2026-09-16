@@ -56,6 +56,33 @@ impl Paths {
         })
     }
 
+    /// The layout an interactive launch should open.
+    ///
+    /// [`Paths::discover`] answers "where does this user's installation live
+    /// by default", which is the right answer exactly once — until somebody
+    /// runs with `--home` and then double-clicks the executable. The two
+    /// installations look identical from the outside: same icon, same window,
+    /// same "Locked" screen, same elided path with the distinguishing part cut
+    /// off the front. The master passphrase of one is simply wrong for the
+    /// other, so the application asks for a passphrase that cannot work and
+    /// says "That passphrase did not work. Passphrases are case sensitive."
+    ///
+    /// So the root of an explicitly chosen installation is remembered, and a
+    /// launch with no `--home` reopens it. The pointer is followed only when
+    /// it still names a vault: an installation that was deleted or moved must
+    /// not leave the application unable to start at all.
+    pub fn discover_last_used() -> Result<Paths> {
+        // An explicit environment override outranks a remembered choice: it is
+        // this launch speaking, not the last one.
+        if std::env::var_os(ENV_HOME).is_some() {
+            return Paths::discover();
+        }
+        match remembered_root() {
+            Some(root) => Ok(Paths::rooted_at(root, false)),
+            None => Paths::discover(),
+        }
+    }
+
     /// Paths for the machine-wide service instance, which must not depend on
     /// any interactive user profile.
     pub fn for_service() -> Result<Paths> {
@@ -99,6 +126,21 @@ impl Paths {
             cache_dir: root.join("cache"),
             service_scope,
         }
+    }
+
+    /// The single directory this layout is rooted at, when it has one.
+    ///
+    /// A rooted layout keeps config, data, logs and cache in one folder — the
+    /// shape [`Paths::rooted_at`] produces, and what `--home` names. The
+    /// per-user default has no such folder: on Windows the configuration is in
+    /// `%APPDATA%` and the data in `%LOCALAPPDATA%`, which is two trees and no
+    /// single root to write down.
+    pub fn root(&self) -> Option<PathBuf> {
+        let parent = self.config_dir.parent()?;
+        [&self.data_dir, &self.log_dir, &self.cache_dir]
+            .iter()
+            .all(|dir| dir.parent() == Some(parent))
+            .then(|| parent.to_path_buf())
     }
 
     /// Create every directory, with restrictive permissions where the platform
@@ -278,6 +320,93 @@ pub fn harden_dir(path: &Path) -> Result<()> {
 }
 
 /// Same idea, for a single file (0600 on Unix).
+/// The file naming the configuration root last opened on purpose.
+///
+/// One line, one absolute path, no secrets — a path is not one, and this file
+/// is read before anything is unlocked.
+pub const LAST_ROOT_FILE: &str = "last-home";
+
+/// Overrides [`state_dir`]. For tests, portable installs, and anyone who keeps
+/// their profile somewhere the defaults do not expect.
+pub const ENV_STATE_DIR: &str = "SUPERBACKUP_STATE_DIR";
+
+/// Where superbackup keeps the few facts that belong to the *user* rather than
+/// to any one installation.
+///
+/// `~/.superbackup` on every platform, and the same folder whichever
+/// installation is running — which is the whole point. The pointer to the
+/// last-opened root cannot live inside an installation, because it is what
+/// gets consulted when no installation has been named yet: putting it in one
+/// of them makes it invisible from the other, which is exactly the situation
+/// it exists to resolve.
+///
+/// Not `%PROGRAMDATA%` either, tempting as a machine-wide folder looks. Which
+/// installation *this person* last opened is a fact about this person; two
+/// accounts on one PC would overwrite each other's answer, and the service
+/// never needs it, because a service is given its root explicitly or uses
+/// [`Paths::for_service`].
+///
+/// `SUPERBACKUP_STATE_DIR` overrides it.
+pub fn state_dir() -> Option<PathBuf> {
+    match std::env::var_os(ENV_STATE_DIR) {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => home_relative(".superbackup"),
+    }
+}
+
+/// Record which configuration root was opened, so the next bare launch finds
+/// it again. Best effort by design — see [`remember_root_in`].
+pub fn remember_root(root: &Path) -> Result<()> {
+    match state_dir() {
+        Some(dir) => remember_root_in(&dir, root),
+        None => Ok(()),
+    }
+}
+
+/// The remembered root, when there is one and it still holds a vault.
+pub fn remembered_root() -> Option<PathBuf> {
+    remembered_root_in(&state_dir()?)
+}
+
+/// As [`remember_root`], against a named directory. Split out for the tests,
+/// which must not write into the developer's own installation.
+///
+/// Writing the pointer is never worth failing a launch over: the worst case is
+/// that the next bare launch opens the default installation, which is where it
+/// would have gone anyway. So a directory that cannot be created is not an
+/// error — but a write that fails once the directory exists is, because that
+/// is a disk saying something the caller should hear.
+pub fn remember_root_in(dir: &Path, root: &Path) -> Result<()> {
+    if std::fs::create_dir_all(dir).is_err() {
+        return Ok(());
+    }
+    let _ = harden_dir(dir);
+    let path = dir.join(LAST_ROOT_FILE);
+    let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    write_atomic(&path, root.to_string_lossy().trim().as_bytes())?;
+    harden_file(&path)
+}
+
+/// As [`remembered_root`], against a named directory.
+///
+/// Every failure is "no remembered root": a missing file, an unreadable one,
+/// a blank line, a path that no longer exists, a path that exists but holds no
+/// vault. The pointer is a convenience, and a convenience that can stop the
+/// application from starting is a defect.
+pub fn remembered_root_in(dir: &Path) -> Option<PathBuf> {
+    let recorded = std::fs::read_to_string(dir.join(LAST_ROOT_FILE)).ok()?;
+    let recorded = recorded.trim();
+    if recorded.is_empty() {
+        return None;
+    }
+    let root = PathBuf::from(recorded);
+    // A vault, not merely a folder. An installation that was deleted, renamed,
+    // or lives on a drive that is not mounted this morning leaves a pointer
+    // behind, and following it would replace "your passphrase does not work"
+    // with "there is nothing here at all" — a different way to be stuck.
+    crate::crypto::file::VaultFile::exists(&Paths::rooted_at(&root, false)).then_some(root)
+}
+
 pub fn harden_file(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -405,6 +534,130 @@ fn normalised_key(dir: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    use std::path::{Path, PathBuf};
+
+    /// A scratch directory that cleans up after itself.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("sb-paths-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        dir
+    }
+
+    /// Give `root` a vault file, so it counts as an installation.
+    fn install_at(root: &Path) {
+        let paths = super::Paths::rooted_at(root, false);
+        std::fs::create_dir_all(&paths.config_dir).expect("config dir");
+        std::fs::write(paths.vault_file(), b"not a real vault, but a real file").expect("vault");
+    }
+
+    /// The pointer survives a round trip, and names the installation.
+    ///
+    /// This is what stops the second installation from swallowing the
+    /// passphrase. Two of them look identical from the outside — same icon,
+    /// same window, same "Locked" screen — and the master passphrase of one is
+    /// simply wrong for the other, so a launch that lands on the wrong one
+    /// presents as a passphrase that has stopped working.
+    #[test]
+    fn the_last_opened_installation_is_remembered() {
+        let dir = scratch("remember");
+        let state = dir.join("state");
+        let root = dir.join("somewhere-else");
+        install_at(&root);
+
+        assert_eq!(super::remembered_root_in(&state), None, "nothing recorded yet");
+        super::remember_root_in(&state, &root).expect("record it");
+        assert_eq!(super::remembered_root_in(&state).as_deref(), Some(root.as_path()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pointer to an installation that is no longer there is ignored.
+    ///
+    /// A deleted folder, a renamed one, an external drive that is not plugged
+    /// in this morning. Following the pointer anyway would replace "your
+    /// passphrase does not work" with "there is nothing here at all", which is
+    /// a different way to be stuck — so it falls back to the default, which is
+    /// where a launch with no pointer goes anyway.
+    #[test]
+    fn a_pointer_to_nothing_is_ignored() {
+        let dir = scratch("stale");
+        let state = dir.join("state");
+        let root = dir.join("was-here");
+        install_at(&root);
+        super::remember_root_in(&state, &root).expect("record it");
+
+        std::fs::remove_dir_all(&root).expect("remove the installation");
+        assert_eq!(
+            super::remembered_root_in(&state),
+            None,
+            "a folder with no vault in it is not an installation"
+        );
+
+        // A folder that exists but holds no vault is equally not one.
+        std::fs::create_dir_all(&root).expect("empty folder");
+        assert_eq!(super::remembered_root_in(&state), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A blank or unreadable pointer is "no pointer", never an error.
+    #[test]
+    fn a_damaged_pointer_is_not_an_error() {
+        let dir = scratch("damaged");
+        let state = dir.join("state");
+        std::fs::create_dir_all(&state).expect("state dir");
+        std::fs::write(
+            state.join(super::LAST_ROOT_FILE),
+            b"   
+  ",
+        )
+        .expect("blank");
+        assert_eq!(super::remembered_root_in(&state), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The recorded path is absolute, whatever was passed in.
+    ///
+    /// The next launch happens from a different working directory — a Start
+    /// menu shortcut, a login, a service — where a relative path names a
+    /// folder that does not exist.
+    #[test]
+    fn the_recorded_path_is_absolute() {
+        let dir = scratch("absolute");
+        let state = dir.join("state");
+        let root = dir.join("rooted");
+        install_at(&root);
+        super::remember_root_in(&state, &root).expect("record it");
+        let recorded = std::fs::read_to_string(state.join(super::LAST_ROOT_FILE)).expect("read");
+        assert!(Path::new(recorded.trim()).is_absolute(), "{recorded}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only a layout with one folder has a root to write down.
+    ///
+    /// The per-user default has not: on Windows the configuration lives in
+    /// `%APPDATA%` and the data in `%LOCALAPPDATA%`, which is two trees. There
+    /// is nothing to record, and nothing needs recording, because that is
+    /// where a launch with no pointer goes anyway.
+    #[test]
+    fn only_a_single_rooted_layout_has_a_root() {
+        let rooted = super::Paths::rooted_at("/tmp/sb-root-check", false);
+        assert_eq!(
+            rooted.root().as_deref(),
+            Some(std::path::absolute("/tmp/sb-root-check").unwrap().as_path()),
+        );
+
+        let split = super::Paths {
+            config_dir: PathBuf::from("/one/config"),
+            data_dir: PathBuf::from("/two/data"),
+            log_dir: PathBuf::from("/two/logs"),
+            cache_dir: PathBuf::from("/three/cache"),
+            service_scope: false,
+        };
+        assert_eq!(split.root(), None, "four folders in three trees have no single root");
+    }
 
     /// The endpoint decides which daemon a client talks to, so two spellings
     /// of one directory must not produce two endpoints.

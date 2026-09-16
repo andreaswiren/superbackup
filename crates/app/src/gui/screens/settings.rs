@@ -22,6 +22,13 @@ use crate::gui::nav::{Route, SettingsSection};
 use crate::gui::theme::{self, radius, space, Type};
 use crate::gui::widgets::{self, Button, StepState};
 
+/// How long to keep looking for the elevated install's note.
+///
+/// Long enough for somebody to find the administrator prompt behind another
+/// window and read it, and short enough that a declined prompt — which leaves
+/// no note — stops being watched for in the same sitting.
+const ELEVATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
 #[derive(Default)]
 pub struct State {
     /// The authenticator prompt that is up while a passkey is being enrolled.
@@ -42,6 +49,12 @@ pub struct State {
     /// Which destination the repository half of the check runs against.
     /// `None` means "version only", which needs no unlocked vault.
     pub kopia_probe_destination: Option<Uuid>,
+    /// When the administrator prompt for the service install went up.
+    ///
+    /// The elevated copy is a separate process that writes down what it did
+    /// and exits; this is what says which note is about this attempt, and how
+    /// long to keep looking before giving up on one arriving at all.
+    pub service_elevating_since: Option<std::time::Instant>,
     /// The machine label being edited.
     ///
     /// This has to be held here rather than rebuilt from the snapshot each
@@ -153,6 +166,9 @@ impl App {
     fn settings_general(&mut self, ui: &mut Ui) {
         let t = theme::tokens(ui.ctx());
         let mut changed = false;
+        // The elevated install answers in its own time, in another process, so
+        // the frame is what notices rather than the button.
+        self.poll_service_install(ui.ctx());
         let current = self.data.machine_label().to_string();
         // Start from what the daemon reports, then keep the user's edit until
         // it is saved or abandoned.
@@ -994,6 +1010,43 @@ impl App {
         }
     }
 
+    /// Report what the elevated install did, once it has done it.
+    ///
+    /// It runs in another process with a console that closes with it, so its
+    /// own output is a message on screen for about a second. It leaves a note
+    /// instead. This looks for one until the attempt is plainly over: the
+    /// person may sit on the administrator prompt for a while, and a prompt
+    /// that is declined leaves no note at all, which is why there is a
+    /// deadline rather than a wait.
+    fn poll_service_install(&mut self, ctx: &egui::Context) {
+        use superbackup_core::platform::service;
+
+        let Some(since) = self.screens.settings.service_elevating_since else {
+            return;
+        };
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+
+        if let Some(report) = service::read_install_report() {
+            self.screens.settings.service_elevating_since = None;
+            if report.installed {
+                self.toasts.success(report.message);
+            } else {
+                self.toasts.danger(copy::set::SERVICE_INSTALL, report.message);
+            }
+            self.ask(Intent::Service, Request::ServiceStatus {});
+            return;
+        }
+
+        if since.elapsed() > ELEVATION_DEADLINE {
+            self.screens.settings.service_elevating_since = None;
+            // Silent, because the ordinary way to get here is declining the
+            // prompt — which the person did on purpose and does not need told
+            // about. The status line beside the Install button already says
+            // the service is not there.
+            self.ask(Intent::Service, Request::ServiceStatus {});
+        }
+    }
+
     /// The passkeys enrolled on this machine, and the way to add one.
     ///
     /// Absent rather than disabled where the platform cannot do it: a greyed
@@ -1115,6 +1168,7 @@ impl App {
                 // happening and then re-ask, rather than reporting a success
                 // that has not happened yet.
                 self.toasts.info(copy::service_elevating());
+                self.screens.settings.service_elevating_since = Some(std::time::Instant::now());
                 self.ask(Intent::Service, Request::ServiceStatus {});
             }
             // A declined prompt lands here too, and reads as what it is.

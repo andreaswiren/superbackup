@@ -108,6 +108,10 @@ fn main() -> ExitCode {
         }
     };
 
+    if matches!(parsed.command, None | Some(cli::Command::Gui(_)) | Some(cli::Command::Daemon(_))) {
+        remember_this_root(&paths, &global);
+    }
+
     match parsed.command {
         // No subcommand: the tray, the scheduler and the IPC server, together.
         //
@@ -214,11 +218,42 @@ fn main() -> ExitCode {
 
 /// Honour `--home` / `SUPERBACKUP_HOME`, and pick the per-user or the
 /// machine-wide layout.
+///
+/// With nothing named, an interactive launch reopens the installation it was
+/// last pointed at rather than the default one. Two installations are
+/// indistinguishable from the outside — same icon, same window, same "Locked"
+/// screen — and the master passphrase of one is simply wrong for the other, so
+/// landing on the wrong one presents as a passphrase that has stopped working.
+/// See [`Paths::discover_last_used`].
 fn resolve_paths(global: &cli::GlobalArgs) -> superbackup_core::Result<Paths> {
     let paths = match (&global.home, global.service) {
         (Some(root), service) => Paths::rooted_at(root.clone(), service),
         (None, true) => Paths::for_service()?,
-        (None, false) => Paths::discover()?,
+        (None, false) => Paths::discover_last_used()?,
     };
     Ok(paths)
+}
+
+/// Write down which installation this launch opened, for the next one that is
+/// given no `--home`.
+///
+/// Only for the surfaces that *are* the application — the tray, the window,
+/// the daemon. A one-shot `superbackup status --home X` is a question about an
+/// installation, not a move to it, and should not change where tomorrow's
+/// double-click lands.
+///
+/// Only for a layout with a single root, which the per-user default has not:
+/// its configuration and its data live in different trees, so there is nothing
+/// to write down — and nothing needs writing down, because that is where a
+/// launch with no pointer goes anyway.
+///
+/// Never for the service, which is given its root by whoever installed it.
+fn remember_this_root(paths: &Paths, global: &cli::GlobalArgs) {
+    if global.service || paths.service_scope {
+        return;
+    }
+    let Some(root) = paths.root() else { return };
+    if let Err(e) = superbackup_core::paths::remember_root(&root) {
+        tracing::debug!(error = %e, "could not record the configuration root");
+    }
 }
