@@ -417,7 +417,47 @@ pub fn install(options: &ServiceOptions) -> Result<()> {
             options.executable.display()
         )));
     }
+    installable(options)?;
     platform_impl::install(options)
+}
+
+/// Refuse to install a service that cannot possibly run.
+///
+/// The service starts a daemon against the root its arguments name, and a
+/// daemon opens a vault before it does anything else — deliberately, because
+/// creating one instead would be a way to destroy every key on the machine by
+/// accident. With no vault there, the service installs, starts, exits, and the
+/// Service Control Manager reports a service that will not stay running.
+///
+/// That is a worse outcome than a refusal: an installed-but-broken service
+/// looks like a superbackup fault rather than a step nobody has taken, and it
+/// sits in the SCM until somebody removes it by hand. So the question is asked
+/// before the service exists rather than after.
+fn installable(options: &ServiceOptions) -> Result<()> {
+    let root = service_root_for(options)?;
+    if crate::crypto::file::VaultFile::exists(&root) {
+        return Ok(());
+    }
+    Err(Error::Service(format!(
+        "The background service would run against {}, and there is no vault there — it would          start, find nothing to unlock, and stop again. The service runs as the computer          rather than as you, so it does not use the vault in your own profile. Keep running          backups from superbackup while you are signed in.",
+        root.config_dir.display()
+    )))
+}
+
+/// The layout the installed service will actually resolve at startup.
+///
+/// Derived from the arguments it is being given rather than assumed, because
+/// those arguments are the only thing the started process sees.
+fn service_root_for(options: &ServiceOptions) -> Result<Paths> {
+    let mut args = options.args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--home" {
+            if let Some(root) = args.next() {
+                return Ok(Paths::rooted_at(root, true));
+            }
+        }
+    }
+    Paths::for_service()
 }
 
 /// Ask the operating system to install the service with administrator rights.

@@ -12,6 +12,10 @@ rather than mangling it.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.11.1] - 2026-09-16
+
 ### Fixed
 
 - **The master passphrase stopped working.** It had not: the window was asking
