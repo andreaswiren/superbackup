@@ -67,6 +67,14 @@ pub struct App {
     pub modal: Option<Modal>,
     /// The onboarding flow, when `config.json` did not exist.
     pub onboarding: Option<screens::onboarding::Onboarding>,
+    /// The newer version this window has already mentioned.
+    ///
+    /// A check runs on a timer, and a toast on every poll saying the same
+    /// thing is a toast people stop reading — which is how the one that
+    /// mattered gets missed.
+    pub update_announced: Option<String>,
+    /// Whether this window has asked about updates yet.
+    pub update_asked: bool,
     /// The action to perform once the vault opens.
     pub pending: Option<Pending>,
     /// The change that was refused for want of a confirmation, to be re-sent
@@ -138,6 +146,8 @@ impl App {
         ctx.set_style(theme::style(&tokens));
 
         App {
+            update_announced: None,
+            update_asked: false,
             data: Data::new(),
             nav: Nav::new(),
             toasts: Toasts::default(),
@@ -299,6 +309,21 @@ impl App {
         if self.data.lagged {
             self.data.lagged = false;
             self.ask(Intent::Status, Request::Status {});
+        }
+
+        // Once per window, and never before the daemon has answered anything:
+        // asking on the first frame would race the connection and report a
+        // failure about a socket that was still being opened.
+        //
+        // `force: false`, so the daemon applies the weekly interval rather than
+        // this window doing it. A machine whose tray is opened ten times a day
+        // must not make ten requests, and the interval is a setting that lives
+        // with the daemon's configuration, not in a window's memory.
+        if !self.update_asked && !self.data.loading && self.data.link_up {
+            self.update_asked = true;
+            if self.data.settings.self_update.enabled {
+                self.ask(Intent::UpdateCheck, Request::AppUpdateCheck { force: false });
+            }
         }
     }
 
@@ -632,6 +657,27 @@ impl App {
                 self.modal = None;
                 self.toasts.success(reply.outcome.detail.clone());
                 self.scan_git();
+            }
+            (Intent::UpdateCheck, Reply::AppUpdate(reply)) => {
+                self.screens.about.checking = false;
+                self.screens.about.update = Some((*reply).clone());
+                // Told once, where it cannot be missed, and only for a version
+                // this window has not already mentioned. A tray that says the
+                // same thing on every poll is a tray people stop reading.
+                if let Some(version) = reply.status.newer_version() {
+                    if self.update_announced.as_deref() != Some(version) {
+                        self.update_announced = Some(version.to_string());
+                        self.toasts.info(copy::update::available(version));
+                    }
+                }
+            }
+            (Intent::UpdateInstall, Reply::AppUpdate(reply)) => {
+                self.screens.about.installing = false;
+                self.screens.about.restart_required = reply.restart_required;
+                self.screens.about.update = Some((*reply).clone());
+                if reply.restart_required {
+                    self.toasts.success(copy::update::RESTART_TITLE);
+                }
             }
             (Intent::GitClients, Reply::GitClients(reply)) => {
                 if let Some(Modal::GitInit(open)) = &mut self.modal {

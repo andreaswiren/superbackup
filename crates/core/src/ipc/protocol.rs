@@ -1032,6 +1032,24 @@ pub struct StoppedReply {
     pub stopped: Vec<Uuid>,
 }
 
+/// What superbackup knows about its own version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppUpdateReply {
+    /// The running build.
+    pub current: String,
+    /// The check's outcome, in the shape `update::UpdateStatus` serialises to.
+    pub status: crate::update::UpdateStatus,
+    /// When the last check completed, successfully or not.
+    pub checked_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether this copy can replace itself, and why not when it cannot.
+    pub installable: bool,
+    pub blocked: Option<String>,
+    /// Set by `app.update_install` once the swap is done: superbackup has to
+    /// be restarted to be running it.
+    #[serde(default)]
+    pub restart_required: bool,
+}
+
 /// One forge client, and whether it is here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitClientInfo {
@@ -1558,6 +1576,8 @@ replies! {
         "Work was accepted; follow it with subscribe or status."
     "stopped" Stopped(StoppedReply)
         "The runs that were asked to stop."
+    "app_update" AppUpdate(AppUpdateReply)
+        "Whether a newer superbackup exists, and whether this copy can take it."
     "git_clients" GitClients(GitClientsReply)
         "Which forge command-line clients this machine has."
     "destinations" Destinations(DestinationsReply)
@@ -2712,6 +2732,20 @@ protocol! {
                 destination: String = "Destination name or id.",
                 snapshot: String = "Snapshot id, as reported by `snapshot.list`.",
                 path: String = "Path of the file inside the snapshot.",
+            }
+
+        "app.update_check" AppUpdateCheck => app_update_check -> AppUpdate(AppUpdateReply)
+            flags []
+            doc "Ask whether a newer superbackup has been released. One unauthenticated GET of a public releases list: no machine id, no configuration, no telemetry of any kind - see docs/compliance/PRIVACY.md. Never fails in a way a caller must handle: a machine that cannot reach GitHub still backs up perfectly well. With `force`, it asks now rather than waiting for the configured interval."
+            params {
+                force: bool = "Ask now, ignoring how recently the last check was.",
+            }
+
+        "app.update_install" AppUpdateInstall => app_update_install -> AppUpdate(AppUpdateReply)
+            flags [mutating, elevated]
+            doc "Download the newest release, verify it against the SHA256SUMS published with it, and replace this executable. THIS REPLACES THE RUNNING PROGRAM. Refused while a job is running, refused for a copy installed by a package manager, and refused if the download does not match its published checksum. The outgoing executable is kept beside the new one so it can be put back. Nothing restarts itself: the caller decides when to stop a process that may be holding vault keys."
+            params {
+                version: Option<String> = "The version to install. Omit for whatever the last check found.",
             }
 
         "app.set_shortcut" AppSetShortcut => set_shortcut -> Service(ServiceReply)

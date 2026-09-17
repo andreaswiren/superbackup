@@ -229,6 +229,8 @@ fn sample_requests() -> Vec<Request> {
             host: None,
         },
         Request::GitClients {},
+        Request::AppUpdateCheck { force: false },
+        Request::AppUpdateInstall { version: None },
         Request::DestinationTest { destination: "drive".into() },
         Request::DestinationClearRepository {
             destination: "drive".into(),

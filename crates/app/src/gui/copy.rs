@@ -2837,6 +2837,40 @@ pub mod doctor {
 // 12. About
 // ---------------------------------------------------------------------------
 
+pub mod update {
+    pub const TITLE: &str = "Updates";
+    pub const CHECK: &str = "Check now";
+    pub const INSTALL: &str = "Install";
+    pub const NOTES: &str = "Release notes";
+    pub const RESTART_TITLE: &str = "Restart to finish the update";
+    pub const RESTART_BODY: &str = "The new version is in place. Superbackup is still running the old one until it is started again \u{2014} quit it from Settings, or from the tray, and open it as usual.";
+    pub const CHECKING: &str = "Checking\u{2026}";
+    pub const INSTALLING: &str = "Installing\u{2026}";
+    pub const AUTO: &str = "Look for new versions";
+    pub const AUTO_BODY: &str = "One unauthenticated request for a public list of releases, once a week. It tells GitHub this machine's IP address and roughly when superbackup is running; it sends no machine id, no configuration, no job names and no telemetry of any kind.";
+    pub const PRERELEASES: &str = "Include pre-releases";
+    pub const PRERELEASES_BODY: &str =
+        "Release candidates and betas. Off unless you are testing them on purpose.";
+
+    pub fn available(version: &str) -> String {
+        format!("superbackup {version} is available")
+    }
+    pub fn up_to_date(current: &str) -> String {
+        format!("superbackup {current} is the newest release.")
+    }
+    pub fn unreleased(current: &str) -> String {
+        format!(
+            "This is superbackup {current}, which is newer than anything published. Nothing to install."
+        )
+    }
+    pub fn failed(reason: &str) -> String {
+        format!("The check did not complete: {reason}. Your backups are unaffected.")
+    }
+    pub fn checked(when: &str) -> String {
+        format!("Last checked {when}.")
+    }
+}
+
 pub mod about {
     pub const TAGLINE: &str = "Backups for machines full of code.";
     pub const KOPIA: &str = "Kopia";

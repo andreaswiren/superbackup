@@ -101,6 +101,10 @@ pub enum Intent {
     GitCreateRemote,
     /// Which forge clients this machine has, asked before the publish dialog.
     GitClients,
+    /// Whether a newer superbackup exists.
+    UpdateCheck,
+    /// Replace this executable with a newer one.
+    UpdateInstall,
     /// Which agent is running and what it holds.
     AgentStatus,
     /// A key being loaded into the agent.

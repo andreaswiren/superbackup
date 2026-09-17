@@ -3,8 +3,12 @@
 
 use egui::{Align, Layout, Ui, Vec2};
 
+use superbackup_core::ipc::protocol::{AppUpdateReply, Request};
+use superbackup_core::update::UpdateStatus;
+
 use crate::gui::app::App;
 use crate::gui::copy;
+use crate::gui::daemon::Intent;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, space, Type};
 use crate::gui::widgets::{self, Button};
@@ -18,6 +22,21 @@ const RELEASES: &str = "https://github.com/andreaswiren/superbackup/releases";
 /// One column for the whole page: the header block and the cards under it
 /// share this so they have a single left edge.
 const COLUMN_W: f32 = 560.0;
+
+/// What the About page knows about updates.
+#[derive(Debug, Clone, Default)]
+pub struct State {
+    /// The last answer from `app.update_check`, or `app.update_install`.
+    pub update: Option<AppUpdateReply>,
+    pub checking: bool,
+    pub installing: bool,
+    /// Why the last check or install refused, when one did.
+    pub error: Option<String>,
+    /// Set once a new binary is in place: it is not running until superbackup
+    /// is started again, and saying "updated" without saying that would leave
+    /// somebody looking at the old version wondering what happened.
+    pub restart_required: bool,
+}
 
 impl App {
     pub(crate) fn show_about(&mut self, ui: &mut Ui) {
@@ -84,6 +103,13 @@ impl App {
                         COLUMN_W,
                     );
                 },
+            );
+
+            ui.add_space(space::H2);
+            ui.allocate_ui_with_layout(
+                Vec2::new(ui.available_width().min(COLUMN_W), 0.0),
+                Layout::top_down(Align::Min),
+                |ui| self.about_updates(ui),
             );
 
             ui.add_space(space::H2);
@@ -211,6 +237,212 @@ impl App {
 
         if let Some(url) = open {
             let _ = open::that_detached(url);
+        }
+    }
+
+    /// Whether a newer superbackup exists, and the button that installs it.
+    ///
+    /// On About because that is where the version is, and "which version am I
+    /// running" and "is there a newer one" are one question asked twice.
+    ///
+    /// Nothing here happens on its own. The check is on a weekly timer that can
+    /// be switched off; the install is a button. This is the process holding
+    /// the user's repository keys and quite possibly running a backup, and
+    /// replacing its own binary underneath itself has no good failure mode — so
+    /// the decision is always theirs.
+    fn about_updates(&mut self, ui: &mut Ui) {
+        let t = theme::tokens(ui.ctx());
+        let mut check = false;
+        let mut install = false;
+        let mut open_notes: Option<String> = None;
+        let mut settings_changed: Option<superbackup_core::update::SelfUpdateSettings> = None;
+
+        widgets::card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            widgets::text(ui, copy::update::TITLE, Type::H3, t.text_primary);
+            ui.add_space(space::M);
+
+            // The new binary is on disk and the old one is still running. Said
+            // first and loudest, because every other line on this card would
+            // otherwise describe a version that is not what is executing.
+            if self.screens.about.restart_required {
+                widgets::banner(
+                    ui,
+                    widgets::BannerKind::Success,
+                    copy::update::RESTART_TITLE,
+                    Some(copy::update::RESTART_BODY),
+                    |_| {},
+                );
+                ui.add_space(space::M);
+            }
+
+            let reply = self.screens.about.update.clone();
+            match reply.as_ref().map(|r| &r.status) {
+                Some(UpdateStatus::Available(release)) => {
+                    widgets::banner(
+                        ui,
+                        widgets::BannerKind::Info,
+                        &copy::update::available(&release.version),
+                        release.name.as_deref(),
+                        |_| {},
+                    );
+                    ui.add_space(space::M);
+                    if let Some(notes) = &release.notes {
+                        widgets::paragraph_at(
+                            ui,
+                            notes.clone(),
+                            Type::Small,
+                            t.text_secondary,
+                            COLUMN_W,
+                        );
+                        ui.add_space(space::M);
+                    }
+                    // Why it cannot be installed here, when it cannot. A
+                    // package-managed copy is not broken and must not be told
+                    // it is: it is told to update the way it was installed.
+                    if let Some(blocked) = reply.as_ref().and_then(|r| r.blocked.clone()) {
+                        widgets::paragraph_at(
+                            ui,
+                            blocked,
+                            Type::Small,
+                            t.warning.tint_text,
+                            COLUMN_W,
+                        );
+                        ui.add_space(space::M);
+                    }
+                    ui.horizontal(|ui| {
+                        let installable = reply.as_ref().is_some_and(|r| r.installable)
+                            && !self.screens.about.installing;
+                        let label = if self.screens.about.installing {
+                            copy::update::INSTALLING
+                        } else {
+                            copy::update::INSTALL
+                        };
+                        if Button::primary(label).enabled(installable).show(ui).clicked() {
+                            install = true;
+                        }
+                        if Button::ghost(copy::update::NOTES).show(ui).clicked() {
+                            open_notes = Some(release.url.clone());
+                        }
+                    });
+                }
+                Some(UpdateStatus::UpToDate { current }) => {
+                    widgets::text(
+                        ui,
+                        copy::update::up_to_date(current),
+                        Type::Body,
+                        t.text_secondary,
+                    );
+                }
+                Some(UpdateStatus::Unreleased { current, .. }) => {
+                    widgets::text(
+                        ui,
+                        copy::update::unreleased(current),
+                        Type::Body,
+                        t.text_secondary,
+                    );
+                }
+                Some(UpdateStatus::Failed { reason }) => {
+                    widgets::paragraph_at(
+                        ui,
+                        copy::update::failed(reason),
+                        Type::Small,
+                        t.warning.tint_text,
+                        COLUMN_W,
+                    );
+                }
+                Some(UpdateStatus::Disabled) | None => {}
+            }
+
+            if let Some(error) = &self.screens.about.error {
+                ui.add_space(space::M);
+                widgets::paragraph_at(ui, error.clone(), Type::Small, t.danger.tint_text, COLUMN_W);
+            }
+
+            ui.add_space(space::L);
+            ui.horizontal(|ui| {
+                let label = if self.screens.about.checking {
+                    copy::update::CHECKING
+                } else {
+                    copy::update::CHECK
+                };
+                if Button::secondary(label)
+                    .icon(Icon::RefreshCw)
+                    .enabled(!self.screens.about.checking)
+                    .show(ui)
+                    .clicked()
+                {
+                    check = true;
+                }
+                if let Some(at) = reply.as_ref().and_then(|r| r.checked_at) {
+                    ui.add_space(space::M);
+                    widgets::text(
+                        ui,
+                        copy::update::checked(&crate::gui::format::relative_past(
+                            at,
+                            chrono::Utc::now(),
+                        )),
+                        Type::Small,
+                        t.text_muted,
+                    );
+                }
+            });
+
+            ui.add_space(space::L);
+            widgets::divider(ui);
+            ui.add_space(space::L);
+
+            let mut settings = self.data.settings.self_update.clone();
+            let before = settings.clone();
+            let mut enabled = settings.enabled;
+            if widgets::toggle(
+                ui,
+                &mut enabled,
+                copy::update::AUTO,
+                Some(copy::update::AUTO_BODY),
+                true,
+            )
+            .clicked()
+            {
+                settings.enabled = enabled;
+            }
+            if settings.enabled {
+                ui.add_space(space::M);
+                let mut prereleases = settings.include_prereleases;
+                if widgets::checkbox(
+                    ui,
+                    &mut prereleases,
+                    copy::update::PRERELEASES,
+                    Some(copy::update::PRERELEASES_BODY),
+                    true,
+                )
+                .clicked()
+                {
+                    settings.include_prereleases = prereleases;
+                }
+            }
+            if settings != before {
+                settings_changed = Some(settings);
+            }
+        });
+
+        if let Some(url) = open_notes {
+            let _ = open::that_detached(&url);
+        }
+        if check {
+            self.screens.about.checking = true;
+            self.screens.about.error = None;
+            self.ask(Intent::UpdateCheck, Request::AppUpdateCheck { force: true });
+        }
+        if install {
+            self.screens.about.installing = true;
+            self.screens.about.error = None;
+            self.ask(Intent::UpdateInstall, Request::AppUpdateInstall { version: None });
+        }
+        if let Some(settings) = settings_changed {
+            let mut all = self.data.settings.clone();
+            all.self_update = settings;
+            self.ask(Intent::Settings, Request::SettingsUpdate { settings: Box::new(all) });
         }
     }
 }

@@ -1196,6 +1196,31 @@ impl Handler for MockHandler {
         Ok(Self::git_did("remote", &path))
     }
 
+    async fn app_update_check(
+        &self,
+        _ctx: &RequestContext,
+        _force: bool,
+    ) -> Result<AppUpdateReply> {
+        let _guard = self.enter("app.update_check").await?;
+        Ok(AppUpdateReply {
+            current: crate::VERSION.to_string(),
+            status: crate::update::UpdateStatus::UpToDate { current: crate::VERSION.to_string() },
+            checked_at: None,
+            installable: false,
+            blocked: Some("the mock never installs anything".into()),
+            restart_required: false,
+        })
+    }
+
+    async fn app_update_install(
+        &self,
+        _ctx: &RequestContext,
+        _version: Option<String>,
+    ) -> Result<AppUpdateReply> {
+        let _guard = self.enter("app.update_install").await?;
+        Err(crate::error::Error::Validation("the mock never installs anything".into()))
+    }
+
     async fn git_clients(&self, _ctx: &RequestContext) -> Result<GitClientsReply> {
         let _guard = self.enter("git.clients").await?;
         Ok(GitClientsReply { clients: Vec::new() })

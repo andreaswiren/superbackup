@@ -18,6 +18,18 @@ Nothing yet.
 
 ### Added
 
+- **Superbackup can update itself, from About.** It says whether a newer
+  release exists, shows what changed, and installs it: the archive is verified
+  against the `SHA256SUMS` published with the release *in memory*, before a
+  single byte is written where anything could run it, then the new binary is
+  probed with `--version` before the old one is moved aside. The check is
+  weekly, switchable off, and one unauthenticated GET of a public list — no
+  machine id, no configuration, no job names, no telemetry. It refuses while a
+  job is running, and it refuses for a copy apt, Homebrew or a macOS bundle
+  owns, telling it how to update the way it was installed. The check also now
+  uses the same allowlisted HTTP client as everything else, whose redirect
+  policy will not follow a release download off GitHub.
+
 - **A repository with no remote can be given one from the button next to the
   sentence that says it has none.** "No remote, so everything here exists only
   on this disk" was the whole of what superbackup had to say about a folder one

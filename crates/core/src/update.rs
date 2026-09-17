@@ -289,13 +289,21 @@ pub async fn check(settings: &SelfUpdateSettings, current_version: &str) -> Resu
     }
 
     let url = format!("https://api.github.com/repos/{}/releases?per_page=20", settings.repo);
-    let client = match reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build() {
+    // The same client the kopia installer uses, and for the same reason: its
+    // redirect policy refuses to follow a redirect off GitHub, so no request is
+    // ever issued to a foreign host — not even a connection that would leak the
+    // fact that this machine is checking for an update. A plain
+    // `Client::builder()` here would have followed one anywhere.
+    let client = match crate::kopia::install::release_client(
+        crate::kopia::install::DEFAULT_ALLOWED_HOSTS.iter().map(|s| s.to_string()).collect(),
+    ) {
         Ok(c) => c,
         Err(e) => return Ok(UpdateStatus::Failed { reason: e.to_string() }),
     };
 
     let response = client
         .get(&url)
+        .timeout(REQUEST_TIMEOUT)
         // GitHub rejects requests without one.
         .header("User-Agent", format!("superbackup/{current_version}"))
         .header("Accept", "application/vnd.github+json")
@@ -654,6 +662,248 @@ not-a-digest  ignored.zip
             select_asset(&assets, "0.2.0").is_none(),
             "a release without a build for this machine must not install some other machine's"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fetching a release
+// ---------------------------------------------------------------------------
+
+/// Refuse an archive larger than this before reading it into memory.
+///
+/// The release archives are single binaries of tens of megabytes. A response
+/// far past that is not a superbackup build, and verification happens in memory
+/// precisely so that nothing unverified ever reaches a path the resolver could
+/// find — which only works if the thing being held is a size worth holding.
+const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Refuse a checksum manifest larger than this. It is one line per artefact.
+const MAX_SUMS_BYTES: usize = 256 * 1024;
+
+/// The files attached to one release, as `(name, download url)`.
+///
+/// A second request rather than a field on the release list, because
+/// `/releases` returns every asset of every release and the list is fetched on
+/// a timer by machines that will never install anything. This one is made once,
+/// when somebody presses Install.
+pub async fn release_assets(repo: &str, tag: &str) -> Result<Vec<(String, String)>> {
+    #[derive(serde::Deserialize)]
+    struct Asset {
+        name: String,
+        browser_download_url: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Release {
+        #[serde(default)]
+        assets: Vec<Asset>,
+    }
+
+    if repo.is_empty() || !repo.contains('/') {
+        return Err(Error::Validation(format!("`{repo}` is not an owner/name repository")));
+    }
+    let client = crate::kopia::install::release_client(
+        crate::kopia::install::DEFAULT_ALLOWED_HOSTS.iter().map(|s| s.to_string()).collect(),
+    )
+    .map_err(|e| Error::Config(e.to_string()))?;
+
+    // By tag, so the assets belong to the release the check actually saw. A
+    // second call to `/latest` could answer about a newer one published in
+    // between, and then the archive and the version on screen would disagree.
+    let url = format!("https://api.github.com/repos/{repo}/releases/tags/{tag}");
+    let body = get_capped(&client, &url, MAX_SUMS_BYTES.max(MAX_RESPONSE_BYTES)).await?;
+    let release: Release = serde_json::from_slice(&body)
+        .map_err(|e| Error::Config(format!("the release could not be read: {e}")))?;
+    Ok(release.assets.into_iter().map(|a| (a.name, a.browser_download_url)).collect())
+}
+
+/// What a release offers this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Downloadable {
+    pub version: String,
+    pub asset: AssetChoice,
+    /// Where `SHA256SUMS` is, for the same release.
+    pub sums_url: String,
+}
+
+/// Pick the archive and the checksum manifest out of a release's assets.
+///
+/// Both or neither: an archive with no published digest is not something to
+/// download, let alone run. That is not hypothetical caution — the digest is
+/// the only thing standing between "GitHub served this" and "somebody served
+/// this", and a release missing it is a release that went wrong.
+pub fn downloadable(
+    version: &str,
+    assets: &[(String, String)],
+) -> std::result::Result<Downloadable, String> {
+    let asset = select_asset(assets, version).ok_or_else(|| {
+        format!(
+            "release {version} has no build for this machine ({}), so there is nothing to install \
+             here. The release page may have one for another platform.",
+            target_triple()
+        )
+    })?;
+    let sums_url = assets
+        .iter()
+        .find(|(name, _)| name == "SHA256SUMS")
+        .map(|(_, url)| url.clone())
+        .ok_or_else(|| {
+            format!(
+                "release {version} publishes no SHA256SUMS, so the download cannot be verified \
+                 and will not be installed."
+            )
+        })?;
+    Ok(Downloadable { version: version.to_string(), asset, sums_url })
+}
+
+/// Download, verify, and hand back the executable, having written nothing.
+///
+/// Every step here is ordered so that nothing unverified is ever on disk where
+/// something could run it:
+///
+/// 1. the checksum manifest is fetched first, because an archive with no digest
+///    to check it against is not worth downloading;
+/// 2. the archive is read into memory and checked against that digest;
+/// 3. only then is it opened as an archive at all, by the same extractor the
+///    kopia installer uses — the one that refuses `..`, absolute paths and
+///    drive prefixes in member names.
+///
+/// The bytes come back rather than being written, because where they go is
+/// [`apply`]'s business and it has rules of its own.
+pub async fn fetch(target: &Downloadable) -> Result<Vec<u8>> {
+    let client = crate::kopia::install::release_client(
+        crate::kopia::install::DEFAULT_ALLOWED_HOSTS.iter().map(|s| s.to_string()).collect(),
+    )
+    .map_err(|e| Error::Config(e.to_string()))?;
+
+    let sums = get_capped(&client, &target.sums_url, MAX_SUMS_BYTES).await?;
+    let sums = String::from_utf8_lossy(&sums).into_owned();
+    let published = parse_checksums(&sums);
+    if published.is_empty() {
+        return Err(Error::Config(
+            "the release's SHA256SUMS could not be read, so the download cannot be verified and \
+             will not be installed."
+                .into(),
+        ));
+    }
+
+    let archive = get_capped(&client, &target.asset.url, MAX_ARCHIVE_BYTES).await?;
+    verify_archive(&archive, &target.asset.file_name, &published).map_err(Error::Config)?;
+
+    let kind = if target.asset.file_name.ends_with(".zip") {
+        crate::kopia::install::ArchiveKind::Zip
+    } else {
+        crate::kopia::install::ArchiveKind::TarGz
+    };
+    let member = if cfg!(windows) { "superbackup.exe" } else { "superbackup" };
+    crate::kopia::install::extract_executable(&archive, kind, member, &target.asset.file_name)
+        .map_err(|e| Error::Config(e.to_string()))
+}
+
+async fn get_capped(client: &reqwest::Client, url: &str, cap: usize) -> Result<Vec<u8>> {
+    let mut response = client
+        .get(url)
+        .header("Accept", "application/octet-stream")
+        .send()
+        .await
+        .map_err(|e| Error::Config(crate::redact::scrub(&e.to_string()).into_owned()))?;
+
+    // A redirect the client's policy stopped arrives as a 3xx response rather
+    // than an error, so where this actually ended up is checked rather than
+    // assumed. Without it, "the policy refused to follow" and "the policy
+    // followed somewhere else" would look the same from here.
+    let host = response.url().host_str().unwrap_or_default().to_string();
+    if !crate::kopia::install::host_allowed(
+        &host,
+        &crate::kopia::install::DEFAULT_ALLOWED_HOSTS
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+    ) {
+        return Err(Error::Config(format!(
+            "the download was redirected to {host}, which is not where superbackup releases come              from, so nothing was fetched."
+        )));
+    }
+    if !response.status().is_success() {
+        return Err(Error::Config(format!("the download answered {}", response.status())));
+    }
+
+    // Counted as it arrives rather than trusted from `Content-Length`, which is
+    // a claim by the server about a body it has not finished sending.
+    let mut body = Vec::new();
+    loop {
+        let chunk = response
+            .chunk()
+            .await
+            .map_err(|e| Error::Config(crate::redact::scrub(&e.to_string()).into_owned()))?;
+        let Some(chunk) = chunk else { break };
+        if body.len() + chunk.len() > cap {
+            return Err(Error::Config(
+                "the download is far larger than a superbackup release and was abandoned.".into(),
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
+mod fetch_tests {
+    use super::*;
+
+    fn assets(version: &str, with_sums: bool) -> Vec<(String, String)> {
+        let triple = target_triple();
+        let ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+        let mut out = vec![(
+            format!("superbackup-{version}-{triple}.{ext}"),
+            "https://example/archive".to_string(),
+        )];
+        if with_sums {
+            out.push(("SHA256SUMS".to_string(), "https://example/sums".to_string()));
+        }
+        out
+    }
+
+    /// An archive with no published digest is not offered at all.
+    ///
+    /// The digest is the only thing between "GitHub served this" and "somebody
+    /// served this". A release missing it is a release that went wrong, and
+    /// installing from it anyway would be the one moment this code could do
+    /// real harm.
+    #[test]
+    fn a_release_without_checksums_is_refused_rather_than_trusted() {
+        if target_triple().is_empty() {
+            return;
+        }
+        let err = downloadable("0.12.0", &assets("0.12.0", false)).unwrap_err();
+        assert!(err.contains("SHA256SUMS"), "{err}");
+        assert!(err.contains("will not be installed"), "{err}");
+    }
+
+    /// A release with nothing for this machine says so, naming the target.
+    #[test]
+    fn a_release_with_no_build_for_this_machine_says_which_machine() {
+        if target_triple().is_empty() {
+            return;
+        }
+        let other = vec![
+            ("superbackup-0.12.0-some-other-target.tar.gz".to_string(), "u".to_string()),
+            ("SHA256SUMS".to_string(), "s".to_string()),
+        ];
+        let err = downloadable("0.12.0", &other).unwrap_err();
+        assert!(err.contains(target_triple()), "{err}");
+    }
+
+    /// Both halves, and the version they belong to, come back together.
+    #[test]
+    fn the_archive_and_its_checksums_are_chosen_from_one_release() {
+        if target_triple().is_empty() {
+            return;
+        }
+        let found = downloadable("0.12.0", &assets("0.12.0", true)).expect("both");
+        assert_eq!(found.version, "0.12.0");
+        assert_eq!(found.sums_url, "https://example/sums");
+        assert!(found.asset.file_name.contains("0.12.0"));
+        assert!(found.asset.file_name.contains(target_triple()));
     }
 }
 

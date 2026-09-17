@@ -32,7 +32,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use superbackup_core::ipc::protocol::*;
 use superbackup_core::ipc::{Handler, RequestContext, StreamItem, Topic};
 use superbackup_core::kopia::{
@@ -141,6 +141,25 @@ impl DaemonHandler {
         self.runtime.push_config(&saved);
         self.runtime.publish_status().await;
         Ok(saved)
+    }
+
+    /// The answer both update commands give, assembled once.
+    fn update_reply(
+        &self,
+        status: superbackup_core::update::UpdateStatus,
+        checked_at: Option<DateTime<Utc>>,
+        restart_required: bool,
+    ) -> AppUpdateReply {
+        let blocked =
+            superbackup_core::update::Installation::current().ok().and_then(|i| i.why_not());
+        AppUpdateReply {
+            current: superbackup_core::VERSION.to_string(),
+            status,
+            checked_at,
+            installable: blocked.is_none(),
+            blocked,
+            restart_required,
+        }
     }
 
     /// Look up a destination and build a kopia driver for it.
@@ -4016,6 +4035,135 @@ impl Handler for DaemonHandler {
             "The background service was removed. Your configuration and backups were not touched.",
         ));
         Ok(self.service_reply(None))
+    }
+    /// Ask whether a newer superbackup has been released.
+    ///
+    /// Never an error the caller has to handle. A machine that cannot reach
+    /// GitHub still backs up perfectly well, and reporting a failed check as a
+    /// failed *command* would put a red error in front of somebody whose
+    /// backups are fine.
+    async fn app_update_check(&self, _ctx: &RequestContext, force: bool) -> Result<AppUpdateReply> {
+        use superbackup_core::update;
+
+        let mut settings = self.config().await.settings.self_update.clone();
+        let now = Utc::now();
+
+        let status = if !settings.enabled {
+            update::UpdateStatus::Disabled
+        } else if !force && !settings.is_due(now) {
+            // Not due, and nothing to report beyond what the last check found.
+            // Said as "up to date" rather than invented: the caller asked a
+            // question and this is the last answer superbackup actually has.
+            match &settings.last_seen_version {
+                Some(seen) if seen.as_str() > superbackup_core::VERSION => {
+                    update::UpdateStatus::Available(update::ReleaseInfo {
+                        version: seen.clone(),
+                        tag: format!("v{seen}"),
+                        name: None,
+                        url: format!("https://github.com/{}/releases/tag/v{seen}", settings.repo),
+                        published_at: None,
+                        prerelease: false,
+                        notes: None,
+                    })
+                }
+                _ => update::UpdateStatus::UpToDate {
+                    current: superbackup_core::VERSION.to_string(),
+                },
+            }
+        } else {
+            let found = update::check(&settings, superbackup_core::VERSION).await?;
+            // Recorded whatever the answer was, including a failure: the point
+            // of the interval is to stop a machine with no network asking every
+            // few minutes for ever.
+            settings.last_check_at = Some(now);
+            settings.last_seen_version = found.newer_version().map(str::to_string);
+            let saved = settings.clone();
+            self.commit(move |config| {
+                config.settings.self_update = saved;
+                Ok(())
+            })
+            .await?;
+            if let Some(version) = found.newer_version() {
+                self.runtime.record_event(Event::info(
+                    "app.update_available",
+                    format!("superbackup {version} has been released."),
+                ));
+            }
+            found
+        };
+
+        Ok(self.update_reply(status, settings.last_check_at, false))
+    }
+
+    /// Download the newest release, verify it, and replace this executable.
+    ///
+    /// The rules in [`superbackup_core::update`] that belong to a caller are
+    /// enforced here: no job running, and a person having asked. The ones that
+    /// belong to the swap are enforced by `update::apply`.
+    async fn app_update_install(
+        &self,
+        _ctx: &RequestContext,
+        version: Option<String>,
+    ) -> Result<AppUpdateReply> {
+        use superbackup_core::update;
+
+        // A snapshot interrupted by its own binary being swapped is a
+        // corrupt-looking repository and a support case nobody can
+        // reconstruct. This is the first check for that reason.
+        let running = self.runtime.active_runs();
+        if !running.is_empty() {
+            let names: Vec<String> = running
+                .iter()
+                .map(|r| r.job_name.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            return Err(Error::Validation(format!(
+                "{} is running. Updating replaces the program that is running it, so it waits \
+                 until nothing is backing up.",
+                names.join(", ")
+            )));
+        }
+
+        let installation = update::Installation::current()?;
+        if let Some(why) = installation.why_not() {
+            return Err(Error::Validation(why));
+        }
+
+        let settings = self.config().await.settings.self_update.clone();
+        let found = update::check(&settings, superbackup_core::VERSION).await?;
+        let release = match (&found, &version) {
+            (update::UpdateStatus::Available(r), None) => r.clone(),
+            (update::UpdateStatus::Available(r), Some(asked)) if &r.version == asked => r.clone(),
+            (_, Some(asked)) => {
+                return Err(Error::Validation(format!(
+                    "{asked} is not the release superbackup would install. Check for updates \
+                     again and install what it found."
+                )))
+            }
+            _ => {
+                return Err(Error::Validation("there is no newer release to install.".to_string()))
+            }
+        };
+
+        // The assets, from the release this check just saw.
+        let assets = update::release_assets(&settings.repo, &release.tag).await?;
+        let target = update::downloadable(&release.version, &assets).map_err(Error::Validation)?;
+        let binary = update::fetch(&target).await?;
+        let applied = update::apply(installation.exe(), &binary, &release.version)?;
+
+        self.runtime.record_event(Event::info(
+            "app.updated",
+            format!(
+                "superbackup {} was installed over {}. The previous version is kept at {} until \
+                 the next start. Restart superbackup to run it.",
+                applied.version,
+                superbackup_core::VERSION,
+                applied.previous.display()
+            ),
+        ));
+
+        Ok(self.update_reply(found, settings.last_check_at, true))
     }
 
     /// Add superbackup to this user's applications menu, or take it out.

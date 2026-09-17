@@ -380,6 +380,14 @@ async fn every_command_answers_or_refuses_cleanly() {
     // Reads a directory listing and nothing else, so it answers the same on a
     // machine with every client and on one with none.
     run!("git.clients", Request::GitClients {});
+
+    // -- the application's own version -----------------------------------
+    // Reaches GitHub. Offline in CI it answers "the check did not complete",
+    // which is a clean answer and the one a client has to handle anyway.
+    run!("app.update_check", Request::AppUpdateCheck { force: false });
+    // Refused here rather than performed: the harness runs from the test
+    // binary's own directory, and an install that succeeded would replace it.
+    run!("app.update_install", Request::AppUpdateInstall { version: Some("0.0.1".into()) });
     // Deliberately *not* run: it would install software on the machine
     // running the tests. Marked as covered with the reason written down,
     // which is the honest way to exempt something from a coverage assertion.

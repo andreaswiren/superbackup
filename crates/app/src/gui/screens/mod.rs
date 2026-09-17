@@ -43,6 +43,7 @@ pub struct Screens {
     pub preview: preview::State,
     pub run_detail: run_detail::State,
     pub job_detail: job_detail::State,
+    pub about: about::State,
 }
 
 /// The six `keep_*` values plus the maintenance interval, shared by the job

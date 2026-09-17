@@ -346,6 +346,10 @@ pub struct Settings {
     pub kopia_path: Option<PathBuf>,
     #[serde(default)]
     pub kopia: KopiaManagement,
+    /// How superbackup looks for its own updates. See
+    /// [`crate::update::SelfUpdateSettings`].
+    #[serde(default)]
+    pub self_update: crate::update::SelfUpdateSettings,
     /// Repository folders the user has marked as somebody else's code: a
     /// clone they read and never commit to.
     ///
@@ -528,6 +532,7 @@ impl Default for Settings {
             key_sync_folder: None,
             kopia_path: None,
             kopia: KopiaManagement::default(),
+            self_update: crate::update::SelfUpdateSettings::default(),
             start_at_login: true,
             start_minimised: true,
             run_as_service: false,
