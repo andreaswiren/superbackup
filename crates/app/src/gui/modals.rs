@@ -482,6 +482,52 @@ pub enum Modal {
     /// Enrolling a passkey: a name for it, and the master passphrase it will
     /// seal.
     AddPasskey(AddPasskeyState),
+    /// Which Windows account the background service should log on as.
+    ServiceAccount(ServiceAccountState),
+}
+
+/// The account a background service should log on as, and its password.
+///
+/// # Why superbackup asks for a Windows password at all
+///
+/// Because the alternative does not work for the thing people install a
+/// service for. A service running as `LocalSystem` cannot read a OneDrive
+/// folder, a mapped drive, or the DPAPI-protected secrets in a user profile —
+/// and superbackup's own configuration lives in one. The service would start,
+/// find a machine-wide configuration nobody has set up, and back up nothing.
+///
+/// So it logs on as the person whose files these are, which Windows allows only
+/// with that account's password, supplied once at install time.
+///
+/// # Where the password goes
+///
+/// Into the Service Control Manager, and nowhere else. Not into the vault, not
+/// into a file, not onto a command line — the elevated installer reads it from
+/// a pipe whose DACL admits only this account, `SYSTEM` and the administrators
+/// group. The SCM keeps its own copy in the LSA secret store, which we cannot
+/// zero and do not pretend to.
+#[derive(Debug, Clone)]
+pub struct ServiceAccountState {
+    pub username: String,
+    /// Cleared the moment it is handed over. The dialog stays on screen while
+    /// the elevated installer runs and has no reason to keep holding one.
+    pub password: String,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
+impl ServiceAccountState {
+    /// The account this superbackup is running as, which is the answer nearly
+    /// every time: the person installing the service is the person whose files
+    /// it is meant to back up.
+    pub fn for_this_account() -> ServiceAccountState {
+        ServiceAccountState {
+            username: superbackup_core::platform::service::current_account(),
+            password: String::new(),
+            busy: false,
+            error: None,
+        }
+    }
 }
 
 /// `Settings -> Security -> Add a passkey`.
@@ -828,6 +874,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, modal: Modal) -> Option<Modal> {
         Modal::GitInit(state) => show_git_init(app, ctx, state),
         Modal::NewKey(state) => show_new_key(app, ctx, state),
         Modal::AddPasskey(state) => show_add_passkey(app, ctx, state),
+        Modal::ServiceAccount(state) => show_service_account(app, ctx, state),
     }
 }
 
@@ -2959,6 +3006,87 @@ pub fn name_list(names: &[String]) -> String {
 /// `12 Mar 02:00` for a modal title that needs a timestamp.
 pub fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
     format::absolute(at)
+}
+
+/// Ask which account the service should log on as, and for its password.
+fn show_service_account(
+    app: &mut App,
+    ctx: &egui::Context,
+    mut state: ServiceAccountState,
+) -> Option<Modal> {
+    let t = theme::tokens(ctx);
+    let mut submit = false;
+    let mut cancel = false;
+    let mut revealed = false;
+
+    let (close, _) = widgets::modal(
+        ctx,
+        "sb-service-account",
+        ModalSize::Medium,
+        copy::set::SERVICE_ACCOUNT_TITLE,
+        Some((Icon::Shield, t.accent)),
+        state.busy,
+        |m| {
+            m.body(|ui| {
+                widgets::paragraph(
+                    ui,
+                    copy::set::SERVICE_ACCOUNT_BODY,
+                    Type::Small,
+                    t.text_secondary,
+                );
+                ui.add_space(space::L);
+                widgets::Field::new()
+                    .label(copy::set::SERVICE_ACCOUNT_USER)
+                    .placeholder(copy::set::SERVICE_ACCOUNT_USER_HINT)
+                    .width(320.0)
+                    .show(ui, &mut state.username);
+                ui.add_space(space::L);
+                let response = widgets::passphrase_field(
+                    ui,
+                    &mut state.password,
+                    copy::set::SERVICE_ACCOUNT_PASSWORD,
+                    &mut revealed,
+                    state.error.as_deref(),
+                    320.0,
+                );
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    submit = true;
+                }
+                ui.add_space(space::L);
+                // Said plainly, because it is the one thing about this dialog
+                // somebody might reasonably object to, and a backup tool asking
+                // for a Windows password without explaining itself deserves the
+                // suspicion it gets.
+                widgets::paragraph(ui, copy::set::SERVICE_ACCOUNT_WHERE, Type::Small, t.text_muted);
+            });
+            m.footer(|ui| {
+                let ready = !state.username.trim().is_empty() && !state.busy;
+                if Button::primary(copy::set::SERVICE_ACCOUNT_INSTALL)
+                    .enabled(ready)
+                    .show(ui)
+                    .clicked()
+                {
+                    submit = true;
+                }
+                if Button::ghost(copy::action::CANCEL).show(ui).clicked() {
+                    cancel = true;
+                }
+            });
+        },
+    );
+
+    if submit && !state.username.trim().is_empty() {
+        app.install_service_as(state.username.trim().to_string(), state.password.clone());
+        // The password is not kept while the elevated installer runs: it has
+        // been handed over, and the dialog has no further use for it.
+        state.password.clear();
+        return None;
+    }
+    if close || cancel {
+        None
+    } else {
+        Some(Modal::ServiceAccount(state))
+    }
 }
 
 #[cfg(test)]

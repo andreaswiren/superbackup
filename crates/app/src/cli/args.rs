@@ -1264,6 +1264,24 @@ pub struct ServiceInstallArgs {
     /// Install a per-user unit rather than a system one. Linux only.
     #[arg(long)]
     pub user_scope: bool,
+
+    /// The handover channel `--user`'s password is waiting on.
+    ///
+    /// Not a password, and never one: a channel name. The window that has the
+    /// password opens a pipe whose DACL admits only this account, SYSTEM and
+    /// the administrators group, and passes the name here. A password on a
+    /// command line is readable by every process on the machine, which is why
+    /// there is no flag that takes one.
+    #[arg(long, value_name = "CHANNEL", hide = true)]
+    pub handover: Option<String>,
+
+    /// The configuration root the installed service should open.
+    ///
+    /// Without it a service running as a user account resolves that account's
+    /// per-user default, which is right for most people and wrong for anyone
+    /// who runs superbackup with `--home`.
+    #[arg(long, value_name = "DIR")]
+    pub service_home: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]

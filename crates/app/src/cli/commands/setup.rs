@@ -399,16 +399,12 @@ fn autostart_status() -> superbackup_core::error::Result<platform::autostart::Au
 }
 
 fn service_install(ctx: &mut Ctx, args: ServiceInstallArgs) -> CliResult<Outcome> {
-    if args.user.is_some() {
-        return Err(CliError::unsupported(
-            "--user",
-            "the running instance installs the service with its own defaults and takes no \
-             account parameter",
-        )
-        .with_hint(
-            "A system account cannot see OneDrive or mapped drives; leave those destinations \
-             to the tray application.",
-        ));
+    // `--user` is the answer for OneDrive and mapped drives, which a system
+    // account cannot see at all. It needs elevation, and it needs the account's
+    // password, which arrives over a handover channel rather than on a command
+    // line - see `superbackup_core::platform::handover`.
+    if let Some(username) = args.user.clone() {
+        return service_install_as(ctx, username, args);
     }
     if args.user_scope {
         return Err(CliError::unsupported(
@@ -480,6 +476,84 @@ fn service_install_here(ctx: &mut Ctx) -> CliResult<Outcome> {
     };
     service::write_install_report(status.installed, &message);
 
+    ctx.ui.line(&message);
+    if status.installed {
+        Outcome::data(status)
+    } else {
+        Outcome::negative(status)
+    }
+}
+
+/// Install the service under a named account.
+///
+/// Elevated only. The password is collected from the handover channel named on
+/// the command line, never from the command line itself, and is handed
+/// straight to the Service Control Manager, which keeps its own copy in the LSA
+/// secret store. Ours is zeroed when this function returns; theirs we cannot
+/// touch, and `ServiceAccount::User` says so rather than implying otherwise.
+fn service_install_as(
+    ctx: &mut Ctx,
+    username: String,
+    args: ServiceInstallArgs,
+) -> CliResult<Outcome> {
+    use platform::service;
+
+    if !service::is_elevated() {
+        return Err(CliError::from(superbackup_core::Error::Service(
+            "installing a service under an account needs administrator rights.".into(),
+        )));
+    }
+
+    let password = match &args.handover {
+        Some(channel) => {
+            let runtime =
+                tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(
+                    |e| CliError::from(superbackup_core::Error::io("starting a runtime", e)),
+                )?;
+            let channel = channel.clone();
+            Some(
+                runtime
+                    .block_on(superbackup_core::platform::handover::collect(&channel))
+                    .map_err(CliError::from)?,
+            )
+        }
+        // Not an error. A group-managed service account takes no password, and
+        // neither do the built-in service accounts; the SCM rejects the ones
+        // that do need one, and its message is better than a guess here.
+        None => None,
+    };
+
+    // The root the service should open, which is the caller's own unless one
+    // was named. A service running as the same account would otherwise resolve
+    // that account's per-user default - right for most people, and wrong for
+    // anyone running superbackup with `--home`.
+    let paths = match &args.service_home {
+        Some(root) => superbackup_core::paths::Paths::rooted_at(root.clone(), false),
+        None => ctx.paths.clone(),
+    };
+    let exe = std::env::current_exe().map_err(|e| {
+        CliError::from(superbackup_core::Error::io("determining this program's path", e))
+    })?;
+    let options = service::ServiceOptions::as_user(exe, &paths, &username, password);
+
+    if let Err(e) = service::install(&options) {
+        service::write_install_report(false, e.to_string());
+        return Err(CliError::from(e));
+    }
+    let start = service::start(&options.name, options.scope);
+    let status = service::status(&options.name, options.scope).map_err(CliError::from)?;
+    let message = match (&start, status.installed) {
+        (Ok(()), _) => format!(
+            "The background service is installed and running as {username}. It backs up the same \
+             jobs as this window, including anything in OneDrive."
+        ),
+        (Err(e), true) => format!(
+            "The background service was installed as {username} but did not start: {e}. A logon \
+             failure here almost always means the password was wrong."
+        ),
+        (Err(e), false) => format!("The background service was not installed: {e}"),
+    };
+    service::write_install_report(status.installed, &message);
     ctx.ui.line(&message);
     if status.installed {
         Outcome::data(status)

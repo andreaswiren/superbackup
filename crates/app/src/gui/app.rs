@@ -1240,6 +1240,83 @@ impl App {
         );
     }
 
+    /// Install the service under a named account, password and all.
+    ///
+    /// The order matters and is the reason this is not three lines. The
+    /// handover channel has to be listening *before* the elevated process is
+    /// started, because that process connects to it immediately; and the
+    /// password has to be sent from a thread, because sending it waits for that
+    /// connection and this one is drawing a window at sixty frames a second.
+    ///
+    /// The password reaches the channel and nothing else. It is not in the
+    /// command line — see `platform::service::ElevatedAccount` — not in the
+    /// vault, and not on disk.
+    pub fn install_service_as(&mut self, username: String, password: String) {
+        use superbackup_core::platform::{handover::Handover, service};
+
+        let home = self.paths.as_ref().and_then(|paths| paths.root());
+        let secret = superbackup_core::secret::Secret::from_string(password);
+
+        // One thread for the whole exchange: opening the channel needs a tokio
+        // reactor, and so does waiting on it.
+        let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+        let sender = tx.clone();
+        std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = sender.send(Err(e.to_string()));
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                let handover = match Handover::open() {
+                    Ok(h) => h,
+                    Err(e) => {
+                        let _ = sender.send(Err(e.to_string()));
+                        return;
+                    }
+                };
+                // The name goes back to the window, which raises the prompt;
+                // this thread then blocks until the elevated process collects.
+                if sender.send(Ok(handover.name().to_string())).is_err() {
+                    return;
+                }
+                let _ = handover.send(&secret).await;
+            });
+        });
+
+        let channel = match rx.recv() {
+            Ok(Ok(name)) => name,
+            Ok(Err(why)) => {
+                self.toasts.danger(copy::set::SERVICE_INSTALL, why);
+                return;
+            }
+            Err(_) => {
+                self.toasts.danger(
+                    copy::set::SERVICE_INSTALL,
+                    "the channel that carries the password to the installer could not be opened."
+                        .to_string(),
+                );
+                return;
+            }
+        };
+
+        let account = service::ElevatedAccount {
+            username: &username,
+            password_channel: &channel,
+            home: home.as_deref(),
+        };
+        match service::request_elevated_install_as(Some(account)) {
+            Ok(()) => {
+                self.toasts.info(copy::service_elevating());
+                self.screens.settings.service_elevating_since = Some(std::time::Instant::now());
+                self.ask(Intent::Service, Request::ServiceStatus {});
+            }
+            Err(e) => self.toasts.danger(copy::set::SERVICE_INSTALL, e.to_string()),
+        }
+    }
+
     pub fn request_create_repository(&mut self, destination: Uuid) {
         if !self.guard(Action::CreateRepository, Pending::CreateRepository(destination)) {
             return;

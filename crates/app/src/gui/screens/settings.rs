@@ -1161,6 +1161,22 @@ impl App {
             return;
         }
 
+        // On Windows, ask who it should run as first.
+        //
+        // The default answer — the computer — cannot read a OneDrive folder, a
+        // mapped drive, or the secrets Windows keeps for an account, and
+        // superbackup's own configuration is behind that last one. Installed
+        // that way the service starts, finds a machine-wide configuration
+        // nobody has set up, and backs up nothing. Everywhere else the
+        // preferred service is a user unit already, and no password is
+        // involved.
+        if cfg!(windows) {
+            self.open_modal(crate::gui::modals::Modal::ServiceAccount(
+                crate::gui::modals::ServiceAccountState::for_this_account(),
+            ));
+            return;
+        }
+
         match service::request_elevated_install() {
             Ok(()) => {
                 // The prompt is up; it is answered by a person, and the

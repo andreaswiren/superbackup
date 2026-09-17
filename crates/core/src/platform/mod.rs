@@ -41,6 +41,7 @@ use serde::{Deserialize, Serialize};
 pub mod autostart;
 pub mod disk;
 pub mod gdrive;
+pub mod handover;
 pub mod identity;
 pub mod notify;
 pub mod onedrive;

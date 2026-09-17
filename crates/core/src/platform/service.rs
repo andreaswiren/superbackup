@@ -262,6 +262,57 @@ impl ServiceOptions {
         options
     }
 
+    /// A service that logs on as one person and backs up *their* files.
+    ///
+    /// # Why this is not the default
+    ///
+    /// Because it needs a password, and a service running as LocalSystem does
+    /// not. But LocalSystem is the wrong identity for what people actually ask
+    /// a backup service to do: it cannot read the OneDrive folder, the mapped
+    /// drives, or the DPAPI-protected secrets that live in a user profile, and
+    /// it resolves [`Paths::for_service`] rather than the configuration the
+    /// person set up — so it would run with an empty machine-wide config and
+    /// back up nothing.
+    ///
+    /// This one logs on as the account that owns those things, and is given
+    /// `--home` so it opens that person's vault and their jobs rather than a
+    /// machine-wide one nobody configured.
+    ///
+    /// The password is needed once, at install time, and is handed to the
+    /// Service Control Manager, which keeps its own copy in the LSA secret
+    /// store. We cannot zero that copy, and this says so rather than implying
+    /// otherwise.
+    ///
+    /// Still a system-scope service, so it still needs elevation to install and
+    /// it still runs with nobody signed in — which is the entire point of
+    /// having one.
+    pub fn as_user(
+        executable: impl Into<PathBuf>,
+        paths: &Paths,
+        username: &str,
+        password: Option<Secret>,
+    ) -> ServiceOptions {
+        let mut options = ServiceOptions::new(executable, paths);
+        options.account = ServiceAccount::User { username: username.to_string(), password };
+        options.args = vec!["daemon".to_string(), "--no-tray".to_string()];
+        // The person's own root, when their layout has one. Without it the
+        // service resolves the per-user default *of the account it runs as*,
+        // which is the same account — so the common case needs nothing, and the
+        // `--home` case needs exactly this.
+        if let Some(root) = paths.root() {
+            options.args.push("--home".to_string());
+            options.args.push(root.display().to_string());
+        }
+        options.state_dirs =
+            vec![paths.data_dir.clone(), paths.log_dir.clone(), paths.cache_dir.clone()];
+        options
+    }
+
+    /// The account this service logs on as, for a message.
+    pub fn account_title(&self) -> String {
+        self.account.title()
+    }
+
     /// True when installing this configuration requires elevation.
     pub fn requires_elevation(&self) -> bool {
         self.scope == ServiceScope::System
@@ -418,6 +469,14 @@ pub fn install(options: &ServiceOptions) -> Result<()> {
         )));
     }
     installable(options)?;
+    // Before the service exists, not after. `CreateService` happily accepts an
+    // account with no `SeServiceLogonRight` and the service then refuses to
+    // start with "logon failure", which reads as a wrong password even when the
+    // password is right.
+    #[cfg(windows)]
+    if let ServiceAccount::User { username, .. } = &options.account {
+        platform_impl::grant_service_logon_right(username)?;
+    }
     platform_impl::install(options)
 }
 
@@ -495,12 +554,111 @@ fn service_root_for(options: &ServiceOptions) -> Result<Paths> {
 /// service actually appeared is answered by asking for its status, which is
 /// the same question the interface asks anyway.
 pub fn request_elevated_install() -> Result<()> {
+    request_elevated_install_as(None)
+}
+
+/// As [`request_elevated_install`], for a service that logs on as somebody.
+///
+/// # What is on that command line
+///
+/// An account name, a configuration root, and the *name* of a handover
+/// channel. Not a password: every process on the machine can read another's
+/// command line, and this codebase does not put secrets there. The channel's
+/// DACL admits this account, `SYSTEM` and the administrators group and nobody
+/// else, so its name is worth nothing to anyone who reads it. See
+/// [`crate::platform::handover`].
+///
+/// The values are still checked before they are used, because they are being
+/// appended to a command line that will run as an administrator, and "we
+/// generated it ourselves" is a property of today's caller rather than of this
+/// function.
+pub fn request_elevated_install_as(account: Option<ElevatedAccount<'_>>) -> Result<()> {
     let executable = std::env::current_exe()
         .map_err(|e| Error::Service(format!("superbackup cannot find its own path: {e}")))?;
     // Any previous attempt's note goes first, so that whatever is read back is
     // about this prompt and not about one from last week.
     clear_install_report();
-    platform_impl::request_elevated_install(&executable)
+    let arguments = match account {
+        None => "service install".to_string(),
+        Some(account) => account.arguments()?,
+    };
+    platform_impl::request_elevated_install(&executable, &arguments)
+}
+
+/// The account this process is running as, spelled the way the Service Control
+/// Manager wants it.
+///
+/// `DOMAIN\user` for a domain account and `.\user` for a local one. The leading
+/// `.\` matters: a bare name is looked up as a domain account first on a
+/// domain-joined machine, and the wrong one of two accounts with the same name
+/// produces a service that installs and then will not start.
+pub fn current_account() -> String {
+    let user = whoami::username().unwrap_or_else(|_| "unknown".to_string());
+    let machine = whoami::devicename().unwrap_or_default();
+    let domain = std::env::var("USERDOMAIN").ok().filter(|d| !d.is_empty());
+    let prefix = match domain {
+        // `USERDOMAIN` holding the machine name means a local account.
+        Some(domain) if domain.eq_ignore_ascii_case(&machine) => ".".to_string(),
+        Some(domain) => domain,
+        None => ".".to_string(),
+    };
+    let mut account = prefix;
+    account.push(SEPARATOR);
+    account.push_str(&user);
+    account
+}
+
+/// What the Service Control Manager puts between a domain and a user name.
+const SEPARATOR: char = '\\';
+
+/// Who the elevated installer should make the service log on as.
+#[derive(Debug, Clone, Copy)]
+pub struct ElevatedAccount<'a> {
+    /// `DOMAIN\user`, `.\user`, or `user@domain`.
+    pub username: &'a str,
+    /// The handover channel the password is waiting on. A name, not a secret.
+    pub password_channel: &'a str,
+    /// The configuration root the service should open.
+    pub home: Option<&'a Path>,
+}
+
+impl ElevatedAccount<'_> {
+    fn arguments(&self) -> Result<String> {
+        // Nothing that could end a quoted argument and begin another one. An
+        // account name and a generated channel name have no business holding
+        // any of these, and a command line about to run as an administrator is
+        // the last place to find out otherwise.
+        const FORBIDDEN: [char; 9] = ['"', '\n', '\r', '\0', '&', '|', '^', '<', '>'];
+        for (what, value) in
+            [("the account name", self.username), ("the handover channel", self.password_channel)]
+        {
+            if value.trim().is_empty() {
+                return Err(Error::Service(format!("{what} is empty")));
+            }
+            if value.contains(FORBIDDEN) {
+                return Err(Error::Service(format!(
+                    "{what} contains a character superbackup will not put on an elevated command \
+                     line"
+                )));
+            }
+        }
+        let mut arguments = format!(
+            "service install --user \"{}\" --handover \"{}\"",
+            self.username, self.password_channel
+        );
+        if let Some(home) = self.home {
+            let home = home.display().to_string();
+            if home.contains(['"', '\n', '\r', '\0']) {
+                return Err(Error::Service(
+                    "the configuration root contains a character superbackup will not put on an \
+                     elevated command line"
+                        .into(),
+                ));
+            }
+            arguments.push_str(&format!(" --service-home \"{home}\""));
+        }
+        Ok(arguments)
+    }
 }
 
 /// What an elevated `service install` did, left where the process that raised
@@ -724,14 +882,14 @@ mod platform_impl {
 
     /// `ShellExecuteW` with the `runas` verb: the operating system's own
     /// elevation prompt, raised against this executable.
-    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+    pub fn request_elevated_install(executable: &Path, arguments: &str) -> Result<()> {
         use windows::core::PCWSTR;
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
         let verb = crate::platform::win32::wide("runas");
         let file = crate::platform::win32::wide(executable);
-        let args = crate::platform::win32::wide("service install");
+        let args = crate::platform::win32::wide(arguments);
 
         // SAFETY: three null-terminated wide strings that outlive the call,
         // and no owner window, which is allowed and means the prompt is not
@@ -795,6 +953,127 @@ mod platform_impl {
             StartMode::Manual => ServiceStartType::OnDemand,
             StartMode::Disabled => ServiceStartType::Disabled,
         }
+    }
+
+    /// Grant an account the right to log on as a service.
+    ///
+    /// Without `SeServiceLogonRight`, `CreateService` succeeds and the service
+    /// then refuses to start with error 1069, "the service did not start due to
+    /// a logon failure" — which reads as a wrong password even when the
+    /// password is right, and is the single most common way installing a
+    /// service under a user account goes wrong.
+    ///
+    /// Granting it is a privileged operation, which is fine: this only runs in
+    /// the elevated process that is creating the service. It is idempotent —
+    /// `LsaAddAccountRights` with a right the account already holds succeeds —
+    /// and it is never revoked on uninstall, because the account may hold it
+    /// for something else that was there first.
+    pub fn grant_service_logon_right(username: &str) -> Result<()> {
+        use windows::Win32::Security::Authentication::Identity::{
+            LsaAddAccountRights, LsaClose, LsaNtStatusToWinError, LsaOpenPolicy, LSA_HANDLE,
+            LSA_OBJECT_ATTRIBUTES, LSA_UNICODE_STRING, POLICY_CREATE_ACCOUNT, POLICY_LOOKUP_NAMES,
+        };
+        use windows::Win32::Security::{LookupAccountNameW, SID_NAME_USE};
+
+        let account = crate::platform::win32::wide(username);
+
+        // The account's SID. LSA rights are held by SID, not by name: a name is
+        // ambiguous between a local account and a domain one with the same
+        // spelling, and granting the wrong one produces a service that will not
+        // start for reasons nothing on screen explains.
+        let mut sid_len: u32 = 0;
+        let mut domain_len: u32 = 0;
+        let mut use_kind = SID_NAME_USE::default();
+        // SAFETY: the first call is the documented way to ask for the sizes;
+        // it is expected to fail with ERROR_INSUFFICIENT_BUFFER and fills in
+        // the two lengths.
+        unsafe {
+            let _ = LookupAccountNameW(
+                None,
+                windows::core::PCWSTR(account.as_ptr()),
+                None,
+                &mut sid_len,
+                None,
+                &mut domain_len,
+                &mut use_kind,
+            );
+        }
+        if sid_len == 0 {
+            return Err(Error::Service(format!(
+                "Windows does not recognise the account {username:?}. Use DOMAIN\\\\user for a \
+                 domain account, or .\\\\user for a local one."
+            )));
+        }
+        let mut sid = vec![0u8; sid_len as usize];
+        let mut domain = vec![0u16; domain_len.max(1) as usize];
+        // SAFETY: both buffers are sized by the call above and outlive this one.
+        unsafe {
+            LookupAccountNameW(
+                None,
+                windows::core::PCWSTR(account.as_ptr()),
+                Some(windows::Win32::Security::PSID(sid.as_mut_ptr() as *mut _)),
+                &mut sid_len,
+                Some(windows::core::PWSTR(domain.as_mut_ptr())),
+                &mut domain_len,
+                &mut use_kind,
+            )
+            .map_err(|e| {
+                Error::Service(format!("Windows could not look up the account {username:?}: {e}"))
+            })?;
+        }
+
+        let mut handle = LSA_HANDLE::default();
+        let attributes = LSA_OBJECT_ATTRIBUTES::default();
+        // SAFETY: an owned, zeroed attributes struct, and a handle closed below
+        // on every path.
+        let status = unsafe {
+            LsaOpenPolicy(
+                None,
+                &attributes,
+                (POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES) as u32,
+                &mut handle,
+            )
+        };
+        if status.is_err() {
+            // SAFETY: translating a status code; touches nothing.
+            let code = unsafe { LsaNtStatusToWinError(status) };
+            return Err(Error::Service(format!(
+                "the local security policy could not be opened to grant {username:?} the right \
+                 to run as a service (error {code}). Administrator rights are needed for this."
+            )));
+        }
+
+        let right: Vec<u16> = "SeServiceLogonRight".encode_utf16().collect();
+        let rights = [LSA_UNICODE_STRING {
+            // Bytes, not characters, and *not* counting a terminator — which is
+            // what LSA means by these two fields and is the usual way this call
+            // is got wrong.
+            Length: (right.len() * 2) as u16,
+            MaximumLength: (right.len() * 2) as u16,
+            Buffer: windows::core::PWSTR(right.as_ptr() as *mut u16),
+        }];
+        // SAFETY: the SID and the rights array outlive the call, and the handle
+        // is one this function opened.
+        let status = unsafe {
+            LsaAddAccountRights(
+                handle,
+                windows::Win32::Security::PSID(sid.as_mut_ptr() as *mut _),
+                &rights,
+            )
+        };
+        // SAFETY: closing a handle this function opened, exactly once.
+        unsafe {
+            let _ = LsaClose(handle);
+        }
+        if status.is_err() {
+            // SAFETY: translating a status code; touches nothing.
+            let code = unsafe { LsaNtStatusToWinError(status) };
+            return Err(Error::Service(format!(
+                "{username:?} could not be granted the right to log on as a service (error \
+                 {code}). Without it the service installs and then refuses to start."
+            )));
+        }
+        Ok(())
     }
 
     pub fn install(options: &ServiceOptions) -> Result<()> {
@@ -1249,7 +1528,7 @@ mod platform_impl {
     /// `pkexec` would raise a prompt, but only where polkit is configured for
     /// it, and a backup tool silently invoking a privilege helper is not a
     /// thing to add on a maybe. The honest answer is the command to run.
-    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+    pub fn request_elevated_install(executable: &Path, arguments: &str) -> Result<()> {
         Err(Error::Service(format!(
             "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
              service install\n\nOr install a per-user service, which needs no privileges at \
@@ -1398,7 +1677,7 @@ mod platform_impl {
     /// `pkexec` would raise a prompt, but only where polkit is configured for
     /// it, and a backup tool silently invoking a privilege helper is not a
     /// thing to add on a maybe. The honest answer is the command to run.
-    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+    pub fn request_elevated_install(executable: &Path, arguments: &str) -> Result<()> {
         Err(Error::Service(format!(
             "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
              service install\n\nOr install a per-user service, which needs no privileges at \
@@ -1534,7 +1813,7 @@ mod platform_impl {
     /// `pkexec` would raise a prompt, but only where polkit is configured for
     /// it, and a backup tool silently invoking a privilege helper is not a
     /// thing to add on a maybe. The honest answer is the command to run.
-    pub fn request_elevated_install(executable: &Path) -> Result<()> {
+    pub fn request_elevated_install(executable: &Path, arguments: &str) -> Result<()> {
         Err(Error::Service(format!(
             "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
              service install\n\nOr install a per-user service, which needs no privileges at \
@@ -1816,6 +2095,74 @@ pub fn parse_launchctl_print(text: &str) -> ServiceStatus {
 
 #[cfg(test)]
 mod tests {
+
+    /// The elevated command line carries a channel name, never a password.
+    ///
+    /// Every process on the machine can read another's command line. This is
+    /// the rule the handover exists to keep, and a test that reads the string
+    /// is the only way to keep it kept: a future edit that "simplifies" this by
+    /// passing the password directly would otherwise work perfectly.
+    #[test]
+    fn the_elevated_command_line_never_carries_the_password() {
+        let account = ElevatedAccount {
+            username: r"AWPC34\Andreas",
+            password_channel: "superbackup-handover-2f1c",
+            home: Some(std::path::Path::new(r"C:\Users\Andreas\OneDrive\Superbackup\awpc34")),
+        };
+        let line = account.arguments().expect("arguments");
+        assert!(line.starts_with("service install "), "{line}");
+        assert!(line.contains(r#"--user "AWPC34\Andreas""#), "{line}");
+        assert!(line.contains(r#"--handover "superbackup-handover-2f1c""#), "{line}");
+        assert!(line.contains("--service-home"), "{line}");
+        // The flag that would take one does not exist, and neither does the
+        // word anywhere in what is sent.
+        assert!(!line.contains("--password "), "{line}");
+        assert!(!line.to_lowercase().contains("passphrase"), "{line}");
+    }
+
+    /// Nothing that could end one quoted argument and start another.
+    ///
+    /// The values are generated by superbackup today. That is a property of
+    /// today's caller, not of this function, and the command line it builds
+    /// runs as an administrator.
+    #[test]
+    fn a_name_that_could_break_out_of_its_quotes_is_refused() {
+        for bad in [
+            r#"Andreas" --service-home "C:\"#,
+            "Andreas\nmore",
+            "Andreas&whoami",
+            "Andreas|whoami",
+            "",
+            "   ",
+        ] {
+            let account = ElevatedAccount {
+                username: bad,
+                password_channel: "superbackup-handover-2f1c",
+                home: None,
+            };
+            assert!(
+                account.arguments().is_err(),
+                "{bad:?} must not reach an elevated command line"
+            );
+        }
+        // And the same for the channel name, which is the other value that
+        // comes from outside this function.
+        let account = ElevatedAccount {
+            username: "Andreas",
+            password_channel: r#"x" --user "Administrator"#,
+            home: None,
+        };
+        assert!(account.arguments().is_err());
+    }
+
+    /// With no account, nothing extra is passed at all.
+    #[test]
+    fn the_system_account_install_takes_no_arguments_of_its_own() {
+        // The `None` branch of `request_elevated_install_as`, asserted through
+        // the only part of it that does not start a process.
+        let account: Option<ElevatedAccount<'_>> = None;
+        assert!(account.is_none(), "the system-account path passes no account");
+    }
     use super::*;
     use uuid::Uuid;
 

@@ -2378,6 +2378,13 @@ pub mod set {
     pub const SERVICE_INSTALLED_RUNNING: &str = "Service: installed and running";
     pub const SERVICE_INSTALLED_STOPPED: &str = "Service: installed, not running";
     pub const SERVICE_NOT_INSTALLED: &str = "Service: not installed";
+    pub const SERVICE_ACCOUNT_TITLE: &str = "Which account should the service run as?";
+    pub const SERVICE_ACCOUNT_BODY: &str = "A service running as the computer cannot read your OneDrive folder, your mapped drives, or the secrets Windows keeps for your account — and superbackup's own configuration is one of them, so it would start, find nothing set up, and back up nothing. Running as you fixes all of that. Windows needs your account password once, to set it up.";
+    pub const SERVICE_ACCOUNT_USER: &str = "Account";
+    pub const SERVICE_ACCOUNT_USER_HINT: &str = r"DOMAIN\user, or .\user for a local account";
+    pub const SERVICE_ACCOUNT_PASSWORD: &str = "Windows password";
+    pub const SERVICE_ACCOUNT_WHERE: &str = "The password goes to Windows' Service Control Manager and nowhere else — not into superbackup's vault, not into a file, and not onto a command line. Windows keeps its own copy so the service can sign in after a restart; superbackup's copy is discarded as soon as it is handed over.";
+    pub const SERVICE_ACCOUNT_INSTALL: &str = "Install the service";
     pub const SERVICE_INSTALL: &str = "Install";
     pub const SERVICE_START: &str = "Start";
     pub const SERVICE_UNINSTALL: &str = "Uninstall";

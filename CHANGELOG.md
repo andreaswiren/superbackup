@@ -18,6 +18,21 @@ Nothing yet.
 
 ### Added
 
+- **The background service can run as you rather than as the computer.** A
+  service logged on as `LocalSystem` cannot read a OneDrive folder, a mapped
+  drive, or the secrets Windows keeps for an account — and superbackup's own
+  configuration is behind that last one, so it would have started, found a
+  machine-wide configuration nobody had set up, and backed up nothing. The
+  Install button now asks which account, defaulting to the one you are signed
+  in as, and gives the service `--home` so it opens your vault and your jobs.
+  The password goes to Windows' Service Control Manager and nowhere else: not
+  the vault, not a file, and not a command line, which every process on the
+  machine can read — the elevated installer collects it from a pipe whose
+  access list admits only your account, SYSTEM and the administrators group.
+  The account is also granted `SeServiceLogonRight` first, without which
+  Windows creates the service and then refuses to start it with a "logon
+  failure" that reads like a wrong password.
+
 - **Superbackup can update itself, from About.** It says whether a newer
   release exists, shows what changed, and installs it: the archive is verified
   against the `SHA256SUMS` published with the release *in memory*, before a
