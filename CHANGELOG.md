@@ -18,6 +18,25 @@ Nothing yet.
 
 ### Added
 
+- **Installers for all three platforms.** An MSI for Windows, `.deb` and
+  `.rpm` for Linux, and a `.dmg` for macOS, built in the release workflow from
+  the same binaries the archives carry — the same bytes packaged twice, not two
+  builds that share a version number — and covered by the same checksums and
+  build-provenance attestation. The MSI installs per-user into
+  `%LOCALAPPDATA%\Programs\superbackup` and needs no administrator, which is
+  what keeps the update button working: a copy under `%PROGRAMFILES%` cannot
+  replace itself. None of them installs a service or an autostart entry — those
+  are decisions superbackup asks about on first run, not ones an installer
+  should make while somebody reads a progress bar — and none of them touches a
+  vault, a configuration or a backup on the way out.
+
+  The macOS bundle carries the folder-access usage strings, without which the
+  first run on a Mac fails with "Operation not permitted" on folders that are
+  plainly readable in Finder. It is signed and notarised when the credentials
+  are present and ad-hoc signed when they are not, and says which it did:
+  without a Developer ID, Gatekeeper refuses the build on another Mac with a
+  message claiming the file is damaged.
+
 - **The background service can run as you rather than as the computer.** A
   service logged on as `LocalSystem` cannot read a OneDrive folder, a mapped
   drive, or the secrets Windows keeps for an account — and superbackup's own

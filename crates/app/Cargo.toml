@@ -40,3 +40,91 @@ winresource = "0.1.31"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_Security", "Win32_UI_WindowsAndMessaging"] }
+
+# ---------------------------------------------------------------------------
+# Linux packages
+# ---------------------------------------------------------------------------
+#
+# Built by `cargo deb` and `cargo generate-rpm` from the same binary the
+# tarball ships, so all three are the same bytes packaged three ways.
+#
+# ## What the package installs
+#
+# The executable, an icon, and a desktop entry. Nothing else, and in
+# particular: no systemd unit, no autostart, no service. Those are decisions
+# superbackup asks about on first run, and a package that makes them at
+# install time has decided something for a person who was reading `apt`
+# output.
+#
+# ## What it does not touch
+#
+# The vault, the configuration and the backups, on install and on removal
+# alike. `conf-files` is empty on purpose: nothing superbackup writes lives
+# under /etc, and marking user data as configuration would invite the package
+# manager to take an interest in it. An uninstaller that deletes the thing
+# being backed up would be the worst bug a backup tool could have.
+#
+# ## Dependencies
+#
+# `cargo deb` works most of them out from the linked libraries. The two listed
+# by hand are the ones a *tray* application needs and a linker does not see:
+# an AppIndicator implementation, without which the icon silently does not
+# appear, and libsecret, which the keyring uses through dlopen.
+#
+# kopia is not a dependency. superbackup manages its own copy, downloads it
+# verified, and works with a distribution one if there is a newer one on PATH
+# — making it a hard dependency would mean refusing to install on a machine
+# whose repository has no kopia at all, which is most of them.
+
+[package.metadata.deb]
+maintainer = "Andreas Wiren <andreas.wiren@gmail.com>"
+copyright = "2026 Andreas Wiren"
+license-file = ["../../LICENSE", "0"]
+extended-description = """
+superbackup backs up developer machines with Kopia: local folder copies, \
+encrypted repositories, and S3-compatible offsite storage, from a tray icon \
+and a window rather than a configuration file. It detects OneDrive, keeps one \
+destination folder per machine, and knows which of your folders are git \
+repositories with nothing pushed anywhere."""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/superbackup", "usr/bin/", "755"],
+    ["packaging/linux/superbackup.desktop", "usr/share/applications/", "644"],
+    ["assets/icons/png/superbackup-16.png", "usr/share/icons/hicolor/16x16/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-22.png", "usr/share/icons/hicolor/22x22/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-24.png", "usr/share/icons/hicolor/24x24/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-32.png", "usr/share/icons/hicolor/32x32/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-48.png", "usr/share/icons/hicolor/48x48/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-64.png", "usr/share/icons/hicolor/64x64/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-128.png", "usr/share/icons/hicolor/128x128/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-256.png", "usr/share/icons/hicolor/256x256/apps/superbackup.png", "644"],
+    ["assets/icons/png/superbackup-512.png", "usr/share/icons/hicolor/512x512/apps/superbackup.png", "644"],
+    ["assets/icons/superbackup.svg", "usr/share/icons/hicolor/scalable/apps/superbackup.svg", "644"],
+    ["README.md", "usr/share/doc/superbackup/README.md", "644"],
+    ["CHANGELOG.md", "usr/share/doc/superbackup/CHANGELOG.md", "644"],
+]
+depends = "$auto, libayatana-appindicator3-1 | libappindicator3-1, libsecret-1-0"
+conf-files = []
+
+[package.metadata.generate-rpm]
+summary = "Tray-native backup manager for developer machines, powered by Kopia"
+license = "MIT"
+url = "https://github.com/andreaswiren/superbackup"
+assets = [
+    { source = "target/release/superbackup", dest = "/usr/bin/superbackup", mode = "755" },
+    { source = "packaging/linux/superbackup.desktop", dest = "/usr/share/applications/superbackup.desktop", mode = "644" },
+    { source = "assets/icons/png/superbackup-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/superbackup.png", mode = "644" },
+    { source = "assets/icons/png/superbackup-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/superbackup.png", mode = "644" },
+    { source = "assets/icons/png/superbackup-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/superbackup.png", mode = "644" },
+    { source = "assets/icons/png/superbackup-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/superbackup.png", mode = "644" },
+    { source = "assets/icons/superbackup.svg", dest = "/usr/share/icons/hicolor/scalable/apps/superbackup.svg", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/superbackup/LICENSE", mode = "644", doc = true },
+    { source = "README.md", dest = "/usr/share/doc/superbackup/README.md", mode = "644", doc = true },
+]
+
+# Named rather than auto-detected: rpm's finder sees linked libraries, and the
+# tray icon and the keyring are both reached through dlopen.
+[package.metadata.generate-rpm.requires]
+libappindicator-gtk3 = "*"
+libsecret = "*"

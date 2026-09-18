@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer.
+
+  ## Per-user, not per-machine
+
+  It installs into %LOCALAPPDATA%\Programs\superbackup and needs no
+  administrator. That is a deliberate choice and not the usual default, for
+  three reasons:
+
+  * superbackup can update itself, and a copy under %PROGRAMFILES% cannot be
+    replaced without elevation — so a per-machine install would turn the
+    update button into a message explaining why it does not work.
+  * Everything superbackup owns is already per-user: the vault, the
+    configuration, the autostart entry, the Start menu shortcut. A machine-wide
+    binary serving per-user state is a split nobody benefits from.
+  * Installing needs no prompt at all, which is the difference between "run the
+    installer" and "find somebody with the administrator password".
+
+  The background service is the one machine-wide thing, and it asks for
+  elevation when it is installed — separately, from inside the application,
+  where it can also ask which account it should log on as.
+
+  ## What it does not do
+
+  No autostart entry and no service. Both are decisions the application asks
+  about on first run, and an installer that makes them silently is an installer
+  that has decided something on the user's behalf while they were reading a
+  progress bar.
+
+  Uninstalling removes the program and its shortcut. It never touches the
+  vault, the configuration or a single backup: an uninstaller that deletes the
+  thing being backed up would be the worst possible bug in a backup tool, and
+  "it was in the uninstaller's scope" is not a defence.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="superbackup"
+           Manufacturer="superbackup"
+           Version="$(var.Version)"
+           UpgradeCode="6f3b2c14-9c6d-4c8b-9d5a-3b1f0a7e2d48"
+           Scope="perUser"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <!-- Replace an older version in place rather than leaving two. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of superbackup is already installed. Uninstall it first if you really mean to go back."
+                  Schedule="afterInstallInitialize" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Shown in Apps &amp; features. -->
+    <Property Id="ARPPRODUCTICON" Value="superbackup.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/andreaswiren/superbackup" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Icon Id="superbackup.ico" SourceFile="$(var.IconPath)" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="superbackup" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="superbackup" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="Application" Directory="INSTALLFOLDER">
+      <Component Id="Executable" Guid="*">
+        <File Id="superbackup.exe"
+              Source="$(var.ExePath)"
+              KeyPath="yes"
+              Name="superbackup.exe" />
+      </Component>
+      <Component Id="Licence" Guid="*">
+        <File Id="LICENSE" Source="$(var.LicensePath)" Name="LICENSE" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="Shortcuts" Directory="ApplicationProgramsFolder">
+      <Component Id="StartMenuShortcut" Guid="*">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="superbackup"
+                  Description="Back up your folders, locally and offsite."
+                  Target="[INSTALLFOLDER]superbackup.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="superbackup.ico" />
+        <!-- Required for a per-user shortcut component to have a key path. -->
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\superbackup"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="superbackup" Level="1">
+      <ComponentGroupRef Id="Application" />
+      <ComponentGroupRef Id="Shortcuts" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtfPath)" />
+
+    <!--
+      Do not leave a running superbackup holding the file being replaced.
+      Without this the installer asks the user to close it by name in a dialog
+      that names the process rather than the program, or silently schedules a
+      reboot.
+    -->
+    <util:CloseApplication Id="CloseSuperbackup"
+                           Target="superbackup.exe"
+                           CloseMessage="yes"
+                           RebootPrompt="no"
+                           PromptToContinue="yes"
+                           Description="superbackup is running and has to close before it can be replaced." />
+  </Package>
+</Wix>

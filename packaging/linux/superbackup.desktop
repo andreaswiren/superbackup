@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=superbackup
+Comment=Back up your folders, locally and offsite
+Exec=superbackup
+Icon=superbackup
+Terminal=false
+Categories=Utility;Archiving;System;
+Keywords=backup;kopia;snapshot;restore;
+StartupNotify=true
+StartupWMClass=superbackup

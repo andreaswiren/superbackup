@@ -262,11 +262,75 @@ jobs:
           rm -rf "$stem"
           ls -la
 
+      # -----------------------------------------------------------------------
+      # Installers
+      # -----------------------------------------------------------------------
+      #
+      # Built after the archive and from the same binary, so the installer and
+      # the tarball are the same bytes packaged two ways rather than two builds
+      # that happen to share a version number.
+      #
+      # Every one of these is best-effort in exactly one sense: a packaging
+      # tool that fails must not throw away a release whose binaries are
+      # already built and attested. It is *not* best-effort about correctness —
+      # a step that produces a file produces a correct one or fails.
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $version = "${{ needs.preflight.outputs.version }}"
+          $arch = if ("${{ matrix.target }}" -like "aarch64*") { "arm64" } else { "x64" }
+          $out = "dist/superbackup-$version-$arch.msi"
+          ./packaging/windows/build.ps1 `
+            -ExePath "target/${{ matrix.target }}/release/superbackup.exe" `
+            -Version $version `
+            -Arch $arch `
+            -OutFile $out
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo install cargo-deb --locked --version 2.12.1
+          cargo install cargo-generate-rpm --locked --version 0.16.1
+
+          # Both read `target/release/superbackup` from the metadata in
+          # crates/app/Cargo.toml, and this job builds into a target-triple
+          # directory. Put it where they look rather than duplicating the paths
+          # in two manifests that would then drift.
+          mkdir -p target/release
+          cp "target/${{ matrix.target }}/release/superbackup" target/release/superbackup
+
+          # `--no-build` and `--no-strip`: the binary is already built and
+          # already the one that was attested, and stripping it here would make
+          # the package's contents differ from the archive's.
+          cargo deb -p superbackup --no-build --no-strip --output dist/
+          cargo generate-rpm -p crates/app --output dist/
+
+      - name: macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        continue-on-error: true
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.preflight.outputs.version }}"
+          arch=$([ "${{ matrix.target }}" = "aarch64-apple-darwin" ] && echo "arm64" || echo "x64")
+          ./packaging/macos/build.sh \
+            "target/${{ matrix.target }}/release/superbackup" \
+            "$version" \
+            "dist/superbackup-$version-$arch.dmg"
+
       - name: Checksum
         shell: bash
         run: |
           cd dist
-          for f in *.zip *.tar.gz; do
+          for f in *.zip *.tar.gz *.msi *.deb *.rpm *.dmg; do
             [ -e "$f" ] || continue
             if command -v sha256sum >/dev/null; then
               sha256sum "$f" > "$f.sha256"
@@ -284,7 +348,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: "dist/*.zip,dist/*.tar.gz"
+          subject-path: "dist/*.zip,dist/*.tar.gz,dist/*.msi,dist/*.deb,dist/*.rpm,dist/*.dmg"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -330,7 +394,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          find incoming -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
+          find incoming -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.msi'               -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' \) -exec cp {} dist/ \;
 
           # Windows is the priority platform. A release without it is not a
           # release, however many others built.

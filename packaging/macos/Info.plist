@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>superbackup</string>
+    <key>CFBundleDisplayName</key>
+    <string>superbackup</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.superbackup.superbackup</string>
+    <key>CFBundleExecutable</key>
+    <string>superbackup</string>
+    <key>CFBundleIconFile</key>
+    <string>superbackup</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+
+    <!--
+      A menu-bar application with a window, not a background-only one.
+
+      `LSUIElement` would hide it from the Dock and the app switcher, which is
+      what a pure menu-bar utility wants and what superbackup is not: it has a
+      window people spend time in, restoring files and reading run history, and
+      an application you cannot Cmd-Tab back to is one you lose behind whatever
+      you clicked next.
+    -->
+    <key>LSUIElement</key>
+    <false/>
+
+    <!--
+      Backing up a Mac means reading the folders macOS guards: Desktop,
+      Documents, Downloads, and anything on an external volume. Without these
+      the first run fails on `Operation not permitted` for folders that are
+      plainly readable in Finder, which is the single most confusing failure
+      on this platform.
+
+      The strings are what the permission dialog shows. They say what is being
+      asked for and why, because "superbackup would like to access files" tells
+      a person nothing they can decide on.
+    -->
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>superbackup backs up the folders you choose. It reads them to copy them and never sends anything anywhere you have not set up yourself.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>superbackup backs up the folders you choose. It reads them to copy them and never sends anything anywhere you have not set up yourself.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>superbackup backs up the folders you choose. It reads them to copy them and never sends anything anywhere you have not set up yourself.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>superbackup can back up to an external drive, or back one up. It reads and writes only the folders you point it at.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>superbackup can back up to a network share. It reads and writes only the folders you point it at.</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Andreas Wiren. MIT licensed.</string>
+</dict>
+</plist>

@@ -5,3 +5,12 @@
 /dist
 /.claude
 *.sbvault.local
+
+# Installer build output. The packaging *sources* are tracked; what they
+# produce is a release artefact and belongs on the release page.
+/target/msi/
+*.msi
+*.wixpdb
+*.deb
+*.rpm
+*.dmg
