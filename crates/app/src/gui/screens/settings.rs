@@ -270,7 +270,15 @@ impl App {
 
         widgets::form_group(ui, "Starting up", None);
         let mut autostart = self.data.settings.start_at_login;
-        if widgets::toggle(ui, &mut autostart, copy::set::AUTOSTART, None, true).clicked() {
+        if widgets::toggle(
+            ui,
+            &mut autostart,
+            copy::set::AUTOSTART,
+            Some(copy::set::AUTOSTART_BODY),
+            true,
+        )
+        .clicked()
+        {
             self.data.settings.start_at_login = autostart;
             changed = true;
         }
@@ -285,7 +293,19 @@ impl App {
             }
         });
 
+        // A section of its own, because it is a different thing rather than a
+        // better version of the one above.
+        //
+        // It was presented as the upgrade path for a person's own backups,
+        // which it cannot be: a service logs on as the computer, so it cannot
+        // read a user profile, a OneDrive folder or a mapped drive — the places
+        // a person's files are. Offered that way it installs, starts, and backs
+        // up nothing, with a toggle in Settings saying it is running.
         ui.add_space(space::XL);
+        widgets::form_group(ui, copy::set::SERVICE_GROUP, None);
+        widgets::paragraph_at(ui, copy::set::SERVICE_PURPOSE, Type::Small, t.text_muted, 560.0);
+        ui.add_space(space::M);
+
         let capabilities = superbackup_core::platform::capabilities();
         let mut service = self.data.settings.run_as_service;
         let service_reason = if capabilities.system_service {
@@ -304,7 +324,7 @@ impl App {
                     ui,
                     &mut service,
                     copy::set::SERVICE,
-                    Some(copy::onboarding::SERVICE_BODY),
+                    Some(copy::set::SERVICE_BLIND),
                     true,
                 )
                 .clicked()
@@ -316,6 +336,8 @@ impl App {
         }
         ui.add_space(space::M);
         let mut install = false;
+        let mut open_machine_setup = false;
+        let mut open_account_dialog = false;
         let status = match &self.data.service {
             Some(s) if s.installed && s.running => copy::set::SERVICE_INSTALLED_RUNNING,
             Some(s) if s.installed => copy::set::SERVICE_INSTALLED_STOPPED,
@@ -336,6 +358,49 @@ impl App {
         if install {
             self.install_service();
         }
+        if open_machine_setup {
+            match superbackup_core::platform::service::open_machine_configuration() {
+                // It opens as a separate, elevated process, so there is nothing
+                // to wait for and nothing to report beyond having asked.
+                Ok(()) => self.toasts.info(copy::set::SERVICE_SETUP_HINT),
+                Err(e) => self.toasts.danger(copy::set::SERVICE_SETUP, e.to_string()),
+            }
+        }
+        if open_account_dialog {
+            self.open_modal(crate::gui::modals::Modal::ServiceAccount(
+                crate::gui::modals::ServiceAccountState::for_this_account(),
+            ));
+        }
+
+        // The service's own configuration, and the account variant.
+        //
+        // Both are secondary on purpose. The service backs up the machine, so
+        // what it backs up is not in this window's configuration at all — and
+        // a service installed with nothing set up for it is a service that
+        // runs and copies nothing, which is what the Install button used to
+        // produce in silence.
+        ui.add_space(space::M);
+        widgets::paragraph_at(ui, copy::set::SERVICE_NEEDS_SETUP, Type::Small, t.text_muted, 560.0);
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            if Button::secondary(copy::set::SERVICE_SETUP)
+                .compact()
+                .show(ui)
+                .on_hover_text(copy::set::SERVICE_SETUP_HINT)
+                .clicked()
+            {
+                open_machine_setup = true;
+            }
+            if cfg!(windows) {
+                ui.add_space(space::M);
+                if widgets::link(ui, copy::set::SERVICE_AS_ACCOUNT)
+                    .on_hover_text(copy::set::SERVICE_AS_ACCOUNT_HINT)
+                    .clicked()
+                {
+                    open_account_dialog = true;
+                }
+            }
+        });
         ui.add_space(space::S);
         widgets::paragraph_at(
             ui,
@@ -1161,22 +1226,16 @@ impl App {
             return;
         }
 
-        // On Windows, ask who it should run as first.
+        // Nothing is asked. The service logs on as the computer, which needs no
+        // credential, and the machine-scope backups it is for are the ones an
+        // account could not reach anyway.
         //
-        // The default answer — the computer — cannot read a OneDrive folder, a
-        // mapped drive, or the secrets Windows keeps for an account, and
-        // superbackup's own configuration is behind that last one. Installed
-        // that way the service starts, finds a machine-wide configuration
-        // nobody has set up, and backs up nothing. Everywhere else the
-        // preferred service is a user unit already, and no password is
-        // involved.
-        if cfg!(windows) {
-            self.open_modal(crate::gui::modals::Modal::ServiceAccount(
-                crate::gui::modals::ServiceAccountState::for_this_account(),
-            ));
-            return;
-        }
-
+        // It briefly asked which account and for that account's password, on
+        // the reasoning that a service running as the user could see their
+        // OneDrive. It could — and it made a backup tool ask for a Windows
+        // password to do what the tray already does while somebody is signed
+        // in, which is not a trade worth making. `superbackup service install
+        // --user` is still there for a deployment that wants it.
         match service::request_elevated_install() {
             Ok(()) => {
                 // The prompt is up; it is answered by a person, and the

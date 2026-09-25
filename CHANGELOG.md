@@ -18,6 +18,20 @@ Nothing yet.
 
 ### Fixed
 
+- **The background service was offered as the better way to run your own
+  backups, which it cannot be.** It logs on as the computer, so it cannot read
+  a user profile, a OneDrive folder or a mapped drive — the places a person's
+  files actually are — and it keeps its own configuration, separate from yours.
+  Installed on that understanding it starts, finds nothing set up for it, and
+  copies nothing, with a toggle in Settings saying it is running. It is now
+  presented as what it is: a way to back up folders belonging to the *machine*
+  — system directories, service data, anything outside a profile — to S3 with
+  nobody signed in. Starting at login is how superbackup normally runs, and the
+  setting says so. Installing the service no longer asks for an account or a
+  password, because the computer account needs neither; there is a link for the
+  deployment that wants an account, and a button that opens the machine-wide
+  configuration so the service has something to run.
+
 - **"Start superbackup when I sign in" was switched on and did nothing.** The
   setting said on, the machine had no startup entry at all, and nothing ever
   compared the two — so superbackup silently never started at login while every

@@ -2373,8 +2373,20 @@ pub mod set {
     pub const THEME_LIGHT: &str = "Light";
     pub const THEME_DARK: &str = "Dark";
     pub const AUTOSTART: &str = "Start superbackup when I sign in";
+    pub const AUTOSTART_BODY: &str = "How superbackup normally runs. It sits in the tray as you, so it can read everything you can — your profile, your OneDrive, your mapped drives — and keeps to your schedules while you are signed in.";
+    pub const SERVICE_GROUP: &str = "Backing up the machine itself";
     pub const START_MINIMISED: &str = "Start minimised to the tray";
-    pub const SERVICE: &str = "Run backups as a background service";
+    pub const SERVICE: &str = "Also run a machine-wide service";
+    /// What the service is for, and what it is not for.
+    ///
+    /// It was offered as the better way to run *your* backups, which it is not
+    /// and cannot be: it logs on as the computer, so it cannot read a user
+    /// profile, a OneDrive folder or a mapped drive — the places a person's
+    /// files actually are. What it can do is the thing nothing else here can:
+    /// back up folders that belong to the machine, to object storage, with
+    /// nobody signed in.
+    pub const SERVICE_PURPOSE: &str = "For folders that belong to the computer rather than to you — system directories, service data, anything outside a user profile — backed up to S3 with nobody signed in.";
+    pub const SERVICE_BLIND: &str = "It logs on as the computer, so it cannot read your profile, your OneDrive or your mapped drives, and it has its own separate configuration and jobs. Your own backups keep running from the tray.";
     pub const SERVICE_INSTALLED_RUNNING: &str = "Service: installed and running";
     pub const SERVICE_INSTALLED_STOPPED: &str = "Service: installed, not running";
     pub const SERVICE_NOT_INSTALLED: &str = "Service: not installed";
@@ -2385,6 +2397,12 @@ pub mod set {
     pub const SERVICE_ACCOUNT_PASSWORD: &str = "Windows password";
     pub const SERVICE_ACCOUNT_WHERE: &str = "The password goes to Windows' Service Control Manager and nowhere else — not into superbackup's vault, not into a file, and not onto a command line. Windows keeps its own copy so the service can sign in after a restart; superbackup's copy is discarded as soon as it is handed over.";
     pub const SERVICE_ACCOUNT_INSTALL: &str = "Install the service";
+    pub const SERVICE_AS_ACCOUNT: &str = "Run it as an account instead…";
+    pub const SERVICE_AS_ACCOUNT_HINT: &str = "For a deployment that wants the service to see one person's files. It needs that account's Windows password, and for your own backups the tray already does this without one.";
+    /// Shown when the service has no configuration of its own yet.
+    pub const SERVICE_NEEDS_SETUP: &str = "The service keeps its own jobs and destinations, separate from yours, because it cannot read your profile. There is nothing set up for it on this machine yet.";
+    pub const SERVICE_SETUP: &str = "Set up the machine's backups…";
+    pub const SERVICE_SETUP_HINT: &str = "Opens a second superbackup window against the machine-wide configuration, as an administrator. What you set up there is what the service runs.";
     pub const SERVICE_INSTALL: &str = "Install";
     pub const SERVICE_START: &str = "Start";
     pub const SERVICE_UNINSTALL: &str = "Uninstall";

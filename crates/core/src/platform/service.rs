@@ -611,6 +611,24 @@ pub fn current_account() -> String {
 /// What the Service Control Manager puts between a domain and a user name.
 const SEPARATOR: char = '\\';
 
+/// Open a superbackup window against the machine-wide configuration, elevated.
+///
+/// The service backs up the machine, so what it backs up is not in the user's
+/// configuration at all: it has its own root, its own vault, its own jobs. That
+/// root is only writable by an administrator, which is why this is a second,
+/// elevated process rather than a screen in this one.
+///
+/// `gui --service` is an ordinary invocation that has worked all along; what
+/// was missing was any way to reach it, so a service could be installed with
+/// nothing set up for it and would run and copy nothing.
+///
+/// Two fixed words on the command line, like the install. Nothing to redirect.
+pub fn open_machine_configuration() -> Result<()> {
+    let executable = std::env::current_exe()
+        .map_err(|e| Error::Service(format!("superbackup cannot find its own path: {e}")))?;
+    platform_impl::request_elevated_install(&executable, "gui --service")
+}
+
 /// Who the elevated installer should make the service log on as.
 #[derive(Debug, Clone, Copy)]
 pub struct ElevatedAccount<'a> {
