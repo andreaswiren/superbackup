@@ -407,6 +407,12 @@ pub mod radius {
 }
 
 pub mod size {
+    /// The running-run throughput graph.
+    ///
+    /// Taller than it was, because it is now as wide as the card: 44px across
+    /// 1400 is a letterbox, and the vertical movement is the part that says
+    /// whether anything is still happening.
+    pub const GRAPH_H: f32 = 72.0;
     /// Left navigation rail, and its collapsed width below 1000px.
     pub const RAIL: f32 = 208.0;
     pub const RAIL_COLLAPSED: f32 = 64.0;

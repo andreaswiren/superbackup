@@ -641,8 +641,15 @@ impl App {
             if let Some(samples) = self.data.throughput.get(&run.run_id) {
                 if samples.len() >= 2 {
                     ui.add_space(space::M);
-                    let width = ui.available_width().min(560.0);
-                    widgets::throughput_graph(ui, samples, width, 44.0);
+                    // The whole width of the card, not 560px of it.
+                    //
+                    // This is the one thing on the dashboard whose *shape*
+                    // carries the information — a rate that has flattened out
+                    // against one that is merely low — and a shape squeezed into
+                    // a third of the available room is a shape you cannot read.
+                    // It sat as a small box on the left of a section stretching
+                    // the width of the window.
+                    widgets::throughput_graph(ui, samples, ui.available_width(), size::GRAPH_H);
                 }
             }
 

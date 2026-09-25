@@ -1178,14 +1178,44 @@ impl Handler for DaemonHandler {
         let autostart_spec = platform::autostart::AutostartSpec::current().ok();
         if let Some(spec) = &autostart_spec {
             let status = platform::autostart::status(spec).ok();
-            let needs_repair = status.as_ref().map(|s| s.state.needs_repair()).unwrap_or(false);
+            // Against the setting, not only against the executable's path.
+            //
+            // `needs_repair` covers an entry that exists and points somewhere
+            // wrong. It says nothing about an entry that is simply not there,
+            // which is indistinguishable from "the user turned it off" unless
+            // the setting is consulted — and it was not. A configuration saying
+            // `start_at_login: true` with no entry on the machine passed this
+            // check while superbackup silently never started.
+            let wanted = self.config().await.settings.start_at_login;
+            let missing = wanted
+                && status.as_ref().is_some_and(|s| {
+                    matches!(s.state, platform::autostart::AutostartState::Disabled)
+                });
+            let needs_repair =
+                missing || status.as_ref().map(|s| s.state.needs_repair()).unwrap_or(false);
             let mut c = check(
                 "autostart.healthy",
-                "Start at login points at this build",
+                "Start at login is set up the way settings say",
                 if needs_repair { CheckStatus::Warn } else { CheckStatus::Pass },
             );
+            if missing {
+                c.detail = Some(
+                    "Start at login is switched on in settings, but this machine has no entry                      for it, so superbackup does not start by itself."
+                        .to_string(),
+                );
+            }
             c.fixable = needs_repair;
-            if needs_repair && fix {
+            if missing && fix {
+                match platform::autostart::enable(spec) {
+                    Ok(()) => {
+                        fixed.push("autostart.healthy".to_string());
+                        c.status = CheckStatus::Pass;
+                        c.fixable = false;
+                        c.detail = Some("Start at login was set up.".to_string());
+                    }
+                    Err(e) => c.detail = Some(e.to_string()),
+                }
+            } else if needs_repair && fix {
                 match platform::autostart::heal(spec) {
                     Ok(Some(event)) => {
                         self.runtime.record_event(event);

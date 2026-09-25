@@ -213,6 +213,16 @@ pub async fn run(
             if surface.has_tray() { "tray" } else { "headless" }
         ),
     ));
+
+    // The machine is made to agree with the settings before anything else
+    // reads either. See `reconcile_autostart`: these were two facts nothing
+    // compared, and the interface believed the one that was wrong.
+    //
+    // Not for the service instance: it runs as another account, with another
+    // profile, and "start at login" is not a thing a service does.
+    if !paths.service_scope {
+        reconcile_autostart(&paths, &runtime, settings.start_at_login);
+    }
     if let Some(warning) = notifier.platform_warning() {
         runtime.record_event(Event::new(Severity::Warning, "notify.limited", warning.to_string()));
     }
@@ -368,6 +378,158 @@ fn acquire_instance(paths: &Paths) -> Result<InstanceGuard> {
             Err(Error::Validation(format!("superbackup is already running. {}", record.describe())))
         }
     }
+}
+
+/// Make the machine agree with `start_at_login`, at every start.
+///
+/// # Why this exists
+///
+/// Because the setting and the machine were two facts nothing compared. The
+/// configuration said `start_at_login: true`, the registry had no entry at all,
+/// the Settings screen drew the toggle from the configuration and showed it on
+/// — and superbackup did not start at login, for weeks, with every screen
+/// insisting that it would.
+///
+/// [`autostart::heal`] was meant to cover this and covers a narrower case: an
+/// entry that exists and points at the wrong executable. An entry that was
+/// never written, or that something removed — a cleanup tool, a migration, an
+/// uninstall of an older copy, a profile rebuilt on a new machine — is
+/// `Disabled`, which is also what "the user turned it off" looks like. Only the
+/// setting distinguishes the two, and nothing was reading it.
+///
+/// # What it does not do
+///
+/// It never turns autostart *on* for somebody who did not ask. The setting is
+/// the intent, and this only makes the machine match it in both directions:
+/// asked for and missing gets written, not asked for and present gets removed.
+///
+/// An entry it does not recognise is left exactly where it is. That one belongs
+/// to another install, or to something the user put there by hand, and a backup
+/// tool that quietly rewrites other people's startup entries is a backup tool
+/// that has overstepped.
+///
+/// Failure is never fatal. A machine that cannot write a registry key still
+/// backs up perfectly well while it is running, and the event says what went
+/// wrong so it is visible rather than merely true.
+fn reconcile_autostart(paths: &Paths, runtime: &Arc<Runtime>, wanted: bool) {
+    use superbackup_core::platform::autostart;
+
+    // Never from a throwaway installation, and never from a build artefact.
+    //
+    // The integration tests start the real daemon against a configuration root
+    // under the system temporary directory — and the *registry* is not scoped
+    // by that root, so the first version of this function wrote the developer's
+    // own start-at-login entry to point at
+    // `target/debug/deps/daemon_lifecycle-<hash>.exe`. Running the test suite
+    // broke autostart on the machine that ran it, which is the exact fault
+    // this function was added to fix, caused by the fix.
+    //
+    // Two rules, because one of them is about the configuration and the other
+    // about the binary, and either alone leaves a hole: `cargo run` has a real
+    // configuration root and a binary nobody should be starting at login.
+    if paths.root().is_some_and(|root| superbackup_core::paths::is_temporary(&root)) {
+        tracing::debug!("throwaway configuration root; leaving start-at-login alone");
+        return;
+    }
+    if is_build_artefact(&std::env::current_exe().unwrap_or_default()) {
+        tracing::debug!("running from a build directory; leaving start-at-login alone");
+        return;
+    }
+
+    let spec = match autostart::AutostartSpec::current() {
+        Ok(spec) => spec,
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot work out this program's own path for autostart");
+            return;
+        }
+    };
+    let status = match autostart::status(&spec) {
+        Ok(status) => status,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the start-at-login entry");
+            return;
+        }
+    };
+
+    let event = match autostart::reconcile(&status.state, wanted) {
+        autostart::Reconcile::Nothing => return,
+
+        // The fault this function exists for: asked for, and not there.
+        autostart::Reconcile::Enable => match autostart::enable(&spec) {
+            Ok(()) => Event::warn(
+                "autostart.restored",
+                format!(
+                    "Start at login was switched on in settings but had no entry on this                      machine, so superbackup was not starting by itself. It is set up now, at {}.",
+                    status.location
+                ),
+            ),
+            Err(e) => Event::warn(
+                "autostart.unrepairable",
+                format!(
+                    "Start at login is switched on but could not be set up: {e}. Superbackup                      will not start by itself until this is fixed."
+                ),
+            ),
+        },
+
+        // There, pointing somewhere else. What `heal` has always covered.
+        autostart::Reconcile::Repoint => match autostart::heal(&spec) {
+            Ok(Some(event)) => event,
+            Ok(None) => return,
+            Err(e) => Event::warn(
+                "autostart.unrepairable",
+                format!("Start at login points at an old location and could not be fixed: {e}"),
+            ),
+        },
+
+        // Switched off, with an entry we wrote still on the machine.
+        autostart::Reconcile::Disable => match autostart::disable() {
+            Ok(()) => Event::info(
+                "autostart.removed",
+                "Start at login is switched off, so the entry still on this machine was removed."
+                    .to_string(),
+            ),
+            Err(e) => Event::warn(
+                "autostart.unrepairable",
+                format!("Start at login is switched off but the entry could not be removed: {e}"),
+            ),
+        },
+
+        // Somebody else's. Reported, never touched.
+        autostart::Reconcile::LeaveAlone => Event::warn(
+            "autostart.unrecognised",
+            format!(
+                "The start-at-login entry holds something superbackup did not write ({}), so it                  was left alone. Superbackup may not start when you log in.",
+                status.registered_command.clone().unwrap_or_default()
+            ),
+        ),
+    };
+    runtime.record_event(event);
+}
+
+/// Is this executable one `cargo` built, rather than one somebody installed?
+///
+/// A path with a `target/debug` or `target/release` component in it. Crude, and
+/// right for the thing it guards: nothing under a build directory should be
+/// registering itself to start at login, and a test binary living in
+/// `target/debug/deps` is exactly what got written into a real registry once.
+///
+/// It deliberately does not catch a copy the developer put somewhere else on
+/// purpose — `dist/superbackup.exe`, say — because that one is being used as
+/// an installation and behaving like one is correct.
+fn is_build_artefact(exe: &std::path::Path) -> bool {
+    let mut components = exe.components().peekable();
+    while let Some(component) = components.next() {
+        if component.as_os_str() != "target" {
+            continue;
+        }
+        if let Some(next) = components.peek() {
+            let name = next.as_os_str().to_string_lossy();
+            if name == "debug" || name == "release" || name.contains("-") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Open the store, creating nothing.
@@ -721,6 +883,54 @@ async fn finish_runs(
 
 #[cfg(test)]
 mod tests {
+
+    /// A binary cargo built never registers itself to start at login.
+    ///
+    /// The integration tests start the real daemon, and the registry is not
+    /// scoped by the temporary configuration root they use — so the first
+    /// version of the reconcile wrote the developer's own start-at-login entry
+    /// to point at `target/debug/deps/daemon_lifecycle-<hash>.exe`. Running the
+    /// test suite broke autostart on the machine that ran it: the exact fault
+    /// the reconcile was added to fix, caused by the fix.
+    #[test]
+    fn nothing_under_a_build_directory_registers_itself_to_start_at_login() {
+        for built in [
+            r"C:\Users\Andreas\workspace\superbackup\target\debug\deps\daemon_lifecycle-5e30.exe",
+            r"C:\Users\Andreas\workspace\superbackup\target\debug\superbackup.exe",
+            r"C:\Users\Andreas\workspace\superbackup\target\release\superbackup.exe",
+            "/home/me/superbackup/target/release/superbackup",
+            // A cross-compiled build sits under target/<triple>/release.
+            "/home/me/superbackup/target/x86_64-unknown-linux-gnu/release/superbackup",
+        ] {
+            assert!(
+                super::is_build_artefact(std::path::Path::new(built)),
+                "{built} must not write an autostart entry"
+            );
+        }
+    }
+
+    /// A copy somebody put somewhere on purpose is an installation.
+    ///
+    /// `dist/superbackup.exe` is being used as one, and behaving like one is
+    /// correct — the guard is about build output, not about being outside
+    /// Program Files.
+    #[test]
+    fn a_copy_that_is_being_used_as_an_installation_still_registers() {
+        for installed in [
+            r"C:\Users\Andreas\workspace\superbackup\dist\superbackup.exe",
+            r"C:\Users\Andreas\AppData\Local\Programs\superbackup\superbackup.exe",
+            r"C:\Program Files\superbackup\superbackup.exe",
+            "/usr/bin/superbackup",
+            // "target" as somebody's folder name, not a build directory.
+            "/home/me/target/superbackup",
+        ] {
+            assert!(
+                !super::is_build_artefact(std::path::Path::new(installed)),
+                "{installed} is an installation and should register normally"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

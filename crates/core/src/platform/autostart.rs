@@ -287,6 +287,45 @@ pub fn disable() -> Result<()> {
     }
 }
 
+/// What has to happen to make the machine agree with the setting.
+///
+/// Separated from doing it so the decision is testable without a registry, and
+/// so the one place that decides is one function rather than a match arm buried
+/// in the daemon's start-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reconcile {
+    /// They already agree.
+    Nothing,
+    /// Asked for, and no entry exists. Write one.
+    Enable,
+    /// Not asked for, and an entry we wrote exists. Remove it.
+    Disable,
+    /// Asked for, and the entry points at another location. Re-point it.
+    Repoint,
+    /// The entry belongs to something else. Say so; touch nothing.
+    LeaveAlone,
+}
+
+/// Compare what the settings ask for against what the machine has.
+///
+/// # Why the setting has to be part of this
+///
+/// [`AutostartState::Disabled`] means "there is no entry". That is the correct
+/// state for somebody who turned autostart off, and the broken state for
+/// somebody who turned it on — and the two are indistinguishable from the
+/// machine alone. Nothing read the setting, so a configuration saying
+/// `start_at_login: true` with no entry anywhere passed every check while
+/// superbackup silently never started at login.
+pub fn reconcile(state: &AutostartState, wanted: bool) -> Reconcile {
+    match (state, wanted) {
+        (AutostartState::Unrecognised { .. }, _) => Reconcile::LeaveAlone,
+        (AutostartState::Enabled, true) | (AutostartState::Disabled, false) => Reconcile::Nothing,
+        (AutostartState::Disabled, true) => Reconcile::Enable,
+        (AutostartState::Stale { .. }, true) => Reconcile::Repoint,
+        (AutostartState::Enabled | AutostartState::Stale { .. }, false) => Reconcile::Disable,
+    }
+}
+
 /// Re-point a stale entry at the current executable.
 ///
 /// Returns an [`Event`] describing what was fixed, or `None` when nothing
@@ -714,6 +753,52 @@ fn xml_unescape(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// The setting and the machine are two facts, and only comparing them
+    /// finds the one that matters.
+    ///
+    /// `Disabled` is the right state for somebody who turned autostart off and
+    /// the broken state for somebody who turned it on. Nothing read the
+    /// setting, so a configuration saying `start_at_login: true` with no entry
+    /// on the machine passed every check for weeks while superbackup silently
+    /// never started at login.
+    #[test]
+    fn an_entry_that_was_asked_for_and_is_missing_gets_written() {
+        assert_eq!(super::reconcile(&AutostartState::Disabled, true), super::Reconcile::Enable);
+        // And the same state, not asked for, is simply correct.
+        assert_eq!(super::reconcile(&AutostartState::Disabled, false), super::Reconcile::Nothing);
+    }
+
+    /// It never turns autostart on for somebody who did not ask.
+    #[test]
+    fn the_setting_is_the_intent_in_both_directions() {
+        assert_eq!(super::reconcile(&AutostartState::Enabled, true), super::Reconcile::Nothing);
+        assert_eq!(super::reconcile(&AutostartState::Enabled, false), super::Reconcile::Disable);
+    }
+
+    /// A stale entry is re-pointed when wanted and removed when not.
+    #[test]
+    fn a_stale_entry_is_repointed_or_removed_according_to_the_setting() {
+        let stale = AutostartState::Stale {
+            registered: "C:/old/superbackup.exe".into(),
+            expected: "C:/new/superbackup.exe".into(),
+        };
+        assert_eq!(super::reconcile(&stale, true), super::Reconcile::Repoint);
+        assert_eq!(super::reconcile(&stale, false), super::Reconcile::Disable);
+    }
+
+    /// Somebody else's entry is never touched, whatever the setting says.
+    ///
+    /// It belongs to another install, or to something put there by hand. A
+    /// backup tool that quietly rewrites other people's startup entries has
+    /// overstepped, and doing it while "repairing" would be worse.
+    #[test]
+    fn an_entry_we_did_not_write_is_left_exactly_where_it_is() {
+        let theirs = AutostartState::Unrecognised { registered: "C:/other/thing.exe --go".into() };
+        assert_eq!(super::reconcile(&theirs, true), super::Reconcile::LeaveAlone);
+        assert_eq!(super::reconcile(&theirs, false), super::Reconcile::LeaveAlone);
+    }
+
     use super::*;
 
     fn spec(path: &str) -> AutostartSpec {

@@ -16,6 +16,24 @@ Nothing yet.
 
 ## [0.11.1] - 2026-09-16
 
+### Fixed
+
+- **"Start superbackup when I sign in" was switched on and did nothing.** The
+  setting said on, the machine had no startup entry at all, and nothing ever
+  compared the two — so superbackup silently never started at login while every
+  screen insisted it would. The existing repair only covered an entry that
+  exists and points at the wrong place; one that was never written, or that
+  something removed, looks exactly like "the user turned it off" unless the
+  setting is consulted, and it was not. The machine is now made to agree with
+  the setting at every start, in both directions, and an entry superbackup did
+  not write is reported and left alone rather than clobbered.
+
+- **The throughput graph on the dashboard was a small box in a wide section.**
+  It is the one thing on that screen whose shape carries the information — a
+  rate that has flattened out against one that is merely low — and it was capped
+  at 560px inside a card stretching the width of the window. It now uses the
+  full width, and is taller to match.
+
 ### Added
 
 - **Installers for all three platforms.** An MSI for Windows, `.deb` and

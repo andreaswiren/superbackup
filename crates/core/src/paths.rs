@@ -390,7 +390,7 @@ pub fn remember_root_in(dir: &Path, root: &Path) -> Result<()> {
     harden_file(&path)
 }
 
-/// Is this root somewhere that exists only for the length of one process?
+/// Is this path somewhere that exists only for the length of one process?
 ///
 /// A configuration root under the system temporary directory is never a thing
 /// to reopen at the next login: temp is cleaned, and an installation somebody
@@ -405,7 +405,7 @@ pub fn remember_root_in(dir: &Path, root: &Path) -> Result<()> {
 /// the pointer exists to prevent, reintroduced by the pointer. The suite sets
 /// `SUPERBACKUP_STATE_DIR` now as well, but a rule that holds only while every
 /// caller remembers an environment variable is not a rule.
-fn is_temporary(root: &Path) -> bool {
+pub fn is_temporary(root: &Path) -> bool {
     let temp = std::env::temp_dir();
     let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
     let temp = std::path::absolute(&temp).unwrap_or(temp);
