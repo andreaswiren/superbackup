@@ -18,6 +18,17 @@ Nothing yet.
 
 ### Fixed
 
+- **An offsite copy that was complete, correct and unreadable.** `repository
+  sync-to` runs from the *source's* driver and writes the copy's blobs without
+  ever touching the copy's own kopia config file — and nothing else ever
+  connected it. So a destination whose last run had succeeded an hour earlier
+  could not list its snapshots, could not be restored from and could not be
+  verified, every one of them answering "This destination is not connected to
+  its repository". The data was there the whole time. A copy is connected as
+  soon as it has been written, and any read of a destination nothing has opened
+  connects it first — which also covers a repository copied here by another
+  machine, and one whose config file a disk cleaner removed.
+
 - **A restore error that read as nonsense.** "repository This destination is
   not connected to its repository. is not connected" — three error variants
   were written as though they carried a name (`repository {0} is not

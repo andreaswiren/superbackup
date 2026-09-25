@@ -554,6 +554,27 @@ impl KopiaExecutor {
 
         match result {
             Ok(outcome) => {
+                // The copy exists now; connect to it, so it can be read.
+                //
+                // `sync-to` is run from the *source's* driver and writes the
+                // replica's blobs without ever touching the replica's own kopia
+                // config file — so the copy was complete, correct, and
+                // unreadable. Listing its snapshots, restoring from it or
+                // verifying it all failed with "This destination is not
+                // connected to its repository", about a destination whose last
+                // run had succeeded.
+                //
+                // Never for a rehearsal, which wrote nothing to connect to.
+                if !rehearsal {
+                    if let Err(e) = self.connect_replica(&request).await {
+                        // Not a failure of the copy, which happened. The data
+                        // is there and the next read will connect on its own.
+                        warnings.push(format!(
+                            "\"{}\" was copied but could not be opened for reading yet: {e}",
+                            request.destination.name
+                        ));
+                    }
+                }
                 warnings.extend(outcome.warnings);
                 if outcome.blobs_copied == 0 && !rehearsal {
                     warnings.push(format!(
@@ -594,6 +615,28 @@ impl KopiaExecutor {
                 Err(map_kopia_error(e))
             }
         }
+    }
+
+    /// Open the replica that was just written, so it can be read from.
+    ///
+    /// A replica has no passphrase of its own — it opens with the source's,
+    /// which is what `destination_passphrase` chain-resolves — so this needs
+    /// the destination's own driver rather than the source's, and it is only
+    /// possible once the copy exists.
+    async fn connect_replica(&self, request: &ReplicateRequest) -> ExecutorResult<()> {
+        let driver = {
+            let store = self.runtime.store.lock().await;
+            let binary = self.runtime.kopia().ok_or_else(|| {
+                ExecutorError::new(ErrorCode::KopiaMissing, "kopia is not available").permanent()
+            })?;
+            build_driver(&store, &self.runtime.paths, binary, &request.destination)
+                .map_err(config_error)?
+        };
+        let ctx = RunContext::new();
+        if driver.is_connected(&ctx).await {
+            return Ok(());
+        }
+        driver.connect_repository(&ctx).await.map_err(map_kopia_error)
     }
 
     /// The mirror branch: no repository, no kopia, no secrets.

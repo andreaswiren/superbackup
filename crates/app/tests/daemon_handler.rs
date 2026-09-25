@@ -1095,6 +1095,67 @@ async fn a_replica_destination_can_be_created_and_is_given_no_key_of_its_own() {
     assert!(second.destination.encryption.is_none(), "and so were the settings");
 }
 
+/// Reading a destination opens it first, if nothing has opened it before.
+///
+/// `repository sync-to` runs from the *source's* driver and writes the
+/// replica's blobs without ever touching the replica's own kopia config file.
+/// So an offsite copy could be complete, correct, and unreadable: its snapshots
+/// would not list, it could not be restored from and it could not be verified,
+/// every one of them failing with "This destination is not connected to its
+/// repository" about a destination whose last run had succeeded an hour
+/// earlier.
+///
+/// The same hole swallows a repository copied here by another machine, and one
+/// whose config file a disk cleaner removed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reading_a_destination_nothing_has_connected_connects_it_first() {
+    if !daemon_support::kopia_available() {
+        return;
+    }
+    let mut home = None;
+    let harness = Harness::start("connect-on-read", |_config, root| {
+        home = Some(root.to_path_buf());
+    })
+    .await;
+    let home = home.expect("a home");
+    let client = harness.client().await;
+    client.unlock(SecretString::from_string(PASSPHRASE.to_string())).await.expect("unlock");
+
+    // Created through the daemon, so the repository passphrase is minted and
+    // stored the way a real one is. Nothing connects it: creating a
+    // destination describes a place, it does not open one.
+    let mut draft = repository("offsite", home.join("offsite"));
+    // The fixture carries a handle pointing at nothing; `create` mints and
+    // stores a real one only when there is none.
+    draft.passphrase_ref = None;
+    let Reply::Destination(created) =
+        harness.call(&client, Request::DestinationCreate { destination: Box::new(draft) }).await
+    else {
+        panic!("expected a destination reply")
+    };
+    let destination = created.destination.id.to_string();
+
+    let before = harness.invocations().len();
+    let _ =
+        harness.call(&client, Request::SnapshotList { destination, job: None, limit: 50 }).await;
+    let after: Vec<Vec<String>> = harness.invocations().into_iter().skip(before).collect();
+
+    let connected = after
+        .iter()
+        .position(|argv| argv.windows(2).any(|w| w == ["repository", "connect"]))
+        .unwrap_or_else(|| {
+            panic!("listing snapshots must open the repository first; kopia saw {after:?}")
+        });
+    let listed = after
+        .iter()
+        .position(|argv| argv.windows(2).any(|w| w == ["snapshot", "list"]))
+        .unwrap_or_else(|| panic!("the snapshots were never listed; kopia saw {after:?}"));
+    assert!(
+        connected < listed,
+        "the connection has to come first, or the listing is the thing that fails: {after:?}"
+    );
+}
+
 /// A wrong secret key is reported as a credential failure — never as a missing
 /// repository, and never as an unreachable endpoint.
 ///

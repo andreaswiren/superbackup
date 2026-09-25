@@ -211,6 +211,46 @@ impl DaemonHandler {
         Ok((destination, driver?))
     }
 
+    /// [`Self::driver_for`], with the repository actually open.
+    ///
+    /// # Why reading has to connect
+    ///
+    /// kopia keeps a per-destination config file describing a connection, and
+    /// nothing creates one for a **copy**. `repository sync-to` runs from the
+    /// *source's* driver and writes the replica's blobs without touching the
+    /// replica's own config file — so an offsite copy could be complete,
+    /// correct, and unreadable. Its snapshots would not list, it could not be
+    /// restored from and it could not be verified, all with "This destination
+    /// is not connected to its repository", about a destination whose last run
+    /// had succeeded an hour earlier.
+    ///
+    /// The same hole swallows a repository copied here by another machine, and
+    /// one whose config file a disk cleaner removed.
+    ///
+    /// Connecting is idempotent and costs one kopia call that is skipped
+    /// entirely when a connection already exists, which is nearly always. It
+    /// cannot invent anything: with no repository at the location it fails, and
+    /// the caller reports that, which is the honest answer to "show me what is
+    /// in here".
+    async fn driver_ready(
+        &self,
+        needle: &str,
+    ) -> Result<(Destination, superbackup_core::kopia::KopiaDriver)> {
+        let (target, driver) = self.driver_for(needle).await?;
+        let ctx = RunContext::new();
+        if !driver.is_connected(&ctx).await {
+            driver.connect_repository(&ctx).await.map_err(kopia_to_error)?;
+            self.runtime.record_event(
+                Event::info(
+                    "repo.connected",
+                    format!("Opened the repository at \"{}\" for reading.", target.name),
+                )
+                .with_destination(target.id),
+            );
+        }
+        Ok((target, driver))
+    }
+
     /// Resolve a provider's stored key pair for one S3 request.
     ///
     /// The resolved material lives only as long as the returned [`S3Keys`],
@@ -2772,7 +2812,7 @@ impl Handler for DaemonHandler {
             return Ok(reply);
         }
 
-        let (_, driver) = self.driver_for(&destination).await?;
+        let (_, driver) = self.driver_ready(&destination).await?;
         let ctx = RunContext::new();
         let snapshots = driver.list_snapshots(None, true, &ctx).await.map_err(kopia_to_error)?;
         let blobs = driver.blob_stats(&ctx).await.ok();
@@ -3151,7 +3191,7 @@ impl Handler for DaemonHandler {
             Some(needle) => Some(resolve_job(&config, needle)?.id),
             None => None,
         };
-        let (target, driver) = self.driver_for(&destination).await?;
+        let (target, driver) = self.driver_ready(&destination).await?;
         let manifests = driver.browse_roots(&RunContext::new()).await.map_err(kopia_to_error)?;
         let cap = if limit == 0 { MAX_SNAPSHOTS } else { (limit as usize).min(MAX_SNAPSHOTS) };
         let snapshots = manifests
@@ -3176,7 +3216,7 @@ impl Handler for DaemonHandler {
         // destination resolves or the snapshot exists — otherwise a traversal
         // attempt gets whatever error those happen to produce instead.
         browse_target(&snapshot, &path)?;
-        let (_, driver) = self.driver_for(&destination).await?;
+        let (_, driver) = self.driver_ready(&destination).await?;
         // Browsing addresses a kopia **object**, not a snapshot manifest.
         //
         // `snapshot.list` reports a manifest id, and that is what every client
@@ -3246,7 +3286,7 @@ impl Handler for DaemonHandler {
             .map_err(|e| Error::io(format!("creating {}", root.display()), e))?;
         superbackup_core::paths::harden_dir(&root)?;
 
-        let (_, driver) = self.driver_for(&destination).await?;
+        let (_, driver) = self.driver_ready(&destination).await?;
         let object = self.snapshot_root_object(&driver, &snapshot).await?;
         let source = browse_target(&object, &path)?;
 
@@ -3304,7 +3344,7 @@ impl Handler for DaemonHandler {
             return Err(Error::Validation("the restore target must be an absolute path".into()));
         }
         let options = restore_options(conflict)?;
-        let (dest, driver) = self.driver_for(&destination).await?;
+        let (dest, driver) = self.driver_ready(&destination).await?;
         // The same resolution browsing uses. `kopia restore` happens to accept
         // a manifest id as well, but a *path inside* one has to be addressed
         // from the root object — and having restore and browse disagree about
@@ -3454,7 +3494,7 @@ impl Handler for DaemonHandler {
         if snapshot.trim().is_empty() {
             return Err(Error::Validation("no snapshot was named".into()));
         }
-        let (target, driver) = self.driver_for(&destination).await?;
+        let (target, driver) = self.driver_ready(&destination).await?;
         // `confirm: true` is this call site stating, in code, that a human
         // asked. The IPC command is itself the confirmation.
         driver
