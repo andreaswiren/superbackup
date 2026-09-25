@@ -54,8 +54,45 @@
     <!-- Shown in Apps &amp; features. -->
     <Property Id="ARPPRODUCTICON" Value="superbackup.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/andreaswiren/superbackup" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/andreaswiren/superbackup/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/andreaswiren/superbackup/releases" />
+    <!--
+      No Repair. There is one feature and one file, so it would reinstall the
+      same executable behind a button that looks like it does something.
+
+      No Modify either, but that one is set by `WixUI_InstallDir` itself and
+      declaring it here as well is an error rather than a duplicate.
+    -->
     <Property Id="ARPNOREPAIR" Value="1" />
     <Icon Id="superbackup.ico" SourceFile="$(var.IconPath)" />
+
+    <!--
+      Offer to start it, and default to yes.
+
+      Somebody who just installed a backup tool wants it running; the
+      alternative is an installer that finishes to a dialog saying nothing
+      happened and a tray with no icon in it. It is still a checkbox, because
+      an installer that launches something unasked on a machine being imaged is
+      the other way to get this wrong.
+    -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Start superbackup now" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <SetProperty Id="LaunchApplication"
+                 Value="&quot;[INSTALLFOLDER]superbackup.exe&quot;"
+                 Before="CostFinalize"
+                 Sequence="ui" />
+    <CustomAction Id="LaunchApplication"
+                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+                  DllEntry="WixShellExec"
+                  Impersonate="yes" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UI>
+      <Publish Dialog="ExitDialog"
+               Control="Finish"
+               Event="DoAction"
+               Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
 
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="ProgramsFolder" Name="Programs">
@@ -103,7 +140,6 @@
       <ComponentGroupRef Id="Shortcuts" />
     </Feature>
 
-    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtfPath)" />
 
     <!--

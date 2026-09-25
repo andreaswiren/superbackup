@@ -399,7 +399,10 @@ impl DaemonHandler {
             repository_present: Some(repository_present),
             detail: match (writable, repository_present) {
                 (false, _) => write_problem,
-                (true, false) => Some(copy_no_repository_yet(&destination.kind)),
+                (true, false) => Some(copy_no_repository_yet(
+                    &destination.kind,
+                    replica_source_name(&config, destination).as_deref(),
+                )),
                 (true, true) => None,
             },
         }
@@ -2504,7 +2507,10 @@ impl Handler for DaemonHandler {
 
         let detail =
             match (reachable, writable, repository_present) {
-                (true, true, Some(false)) => Some(copy_no_repository_yet(&target.kind)),
+                (true, true, Some(false)) => Some(copy_no_repository_yet(
+                    &target.kind,
+                    replica_source_name(&config, &target).as_deref(),
+                )),
                 (true, true, _) => None,
                 _ => Some(problem.unwrap_or_else(|| {
                     "The location could not be reached or written to.".to_string()
@@ -4619,17 +4625,41 @@ pub fn service_reach_summary(config: &superbackup_core::model::Config) -> String
 /// the right thing — a bucket is not a folder — say what a repository *is* in
 /// terms of what it does for them, and say where the control lives, because
 /// "use Create repository" is useless if you do not know which screen it is on.
-fn copy_no_repository_yet(kind: &DestinationKind) -> String {
+fn copy_no_repository_yet(kind: &DestinationKind, copy_of: Option<&str>) -> String {
     let place = match kind {
         DestinationKind::S3 { .. } => "bucket",
         DestinationKind::OneDrive { .. } => "OneDrive folder",
         _ => "folder",
     };
+    // A copy has no "Create repository" step, and telling somebody to look for
+    // one sends them to a button that is deliberately not there.
+    //
+    // Its repository is made by `sync-to` during the run of a job that backs
+    // up the destination it copies from — so an empty one means no such run
+    // has happened, which is a different fact with a different remedy.
+    // Restoring from it said only "This destination is not connected to its
+    // repository": true, unexplanatory, and leading nowhere.
+    if let Some(source) = copy_of {
+        return format!(
+            "The {place} is reachable and empty. This destination is a copy of {source:?}, and a              copy is made while a job runs — there is nothing here until a job that backs up              {source:?} also includes this destination. Nothing has been copied yet, so there is              nothing to restore."
+        );
+    }
     format!(
-        "The {place} is reachable, but it has no backup repository in it yet. A repository \
-         is the encrypted store superbackup writes snapshots into, and it is created once \
-         per destination. Open this destination from the Destinations list and choose \
-         \"Create repository\" to set it up."
+        "The {place} is reachable, but it has no backup repository in it yet. A repository          is the encrypted store superbackup writes snapshots into, and it is created once          per destination. Open this destination from the Destinations list and choose          \"Create repository\" to set it up."
+    )
+}
+
+/// The name of the destination this one copies from, when it copies from one.
+fn replica_source_name(
+    config: &superbackup_core::model::Config,
+    destination: &superbackup_core::model::Destination,
+) -> Option<String> {
+    let source = destination.replicate_from?;
+    Some(
+        config
+            .destination(&source)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| "its source".to_string()),
     )
 }
 

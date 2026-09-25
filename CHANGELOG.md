@@ -18,6 +18,18 @@ Nothing yet.
 
 ### Fixed
 
+- **A restore error that read as nonsense.** "repository This destination is
+  not connected to its repository. is not connected" — three error variants
+  were written as though they carried a name (`repository {0} is not
+  connected`) while one caller handed them a finished sentence. They carry the
+  sentence now, and the caller that had only a name writes one.
+
+- **And the sentence itself explained nothing.** A copy-to destination with
+  nothing in it was reported as "not connected to its repository", which sent
+  the reader to look for a "Create repository" button that is deliberately not
+  there — a copy's repository is made by `sync-to` during a job's run. It now
+  says which destination it is a copy of, and that nothing has been copied yet.
+
 - **The background service was offered as the better way to run your own
   backups, which it cannot be.** It logs on as the computer, so it cannot read
   a user profile, a OneDrive folder or a mapped drive — the places a person's
@@ -61,6 +73,15 @@ Nothing yet.
   are decisions superbackup asks about on first run, not ones an installer
   should make while somebody reads a progress bar — and none of them touches a
   vault, a configuration or a backup on the way out.
+
+  The Windows installer was then taken through its whole life on a real
+  machine: install, upgrade in place over an earlier version, and uninstall.
+  One entry in Apps & features rather than two after the upgrade; the program
+  folder, the Start-menu shortcut and the registration all gone after the
+  uninstall; and the vault, the configuration and the backups untouched. It
+  offers to start superbackup when it finishes, and the build script now fails
+  when WiX fails — it had reported success while describing an MSI from a
+  previous run.
 
   The macOS bundle carries the folder-access usage strings, without which the
   first run on a Mac fails with "Operation not permitted" on folders that are

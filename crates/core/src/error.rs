@@ -90,10 +90,12 @@ pub enum Error {
     #[error("kopia exited with status {status}: {stderr}")]
     Kopia { status: i32, stderr: String },
 
-    #[error("repository {0} is not connected")]
+    /// Already a complete sentence. See the note on [`Error::JobCancelled`].
+    #[error("{0}")]
     RepoNotConnected(String),
 
-    #[error("a repository already exists at {0}")]
+    /// Already a complete sentence. See the note on [`Error::JobCancelled`].
+    #[error("{0}")]
     RepoExists(String),
 
     #[error("invalid schedule: {0}")]
@@ -105,7 +107,19 @@ pub enum Error {
     #[error("job {0} is already running")]
     JobRunning(String),
 
-    #[error("job {0} was cancelled")]
+    /// Already a complete sentence, not a name.
+    ///
+    /// These three used to read like the others here — `repository {0} is not
+    /// connected`, as if the payload were a repository's name. Two callers
+    /// built them from a name and one from kopia's already-finished sentence,
+    /// and the second produced "repository This destination is not connected
+    /// to its repository. is not connected" on the Restore screen.
+    ///
+    /// A sentence is what both callers can always supply and what every reader
+    /// of these wants, so that is what they carry. The caller that had a bare
+    /// name now writes the sentence around it, where it knows what the name
+    /// means.
+    #[error("{0}")]
     JobCancelled(String),
 
     #[error("IPC failure: {0}")]

@@ -89,6 +89,12 @@ try {
     dotnet tool run wix -- extension add --global WixToolset.UI.wixext/5.0.2 2>&1 | Out-Null
     dotnet tool run wix -- extension add --global WixToolset.Util.wixext/5.0.2 2>&1 | Out-Null
 
+    # Any earlier attempt's output goes first. Without this a build that fails
+    # leaves the previous MSI in place and the check at the end passes on it —
+    # which is exactly what happened: wix printed WIX0038, the script said
+    # "built", and the file it was describing was twenty minutes old.
+    Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+
     dotnet tool run wix -- build `
         (Join-Path $PSScriptRoot 'superbackup.wxs') `
         -arch $Arch `
@@ -100,6 +106,7 @@ try {
         -d "LicensePath=$(Join-Path $root 'LICENSE')" `
         -d "LicenseRtfPath=$rtfPath" `
         -o $OutFile
+    if ($LASTEXITCODE -ne 0) { throw "wix failed with exit code $LASTEXITCODE" }
 }
 finally {
     Pop-Location

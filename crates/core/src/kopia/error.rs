@@ -387,11 +387,15 @@ impl From<KopiaError> for Error {
     fn from(e: KopiaError) -> Error {
         match e.failure {
             KopiaFailure::WrongPassword => Error::BadPassphrase,
-            KopiaFailure::RepositoryExists => Error::RepoExists(e.command.clone()),
+            // The sentence, not the command. These variants carry a finished
+            // message; handing them `kopia snapshot list` produced "repository
+            // kopia snapshot list is not connected", which names the wrong
+            // thing and explains nothing.
+            KopiaFailure::RepositoryExists => Error::RepoExists(e.message.clone()),
             KopiaFailure::NotConnected | KopiaFailure::RepositoryNotFound => {
-                Error::RepoNotConnected(e.command.clone())
+                Error::RepoNotConnected(e.message.clone())
             }
-            KopiaFailure::Cancelled => Error::JobCancelled(e.command.clone()),
+            KopiaFailure::Cancelled => Error::JobCancelled(e.message.clone()),
             KopiaFailure::Unusable => Error::KopiaMissing,
             _ => Error::Kopia { status: e.status.unwrap_or(-1), stderr: e.to_string() },
         }
