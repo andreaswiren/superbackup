@@ -35,7 +35,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{Error, ErrorCode, Result};
+use crate::error::{ErrorCode, Result};
 use crate::model::NotificationSettings;
 use crate::redact;
 use crate::state::{Event, Severity};
@@ -396,9 +396,10 @@ pub fn register_toast_identity(display_name: &str) -> Result<()> {
 
         let path = format!(r"Software\Classes\AppUserModelId\{APP_USER_MODEL_ID}");
         let key = RegKey::create(Hive::CurrentUser, &path)
-            .map_err(|e| Error::io(format!("creating {path}"), e))?;
-        key.set_string("DisplayName", display_name)
-            .map_err(|e| Error::io("naming superbackup for Windows notifications", e))?;
+            .map_err(|e| crate::error::Error::io(format!("creating {path}"), e))?;
+        key.set_string("DisplayName", display_name).map_err(|e| {
+            crate::error::Error::io("naming superbackup for Windows notifications", e)
+        })?;
 
         // The icon Windows draws on the toast. `current_exe` rather than a
         // configured path: the icon has to be a file that exists, and the one
@@ -406,7 +407,7 @@ pub fn register_toast_identity(display_name: &str) -> Result<()> {
         if let Ok(exe) = std::env::current_exe() {
             let icon = format!("{},0", exe.display());
             key.set_string("IconUri", &icon)
-                .map_err(|e| Error::io("setting the notification icon", e))?;
+                .map_err(|e| crate::error::Error::io("setting the notification icon", e))?;
             // Read by older shells than the one that reads IconUri. Both are
             // cheap and neither is harmful on a shell that ignores it.
             let _ = key.set_string("IconBackgroundColor", "0");

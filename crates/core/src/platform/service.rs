@@ -1547,10 +1547,17 @@ mod platform_impl {
     /// it, and a backup tool silently invoking a privilege helper is not a
     /// thing to add on a maybe. The honest answer is the command to run.
     pub fn request_elevated_install(executable: &Path, arguments: &str) -> Result<()> {
+        // The arguments, not a hardcoded "service install". The caller may be
+        // asking for a service under a named account, or for the machine-wide
+        // configuration window — and a message naming the wrong command is worse
+        // than no message, because it is followed.
         Err(Error::Service(format!(
-            "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
-             service install\n\nOr install a per-user service, which needs no privileges at \
-             all.",
+            "This needs root. Run it in a terminal:
+
+    sudo {} {arguments}
+
+Or \
+             install a per-user service, which needs no privileges at all.",
             executable.display()
         )))
     }
@@ -1696,10 +1703,17 @@ mod platform_impl {
     /// it, and a backup tool silently invoking a privilege helper is not a
     /// thing to add on a maybe. The honest answer is the command to run.
     pub fn request_elevated_install(executable: &Path, arguments: &str) -> Result<()> {
+        // The arguments, not a hardcoded "service install". The caller may be
+        // asking for a service under a named account, or for the machine-wide
+        // configuration window — and a message naming the wrong command is worse
+        // than no message, because it is followed.
         Err(Error::Service(format!(
-            "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
-             service install\n\nOr install a per-user service, which needs no privileges at \
-             all.",
+            "This needs root. Run it in a terminal:
+
+    sudo {} {arguments}
+
+Or \
+             install a per-user service, which needs no privileges at all.",
             executable.display()
         )))
     }
@@ -1832,10 +1846,17 @@ mod platform_impl {
     /// it, and a backup tool silently invoking a privilege helper is not a
     /// thing to add on a maybe. The honest answer is the command to run.
     pub fn request_elevated_install(executable: &Path, arguments: &str) -> Result<()> {
+        // The arguments, not a hardcoded "service install". The caller may be
+        // asking for a service under a named account, or for the machine-wide
+        // configuration window — and a message naming the wrong command is worse
+        // than no message, because it is followed.
         Err(Error::Service(format!(
-            "Installing a system service needs root. Run this in a terminal:\n\n    sudo {} \
-             service install\n\nOr install a per-user service, which needs no privileges at \
-             all.",
+            "This needs root. Run it in a terminal:
+
+    sudo {} {arguments}
+
+Or \
+             install a per-user service, which needs no privileges at all.",
             executable.display()
         )))
     }
