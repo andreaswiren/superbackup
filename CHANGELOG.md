@@ -14,7 +14,7 @@ rather than mangling it.
 
 Nothing yet.
 
-## [0.11.1] - 2026-09-16
+## [0.11.1] - 2026-09-26
 
 ### Fixed
 
