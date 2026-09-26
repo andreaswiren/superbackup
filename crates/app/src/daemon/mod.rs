@@ -904,10 +904,26 @@ mod tests {
     /// the reconcile was added to fix, caused by the fix.
     #[test]
     fn nothing_under_a_build_directory_registers_itself_to_start_at_login() {
+        // Backslash-separated paths only on Windows.
+        //
+        // `Path::components` splits on the host's separator, so a Windows
+        // path on Linux is one opaque component and nothing inside it can be
+        // recognised. Asserting otherwise asserts that Rust's path type does
+        // something it does not, which is how this passed here and failed in
+        // CI.
+        #[cfg(windows)]
         for built in [
-            r"C:\Users\Andreas\workspace\superbackup\target\debug\deps\daemon_lifecycle-5e30.exe",
-            r"C:\Users\Andreas\workspace\superbackup\target\debug\superbackup.exe",
-            r"C:\Users\Andreas\workspace\superbackup\target\release\superbackup.exe",
+            r"C:\Users\me\superbackup\target\debug\deps\daemon_lifecycle-5e30.exe",
+            r"C:\Users\me\superbackup\target\release\superbackup.exe",
+        ] {
+            assert!(
+                super::is_build_artefact(std::path::Path::new(built)),
+                "{built} must not write an autostart entry"
+            );
+        }
+
+        for built in [
+            "/home/me/superbackup/target/debug/deps/daemon_lifecycle-5e30",
             "/home/me/superbackup/target/release/superbackup",
             // A cross-compiled build sits under target/<triple>/release.
             "/home/me/superbackup/target/x86_64-unknown-linux-gnu/release/superbackup",
@@ -926,11 +942,20 @@ mod tests {
     /// Program Files.
     #[test]
     fn a_copy_that_is_being_used_as_an_installation_still_registers() {
+        #[cfg(windows)]
         for installed in [
-            r"C:\Users\Andreas\workspace\superbackup\dist\superbackup.exe",
-            r"C:\Users\Andreas\AppData\Local\Programs\superbackup\superbackup.exe",
+            r"C:\Users\me\superbackup\dist\superbackup.exe",
             r"C:\Program Files\superbackup\superbackup.exe",
+        ] {
+            assert!(
+                !super::is_build_artefact(std::path::Path::new(installed)),
+                "{installed} is an installation and should register normally"
+            );
+        }
+
+        for installed in [
             "/usr/bin/superbackup",
+            "/home/me/.local/share/superbackup/superbackup",
             // "target" as somebody's folder name, not a build directory.
             "/home/me/target/superbackup",
         ] {
