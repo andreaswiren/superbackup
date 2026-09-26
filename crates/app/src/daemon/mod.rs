@@ -203,6 +203,7 @@ pub async fn run(
         Arc::clone(&notifier),
     );
     events::spawn_event_log(Arc::clone(&runtime));
+    events::spawn_held_notifications(Arc::clone(&runtime));
     environment.spawn_sampler();
 
     runtime.record_event(Event::info(
@@ -222,6 +223,15 @@ pub async fn run(
     // profile, and "start at login" is not a thing a service does.
     if !paths.service_scope {
         reconcile_autostart(&paths, &runtime, settings.start_at_login);
+        // Claim a toast identity, so notifications can reach anybody at all.
+        //
+        // Without it Windows attributes them to whatever raised them —
+        // PowerShell — and they are easy not to see. Superbackup had a
+        // locked-vault alert and a job-failure alert, both correct, both
+        // raised, and neither could reach a person.
+        if let Err(e) = superbackup_core::platform::notify::register_toast_identity("superbackup") {
+            tracing::warn!(error = %e, "could not register for Windows notifications");
+        }
     }
     if let Some(warning) = notifier.platform_warning() {
         runtime.record_event(Event::new(Severity::Warning, "notify.limited", warning.to_string()));

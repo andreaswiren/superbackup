@@ -1218,6 +1218,32 @@ impl Handler for DaemonHandler {
         svc.detail = service.detail.clone();
         checks.push(svc);
 
+        // Can a notification actually reach anybody?
+        //
+        // Every alert superbackup raises — a failed job, a locked vault
+        // blocking a schedule — goes through this, and on Windows an
+        // unregistered application's toasts are attributed to whatever process
+        // raised them and are easy not to see at all. Both alerts existed and
+        // worked and could reach nobody, which is indistinguishable from not
+        // having them.
+        {
+            let registration = platform::notify::toast_registration();
+            let mut c = check(
+                "notifications.deliverable",
+                "Notifications can reach you",
+                if registration.registered { CheckStatus::Pass } else { CheckStatus::Warn },
+            );
+            c.detail = registration.warning.clone().or_else(|| {
+                // Say what is being held and why, when something is. A person
+                // who has just tested notifications during a game should be
+                // told that is why nothing appeared.
+                platform::attention::attention()
+                    .reason()
+                    .map(|r| format!("Notifications are being held because {}.", r.describe()))
+            });
+            checks.push(c);
+        }
+
         let autostart_spec = platform::autostart::AutostartSpec::current().ok();
         if let Some(spec) = &autostart_spec {
             let status = platform::autostart::status(spec).ok();

@@ -18,6 +18,33 @@ Nothing yet.
 
 ### Fixed
 
+- **Superbackup's alerts could not reach anybody on Windows.** It has had a
+  job-failure alert and a locked-vault alert for a long time, both correct and
+  both raised — and Windows attributes a toast from an unregistered desktop
+  application to whichever process raised it, which for this one is PowerShell,
+  and such a toast is easy not to see at all. Superbackup now claims a toast
+  identity of its own at every start, with its name and its icon, needing no
+  installer and no administrator. `doctor` reports whether notifications can
+  actually be delivered rather than only printing the caveat. The check for a
+  Start-menu shortcut also looked only at the top level and missed the one the
+  installer creates inside a folder.
+
+### Added
+
+- **Notifications respect a full-screen game, a presentation, and Do Not
+  Disturb.** A toast over a game is how an application's notifications get
+  switched off entirely — after which it can no longer say that the backups
+  have stopped, which is the one message it exists to deliver. On Windows it
+  asks the system, which covers full-screen Direct3D, presentation mode and
+  Focus Assist quiet hours in one call; macOS holds notifications itself during
+  a Focus, and Linux has no standard to ask, so both are left to the platform.
+
+  Nothing is discarded. A held notification is kept and raised when the moment
+  passes: a failure at the start of a three-hour game is otherwise a failure
+  nobody is ever told about. Repeats of the same problem collapse to the most
+  recent one, so an evening of hourly failures produces one message rather than
+  eleven.
+
 - **An offsite copy that was complete, correct and unreadable.** `repository
   sync-to` runs from the *source's* driver and writes the copy's blobs without
   ever touching the copy's own kopia config file — and nothing else ever

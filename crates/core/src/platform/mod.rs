@@ -38,6 +38,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub mod attention;
 pub mod autostart;
 pub mod disk;
 pub mod gdrive;

@@ -495,6 +495,29 @@ const EVENT_LOG_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// is called from the engine's hot path and from IPC handlers, and neither may
 /// be made to wait on a disk write. A dropped line under extreme pressure is
 /// acceptable; a stalled backup is not.
+/// Raise notifications that were held while somebody was busy.
+///
+/// A failure at the start of a three-hour game is a failure nobody would ever
+/// be told about if it were simply dropped, and "your backups stopped a week
+/// ago" is the one sentence this application exists to say. So it is kept and
+/// raised when the game ends.
+///
+/// Every thirty seconds. The check is one cheap platform query that returns
+/// immediately when the queue is empty, which it is essentially always, and
+/// half a minute is well under the threshold at which somebody finishing a
+/// game would notice a delay.
+pub fn spawn_held_notifications(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(EVERY);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            runtime.notifier.release_held();
+        }
+    })
+}
+
 pub fn spawn_event_log(runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     runtime.set_event_log(tx);

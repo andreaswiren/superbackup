@@ -35,7 +35,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::ErrorCode;
+use crate::error::{Error, ErrorCode, Result};
 use crate::model::NotificationSettings;
 use crate::redact;
 use crate::state::{Event, Severity};
@@ -264,6 +264,9 @@ pub enum NotifyOutcome {
     Unavailable { reason: String },
     /// The platform rejected it. Logged instead.
     Failed { reason: String },
+    /// The person is mid-game, presenting, or in Do Not Disturb. **Kept**, and
+    /// raised when that ends — see [`Notifier::release_held`].
+    Held { reason: crate::platform::attention::Reason },
 }
 
 impl NotifyOutcome {
@@ -361,20 +364,82 @@ pub struct ToastRegistration {
 /// known, which happens either through a Start-menu shortcut carrying the
 /// `System.AppUserModel.ID` property or through an
 /// `HKCU\Software\Classes\AppUserModelId\<AUMID>` key. We look for both.
+/// Claim a toast identity with Windows, so notifications say who they are from.
+///
+/// # Why this is needed
+///
+/// Windows attributes every toast to an Application User Model ID, and a
+/// desktop application that has not registered one gets the identity of
+/// whatever process raised the toast — which for this one is PowerShell. A
+/// notification saying "Backup failed" over the name and icon of Windows
+/// PowerShell is one a person cannot act on, cannot find the settings for, and
+/// will reasonably not trust.
+///
+/// Worse, and this is the part that mattered: it is easy for such a toast not
+/// to appear at all. Superbackup had a locked-vault alert and a job-failure
+/// alert, both correct, both raised, and neither could reach anybody.
+///
+/// The registration is a per-user registry key with a display name and an
+/// icon, which is the documented route for an application that is not packaged
+/// as an MSIX. It needs no elevation and no installer.
+///
+/// # Idempotent and self-correcting
+///
+/// Written at every start. Re-registering costs two small registry writes and
+/// fixes the case that actually happens: the executable moved — an update, a
+/// move out of a build tree, an MSI install over a portable copy — leaving the
+/// icon pointing at a file that is no longer there.
+pub fn register_toast_identity(display_name: &str) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use super::win32::{Hive, RegKey};
+
+        let path = format!(r"Software\Classes\AppUserModelId\{APP_USER_MODEL_ID}");
+        let key = RegKey::create(Hive::CurrentUser, &path)
+            .map_err(|e| Error::io(format!("creating {path}"), e))?;
+        key.set_string("DisplayName", display_name)
+            .map_err(|e| Error::io("naming superbackup for Windows notifications", e))?;
+
+        // The icon Windows draws on the toast. `current_exe` rather than a
+        // configured path: the icon has to be a file that exists, and the one
+        // certainty available is the program that is running.
+        if let Ok(exe) = std::env::current_exe() {
+            let icon = format!("{},0", exe.display());
+            key.set_string("IconUri", &icon)
+                .map_err(|e| Error::io("setting the notification icon", e))?;
+            // Read by older shells than the one that reads IconUri. Both are
+            // cheap and neither is harmful on a shell that ignores it.
+            let _ = key.set_string("IconBackgroundColor", "0");
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        // Nothing to claim. Linux notifications carry the desktop-entry name,
+        // which `shortcut::install` writes, and macOS uses the bundle
+        // identifier from `Info.plist`.
+        let _ = display_name;
+        Ok(())
+    }
+}
+
 pub fn toast_registration() -> ToastRegistration {
     #[cfg(windows)]
     {
         use super::win32::{Hive, RegKey};
         let key_path = format!(r"Software\Classes\AppUserModelId\{APP_USER_MODEL_ID}");
         let by_registry = RegKey::open(Hive::CurrentUser, &key_path).is_some();
+        // Both places a shortcut lands. `shortcut::install` writes one at the
+        // top level; the MSI puts its own inside a `superbackup` folder, which
+        // is the conventional layout and which this check used to miss — so a
+        // properly installed copy still reported itself unregistered.
         let by_shortcut = std::env::var_os("APPDATA")
             .map(std::path::PathBuf::from)
             .map(|appdata| {
-                appdata
-                    .join(r"Microsoft\Windows\Start Menu\Programs")
-                    .join(format!("{APP_NAME}.lnk"))
+                let programs = appdata.join(r"Microsoft\Windows\Start Menu\Programs");
+                programs.join(format!("{APP_NAME}.lnk")).exists()
+                    || programs.join(APP_NAME).join(format!("{APP_NAME}.lnk")).exists()
             })
-            .map(|p| p.exists())
             .unwrap_or(false);
 
         if by_registry || by_shortcut {
@@ -432,12 +497,72 @@ pub fn installer_requirements() -> Vec<String> {
 
 type ActionSink = Arc<dyn Fn(ActionTarget) + Send + Sync>;
 
+// ---------------------------------------------------------------------------
+// Held while somebody is busy
+// ---------------------------------------------------------------------------
+
+/// Notifications waiting for a moment to be raised.
+///
+/// # Why hold rather than drop
+///
+/// Because the alternative loses the message. A backup that fails at the start
+/// of a three-hour game is a backup nobody is told about, and "your backups
+/// stopped a week ago" is the one sentence this application exists to say. So
+/// a notification raised while the person is busy is kept and raised when they
+/// are not.
+///
+/// # Why one per subject
+///
+/// A job failing every hour for an evening should produce one message when the
+/// game ends, not eleven. The key is the dedupe key, so the same job with the
+/// same error collapses to its most recent instance — which is also the most
+/// accurate one.
+///
+/// # Bounded
+///
+/// A machine left presenting for a week with a broken configuration could
+/// otherwise accumulate one entry per distinct failure for ever. The cap is
+/// generous enough that reaching it means something is very wrong, and
+/// reaching it drops the *oldest*, because the newest is the one that still
+/// describes the present.
+#[derive(Debug, Default)]
+struct HeldQueue {
+    entries: Vec<(String, Notification)>,
+}
+
+/// More distinct held notifications than this and the oldest are dropped.
+const MAX_HELD: usize = 32;
+
+impl HeldQueue {
+    fn hold(&mut self, notification: &Notification) {
+        let key = notification.dedupe_key();
+        if let Some(slot) = self.entries.iter_mut().find(|(k, _)| *k == key) {
+            slot.1 = notification.clone();
+            return;
+        }
+        self.entries.push((key, notification.clone()));
+        if self.entries.len() > MAX_HELD {
+            self.entries.remove(0);
+        }
+    }
+
+    fn drain(&mut self) -> Vec<Notification> {
+        std::mem::take(&mut self.entries).into_iter().map(|(_, n)| n).collect()
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 /// The notification front door. Cheap to clone via `Arc`; safe to share.
 pub struct Notifier {
     settings: Mutex<NotificationSettings>,
     dedupe: Mutex<DedupeCache>,
     registration: ToastRegistration,
     sink: Mutex<Option<ActionSink>>,
+    /// Raised while somebody was busy, waiting for a moment. See [`HeldQueue`].
+    held: Mutex<HeldQueue>,
     /// When true, nothing is handed to the platform — everything is logged.
     /// Used by the service (session 0 has no desktop) and by tests.
     log_only: bool,
@@ -460,6 +585,7 @@ impl Notifier {
             dedupe: Mutex::new(DedupeCache::new()),
             registration: toast_registration(),
             sink: Mutex::new(None),
+            held: Mutex::new(HeldQueue::default()),
             log_only: false,
         }
     }
@@ -536,6 +662,34 @@ impl Notifier {
             }
         }
 
+        // Is this a moment to interrupt?
+        //
+        // After the dedupe check on purpose: a repeat that would have been
+        // swallowed anyway should not displace the held copy of the one that
+        // was not. And before redaction, because a held notification is
+        // redacted when it is finally shown, by the same path as any other.
+        //
+        // Never for `log_only`, which is writing to a file nobody is looking
+        // at, and never for an `Info`, which is not worth keeping for later.
+        if !self.log_only && notification.kind != NotificationKind::Info {
+            if let Some(reason) = crate::platform::attention::attention().reason() {
+                let held = {
+                    let mut queue = match self.held.lock() {
+                        Ok(g) => g,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    queue.hold(notification);
+                    queue.len()
+                };
+                tracing::info!(
+                    reason = reason.describe(),
+                    held,
+                    "notification held until this machine is free"
+                );
+                return NotifyOutcome::Held { reason };
+            }
+        }
+
         // Redaction is the last thing before the text leaves the process, and
         // there is no path to `deliver` that skips it.
         let title = redact::scrub(&notification.title).into_owned();
@@ -547,6 +701,51 @@ impl Notifier {
         }
 
         self.deliver(notification, title, body)
+    }
+
+    /// Raise everything that was held, if this is now a moment to.
+    ///
+    /// Called on a timer by the daemon. Returns how many were shown, which is
+    /// zero on the overwhelming majority of calls — the queue is empty and
+    /// this costs one cheap platform query.
+    ///
+    /// The dedupe window is deliberately not re-applied on the way out. These
+    /// have already passed it once; applying it again at release time would
+    /// swallow the very message that was being kept, because the thing it
+    /// would be compared against is itself.
+    pub fn release_held(&self) -> usize {
+        {
+            let empty = match self.held.lock() {
+                Ok(g) => g.len() == 0,
+                Err(poisoned) => poisoned.into_inner().len() == 0,
+            };
+            if empty {
+                return 0;
+            }
+        }
+        if !crate::platform::attention::attention().accepts_notifications() {
+            return 0;
+        }
+
+        let waiting = {
+            let mut queue = match self.held.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            queue.drain()
+        };
+        let mut shown = 0;
+        for notification in waiting {
+            let title = redact::scrub(&notification.title).into_owned();
+            let body = redact::scrub(&notification.body).into_owned();
+            if self.deliver(&notification, title, body).was_shown() {
+                shown += 1;
+            }
+        }
+        if shown > 0 {
+            tracing::info!(shown, "held notifications raised");
+        }
+        shown
     }
 
     fn deliver(&self, notification: &Notification, title: String, body: String) -> NotifyOutcome {
@@ -687,6 +886,52 @@ mod tests {
         Notification::new(NotificationKind::Failure, "Backup failed", "disk full")
             .with_job(job)
             .with_error_code(ErrorCode::Io)
+    }
+
+    /// A held notification is kept, not lost.
+    ///
+    /// This is the whole reason holding is safe. A backup that fails at the
+    /// start of a three-hour game must still be reported when the game ends;
+    /// dropping it would mean the one message this application exists to
+    /// deliver is the one it silently discards.
+    #[test]
+    fn what_is_held_is_kept_and_the_newest_wins() {
+        let mut queue = HeldQueue::default();
+        let job = Uuid::new_v4();
+        queue.hold(&failure(job));
+        queue.hold(&failure(job));
+        assert_eq!(queue.len(), 1, "the same problem collapses to one message");
+
+        // A different job is a different message.
+        queue.hold(&failure(Uuid::new_v4()));
+        assert_eq!(queue.len(), 2);
+
+        let raised = queue.drain();
+        assert_eq!(raised.len(), 2);
+        assert_eq!(queue.len(), 0, "draining hands them over exactly once");
+        assert!(queue.drain().is_empty(), "and there is nothing left to raise twice");
+    }
+
+    /// The held queue cannot grow without limit.
+    ///
+    /// A machine left presenting for a week with a broken configuration would
+    /// otherwise accumulate an entry per distinct failure for ever. Reaching
+    /// the cap drops the oldest, because the newest still describes the
+    /// present.
+    #[test]
+    fn holding_is_bounded_and_drops_the_oldest_first() {
+        let mut queue = HeldQueue::default();
+        let first = failure(Uuid::new_v4());
+        queue.hold(&first);
+        for _ in 0..MAX_HELD {
+            queue.hold(&failure(Uuid::new_v4()));
+        }
+        assert_eq!(queue.len(), MAX_HELD);
+        let keys: Vec<String> = queue.drain().iter().map(|n| n.dedupe_key()).collect();
+        assert!(
+            !keys.contains(&first.dedupe_key()),
+            "the oldest is the one that goes when the cap is reached"
+        );
     }
 
     #[test]
