@@ -18,6 +18,11 @@ Nothing yet.
 
 ### Fixed
 
+- **rustls updated for RUSTSEC-2026-0285.** TLS 1.3 handshake messages were
+  accepted across encryption level boundaries. rustls is the transport for
+  every S3 upload, every StorJ connection and every release download
+  superbackup makes, so this is not a dependency it can be relaxed about.
+
 - **Superbackup's alerts could not reach anybody on Windows.** It has had a
   job-failure alert and a locked-vault alert for a long time, both correct and
   both raised — and Windows attributes a toast from an unregistered desktop
