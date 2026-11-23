@@ -66,20 +66,6 @@ ignore = [
     { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS; Linux AT-SPI introspection only, no untrusted XML, no upgrade path" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS; same reachability as above" },
 
-    # --- Unmaintained --------------------------------------------------------
-    # gtk-rs GTK3 bindings. The entire Linux tray and file-dialog ecosystem
-    # (tray-icon, rfd) sits on these; GTK3 bindings were retired upstream in
-    # favour of GTK4, which that ecosystem has not moved to. Unmaintained is not
-    # the same as vulnerable, and there is no alternative that keeps a working
-    # Linux tray.
-    { id = "RUSTSEC-2024-0412", reason = "gdk: unmaintained GTK3 binding; required by the Linux tray, no GTK4 alternative in tray-icon" },
-    { id = "RUSTSEC-2024-0413", reason = "atk: as above" },
-    { id = "RUSTSEC-2024-0415", reason = "gtk: as above" },
-    { id = "RUSTSEC-2024-0416", reason = "atk-sys: as above" },
-    { id = "RUSTSEC-2024-0418", reason = "gdk-sys: as above" },
-    { id = "RUSTSEC-2024-0419", reason = "gdkwayland/gtk-sys: as above" },
-    { id = "RUSTSEC-2024-0420", reason = "gdkx11: as above" },
-
     # Build-time only; neither ships in the binary.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: build-time macro helper, not present at runtime" },
     { id = "RUSTSEC-2024-0436", reason = "paste: build-time macro helper, not present at runtime" },
